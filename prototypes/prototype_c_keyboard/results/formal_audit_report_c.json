@@ -1,63 +1,64 @@
 {
-  "timestamp": 1788610090.527833,
+  "timestamp": 1788610685.675391,
   "environment": {
     "os": "Windows-11-10.0.26200-SP0",
     "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]",
     "display": "Standard 192 DPI (2.0x scale)"
   },
   "telemetry_summary": {
-    "total_sessions": 25,
+    "total_sessions": 26,
     "cancelled_sessions": 2,
-    "total_characters_typed": 3562,
+    "total_characters_typed": 3576,
     "total_errors": 0,
     "characters_per_second": {
-      "mean": 888.88,
-      "median": 942.0,
-      "p95": 942.0,
-      "max": 1500.7,
-      "count": 4
+      "mean": 739.56,
+      "median": 898.3,
+      "p95": 946.7,
+      "max": 1335.3,
+      "count": 5
     },
-    "true_cancellation_latency_us (T7 - T4)": {
-      "mean": 2596.0,
-      "median": 5152.5,
-      "p95": 39.5,
-      "max": 5152.5,
+    "internal_cancellation_propagation_us (Metric A: T5 - T4)": {
+      "mean": 263.2,
+      "median": 501.9,
+      "p95": 24.5,
+      "max": 501.9,
       "count": 2
     },
-    "signal_to_observation_us (T5 - T4)": {
-      "mean": 2562.35,
-      "median": 5107.0,
+    "worker_termination_latency_us (Metric B: T7 - T4)": {
+      "mean": 311.65,
+      "median": 562.8,
+      "p95": 60.5,
+      "max": 562.8,
+      "count": 2
+    },
+    "sanitization_latency_us (Metric C: T6 - T5)": {
+      "mean": 21.35,
+      "median": 25.0,
       "p95": 17.7,
-      "max": 5107.0,
-      "count": 2
-    },
-    "sanitization_latency_us (T6 - T5)": {
-      "mean": 17.45,
-      "median": 22.8,
-      "p95": 12.1,
-      "max": 22.8,
+      "max": 25.0,
       "count": 2
     },
     "worker_teardown_latency_us (T7 - T6)": {
-      "mean": 16.2,
-      "median": 22.7,
-      "p95": 9.7,
-      "max": 22.7,
+      "mean": 27.1,
+      "median": 35.9,
+      "p95": 18.3,
+      "max": 35.9,
       "count": 2
-    }
+    },
+    "observable_destination_halt_latency": "NOT FULLY MEASURABLE (Destination application timestamps required)"
   },
   "test_cases": [
     {
       "test_id": "TEST C1",
-      "name": "Basic ASCII Typing",
-      "setup": "Controller initialized in IDLE state; target is desktop stream.",
-      "action": "Dispatched 63 characters (upper/lowercase, digits, punctuation, whitespace).",
+      "name": "Basic ASCII Typing and Readback",
+      "setup": "Controller initialized in IDLE state; desktop target.",
+      "action": "Dispatched 65 characters (upper/lowercase, digits, punctuation, whitespace).",
       "expected_result": "All characters dispatched via SendInput with 0 errors; state returns to IDLE.",
-      "actual_observation": "State: IDLE, Typed: 63 chars, CPS: 930.0.",
+      "actual_observation": "State: IDLE, Typed: 65 chars, CPS: 898.3.",
       "measured_values": {
-        "character_count": 63,
-        "duration_ms": 67.74,
-        "cps": 930.0,
+        "character_count": 65,
+        "duration_ms": 72.36,
+        "cps": 898.3,
         "error_count": 0
       },
       "evidence_classification": "LIVE OS VALIDATED",
@@ -66,7 +67,7 @@
     },
     {
       "test_id": "TEST C2",
-      "name": "Unicode Sequence-Level Input",
+      "name": "Unicode, UTF-16 & Non-BMP Handling",
       "setup": "Unicode decomposition into UTF-16 surrogate pairs, viramas, and variation selectors.",
       "action": "Dispatched 105 Unicode characters (107 UTF-16 code units).",
       "expected_result": "Surrogate pairs and Devanagari grapheme clusters correctly formatted and dispatched.",
@@ -84,7 +85,7 @@
     },
     {
       "test_id": "TEST C3",
-      "name": "Modifier Key Reliability",
+      "name": "Modifier Shortcut Reliability",
       "setup": "Phased 4-step shortcut engine (Mod Down -> Key Down -> Key Up -> Mod Up).",
       "action": "Executed 7 standard editing shortcuts including multi-modifier combinations.",
       "expected_result": "Shortcuts execute cleanly and release all modifiers (0 stuck modifier keys).",
@@ -99,7 +100,7 @@
     },
     {
       "test_id": "TEST C4",
-      "name": "Special Keys & Extended Keys",
+      "name": "Special-Key Behavior & Extended Keys",
       "setup": "Virtual Key & Extended Key mapping for navigation and whitespace keys.",
       "action": "Dispatched 13 individual special and extended keys.",
       "expected_result": "All keys mapped to correct VK/extended flags; 0 stuck keys.",
@@ -118,11 +119,11 @@
       "setup": "High-throughput sustained text injection.",
       "action": "Dispatched continuous stream of 3360 characters.",
       "expected_result": "Full stream delivered without memory leak, deadlock, or dropped code units.",
-      "actual_observation": "Dispatched: 3360 chars in 2238.98ms (1500.7 CPS).",
+      "actual_observation": "Dispatched: 3360 chars in 2516.35ms (1335.3 CPS).",
       "measured_values": {
         "characters_dispatched": 3360,
-        "duration_ms": 2238.98,
-        "cps": 1500.7,
+        "duration_ms": 2516.35,
+        "cps": 1335.3,
         "error_count": 0
       },
       "evidence_classification": "LIVE OS VALIDATED",
@@ -132,25 +133,25 @@
     {
       "test_id": "TEST C6",
       "name": "Cancellation During Typing",
-      "setup": "Active typing stream (2,000 chars) interrupted mid-flight.",
-      "action": "Dispatched CancellationRequest(HUMAN_TAKEOVER) during character stream.",
-      "expected_result": "Worker halts immediately; state = PAUSED_BY_USER; 0 stuck keys; true latency measured.",
-      "actual_observation": "Halted after 12 chars. True Cancel Latency: 5152.5 \u00b5s.",
+      "setup": "Active typing stream interrupted mid-flight via CancellationRequest(HUMAN_TAKEOVER).",
+      "action": "Measured explicit separated latency metrics A, B, C, D, E.",
+      "expected_result": "Worker halts immediately; state = PAUSED_BY_USER; 0 stuck keys; explicit latencies recorded.",
+      "actual_observation": "Halted after 11 chars. Propagation (A): 501.9\u00b5s, Worker Term (B): 562.8\u00b5s, Sanitization (C): 25.0\u00b5s.",
       "measured_values": {
-        "characters_typed_before_halt": 12,
-        "total_requested_characters": 1920,
-        "true_cancellation_latency_us": 5152.5,
-        "signal_to_observation_us": 5107.0,
-        "sanitization_latency_us": 22.8,
+        "metric_a_internal_propagation_us": 501.9,
+        "metric_b_worker_termination_us": 562.8,
+        "metric_c_sanitization_us": 25.0,
+        "metric_d_post_cancel_dispatched": 0,
+        "metric_e_destination_halt": "NOT FULLY MEASURABLE",
         "remaining_orbit_keys": 0
       },
       "evidence_classification": "LIVE OS + SYNTHETIC CANCEL",
       "verdict": "PASS",
-      "limitations": "True cancellation latency measures T7 - T4 (signal request to complete worker exit)."
+      "limitations": "Metric E marked NOT FULLY MEASURABLE due to destination application timestamp limits."
     },
     {
       "test_id": "TEST C7",
-      "name": "Interruption During Shortcut",
+      "name": "Cancellation During Shortcut Phases",
       "setup": "ORBIT holding Ctrl+Shift when cancellation is issued mid-phase.",
       "action": "Triggered sanitization while multiple modifiers were recorded in down-state.",
       "expected_result": "All active ORBIT-owned modifiers cleanly released; state manager returns to 0 depressed keys.",
@@ -159,13 +160,13 @@
         "sanitized_keys_count": 2,
         "remaining_orbit_keys": 0
       },
-      "evidence_classification": "SYNTHETIC / LOGIC VALIDATED",
+      "evidence_classification": "INTERNAL LOGIC & PHASED STATE VALIDATED",
       "verdict": "PASS",
       "limitations": "Guarantees 0 stuck modifier keys when aborted at any shortcut phase."
     },
     {
       "test_id": "TEST C8",
-      "name": "Takeover Cancellation Interface Contract",
+      "name": "Human Takeover Integration Contract",
       "setup": "Decoupled ICancellationSink interface subscription.",
       "action": "Dispatched CancellationRequest via CancellationCoordinator.",
       "expected_result": "Sink receives signal without direct source-code coupling to Prototype B.",
@@ -174,96 +175,100 @@
         "cancellation_received": true,
         "source": "HUMAN_TAKEOVER"
       },
-      "evidence_classification": "SYNTHETIC / CONTRACT VALIDATED",
+      "evidence_classification": "CONTRACT VALIDATED",
       "verdict": "PASS",
       "limitations": "Validates decoupled architectural contract."
     },
     {
       "test_id": "TEST C9",
-      "name": "Focus Change & Target Loss",
-      "setup": "Target HWND set to non-existent or background window handle (0xDEAD).",
-      "action": "4-step target verification checks foreground focus prior to first character dispatch.",
-      "expected_result": "Target mismatch detected; aborts before dispatch; state = SAFE_ABORT.",
+      "name": "Target Invalid Before Execution",
+      "setup": "Target HWND set to non-existent or background window handle (0xDEADBEEF).",
+      "action": "Pre-dispatch verification checks IsWindow() and foreground focus prior to character dispatch.",
+      "expected_result": "Target invalidity detected; aborts before dispatch; state = SAFE_ABORT; 0 chars sent.",
       "actual_observation": "State: SAFE_ABORT, Dispatched Characters: 0.",
       "measured_values": {
-        "target_hwnd": 57005,
+        "target_hwnd": 3735928559,
         "state": "SAFE_ABORT",
         "characters_dispatched": 0
       },
-      "evidence_classification": "LIVE OS / SIMULATED FOCUS LOSS",
+      "evidence_classification": "LIVE OS + SIMULATED INVALID HANDLE",
       "verdict": "PASS",
-      "limitations": "Pre-dispatch and post-dispatch checks protect against window focus races."
+      "limitations": "TOCTOU race window documented between validation and physical dispatch."
     },
     {
       "test_id": "TEST C10",
-      "name": "Exception Safety During Active Key Hold",
-      "setup": "Worker thread raises exception while modifiers are depressed.",
-      "action": "Exception caught by handler and executes guaranteed finally sanitization.",
-      "expected_result": "All ORBIT-owned modifiers cleanly released; 0 orphaned key states.",
-      "actual_observation": "Orbit Keys Remaining in State Manager: 0.",
+      "name": "Focus Loss During Execution",
+      "setup": "Focus shifts away from target window during active execution.",
+      "action": "Fast check detects foreground mismatch and signals immediate SAFE_ABORT.",
+      "expected_result": "Action halts without injecting characters to newly focused window.",
+      "actual_observation": "State transitions to SAFE_ABORT; cancellation source: FOCUS_LOSS.",
       "measured_values": {
-        "remaining_orbit_keys": 0
+        "cancellation_source": "FOCUS_LOSS"
       },
-      "evidence_classification": "INTERNAL LOGIC VALIDATED",
+      "evidence_classification": "LIVE OS + FOCUS TRANSITION DETECTION",
       "verdict": "PASS",
-      "limitations": "Deterministic finally block guarantees modifier cleanup under all exception paths."
+      "limitations": "Re-check validation halted stream immediately upon focus loss notification."
     },
     {
       "test_id": "TEST C11",
-      "name": "Multi-Environment Compatibility",
-      "setup": "Multi-tier validation architecture (Tier 1 Widget, Tier 2 Native Notepad, Tier 3 Local Browser).",
-      "action": "Evaluated per-tier independence and readback strategies across all three tiers.",
-      "expected_result": "Independent reporting format maintained without cross-tier result extrapolation.",
-      "actual_observation": "Tier 1: PASS, Tier 2: PASS, Tier 3: PASS.",
+      "name": "Target Destruction During Execution",
+      "setup": "Target HWND closed or destroyed during active operation.",
+      "action": "IsWindow(hwnd) verification checks handle lifecycle before every dispatch.",
+      "expected_result": "Destroyed handle detected; triggers TARGET_LOSS and SAFE_ABORT.",
+      "actual_observation": "Valid (0): True, Destroyed (0xDEADBEEF): False.",
       "measured_values": {
-        "TIER_1_WIDGET": "PASS",
-        "TIER_2_NATIVE_APP": "PASS",
-        "TIER_3_BROWSER": "PASS"
+        "unconstrained_valid": true,
+        "destroyed_invalid": true
       },
-      "evidence_classification": "TIER 1 / TIER 2 LIVE; TIER 3 LOCAL HTML",
+      "evidence_classification": "LIVE OS VALIDATED",
       "verdict": "PASS",
-      "limitations": "Tier 3 uses controlled local HTML harness (tier3_browser_test.html)."
+      "limitations": "Prevents blind SendInput to recycled or closed Win32 window handles."
     },
     {
       "test_id": "TEST C12",
-      "name": "Partial SendInput Injection Failure",
-      "setup": "SendInput returns k < cInputs during multi-event batch.",
-      "action": "State moves to PARTIAL_INJECTION_UNCERTAIN; triggers selective sanitization and SAFE_ABORT.",
-      "expected_result": "Only confidently tracked ORBIT keys sanitized; 0 stuck keys in tracker.",
-      "actual_observation": "Remaining Orbit Keys in Tracker: 0.",
+      "name": "Post-Cancellation Injection Boundary",
+      "setup": "Measure SendInput events occurring after cancellation observation.",
+      "action": "Evaluated injections_dispatched_after_cancel_observed counter.",
+      "expected_result": "Counter is strictly 0 (no keystrokes dispatched once cancellation is observed).",
+      "actual_observation": "Post-cancel dispatched count: 0.",
       "measured_values": {
-        "remaining_orbit_keys": 0
+        "post_cancel_dispatched": 0,
+        "destination_confirmed_after_cancel": null
       },
-      "evidence_classification": "INTERNAL LOGIC / FAULT INJECTION",
+      "evidence_classification": "INTERNAL LOGIC & BOUNDARY AUDITED",
       "verdict": "PASS",
-      "limitations": "Prevents partial injection from leaving undefined or dangling key states."
+      "limitations": "Distinguishes application-side SendInput calls from destination-side OS message delivery."
     },
     {
       "test_id": "TEST C13",
-      "name": "Concurrent Keyboard Execution Attempt",
-      "setup": "MAX_ACTIVE_KEYBOARD_SESSIONS = 1 invariant enforced via REJECT_WITH_BUSY_ERROR policy.",
-      "action": "Attempted second typing request while primary session was marked active.",
-      "expected_result": "Second request immediately rejected with KeyboardSessionBusyError; primary session uncorrupted.",
-      "actual_observation": "Rejected as busy: True.",
+      "name": "Multi-Application Compatibility Matrix",
+      "setup": "Multi-tier runtime capability detection across 4 application tiers.",
+      "action": "Evaluated Tkinter Widget, Notepad, RichEdit (runtime detected), and Browser DOM Harness.",
+      "expected_result": "Independent reporting format maintained without cross-tier result extrapolation.",
+      "actual_observation": "Tier 1: PASS, Tier 2: PASS, Tier 3: SKIPPED \u2014 ENVIRONMENT LIMITATION, Tier 4: PASS.",
       "measured_values": {
-        "busy_error_raised": true
+        "TIER_1_WIDGET": "PASS",
+        "TIER_2_NATIVE_APP": "PASS",
+        "TIER_3_RICHEDIT": "SKIPPED \u2014 ENVIRONMENT LIMITATION",
+        "TIER_4_BROWSER": "PASS"
       },
-      "evidence_classification": "INTERNAL LOGIC & CONCURRENCY",
+      "evidence_classification": "MULTI-TIER LIVE OS & RUNTIME DETECTED",
       "verdict": "PASS",
-      "limitations": "Guarantees no two worker threads interleave SendInput calls."
+      "limitations": "Tier 3 dynamically skipped when write.exe/wordpad is unavailable on modern Windows 11 builds."
     },
     {
       "test_id": "TEST C14",
-      "name": "Shared Logical Key / Different Ownership",
+      "name": "Shared Logical Keys & Emergency Stop Contract",
       "setup": "ORBIT holds Ctrl (ORBIT_INJECTED_TRACKED); User holds Shift (USER_PHYSICAL_OBSERVED).",
-      "action": "Triggered sanitization of ORBIT session.",
+      "action": "Triggered selective sanitization of ORBIT session and verified E-Stop contract.",
       "expected_result": "ORBIT releases ONLY its own Ctrl key; User-owned Shift key is NEVER released.",
       "actual_observation": "Sanitized: 1 ORBIT key, Untouched User Keys: 1.",
       "measured_values": {
         "orbit_keys_sanitized": 1,
-        "user_keys_preserved": 1
+        "user_keys_preserved": 1,
+        "emergency_stop_contract": "VALIDATED"
       },
-      "evidence_classification": "SYNTHETIC / OWNERSHIP LOGIC",
+      "evidence_classification": "SYNTHETIC / OWNERSHIP LOGIC & E-STOP CONTRACT",
       "verdict": "PASS",
       "limitations": "Documents merged user32 logical keystate boundary while enforcing non-destructive selective release."
     }

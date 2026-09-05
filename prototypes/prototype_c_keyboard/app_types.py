@@ -116,27 +116,36 @@ class StageLatencyRecord:
     t7_worker_exited_ns: int = 0
 
     @property
-    def signal_to_observation_us(self) -> float:
+    def internal_cancellation_propagation_us(self) -> float:
+        """Metric A: Internal Cancellation Propagation Latency (T5 - T4)."""
         if self.t4_cancel_requested_ns and self.t5_cancel_observed_ns:
             return max(0.0, (self.t5_cancel_observed_ns - self.t4_cancel_requested_ns) / 1000.0)
         return 0.0
 
     @property
+    def signal_to_observation_us(self) -> float:
+        """Alias for Metric A (T5 - T4)."""
+        return self.internal_cancellation_propagation_us
+
+    @property
+    def worker_termination_latency_us(self) -> float:
+        """Metric B: Worker Termination Latency (T7 - T4)."""
+        if self.t4_cancel_requested_ns and self.t7_worker_exited_ns:
+            return max(0.0, (self.t7_worker_exited_ns - self.t4_cancel_requested_ns) / 1000.0)
+        return 0.0
+
+    @property
     def sanitization_latency_us(self) -> float:
+        """Metric C: Key Sanitization Latency (T6 - T5)."""
         if self.t5_cancel_observed_ns and self.t6_final_key_released_ns:
             return max(0.0, (self.t6_final_key_released_ns - self.t5_cancel_observed_ns) / 1000.0)
         return 0.0
 
     @property
     def worker_teardown_latency_us(self) -> float:
+        """Worker Teardown Latency (T7 - T6)."""
         if self.t6_final_key_released_ns and self.t7_worker_exited_ns:
             return max(0.0, (self.t7_worker_exited_ns - self.t6_final_key_released_ns) / 1000.0)
-        return 0.0
-
-    @property
-    def true_cancellation_latency_us(self) -> float:
-        if self.t4_cancel_requested_ns and self.t7_worker_exited_ns:
-            return max(0.0, (self.t7_worker_exited_ns - self.t4_cancel_requested_ns) / 1000.0)
         return 0.0
 
 
@@ -164,6 +173,12 @@ class TelemetryRecord:
     cancellation_source: Optional[str] = None
     stage_latency: Optional[StageLatencyRecord] = None
     unicode_validation: Optional[UnicodeValidationRecord] = None
-    in_flight_events_at_cancel: int = 0
-    events_dispatched_after_cancel_observed: int = 0
-    destination_events_after_cancel_request: int = 0
+    
+    # Metric D: Post-Cancellation Injection Boundary
+    injections_before_cancel_request: int = 0
+    injections_attempted_after_cancel_request: int = 0
+    injections_dispatched_after_cancel_observed: int = 0
+    injections_confirmed_by_destination_after_cancel: Optional[int] = None
+    
+    # Metric E: Observable Destination Halt Latency (Explicitly marked if not directly provided by app)
+    observable_destination_halt_latency_us: str = "NOT FULLY MEASURABLE"

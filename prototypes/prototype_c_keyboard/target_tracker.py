@@ -93,6 +93,16 @@ class TargetTracker:
             is_valid=True,
         )
 
+    def is_window_alive(self, hwnd: int) -> bool:
+        """
+        Validates whether the HWND is still a valid Win32 window via user32.IsWindow.
+        Note: Passing IsWindow does not guarantee zero focus races (TOCTOU boundary exists
+        between validation and SendInput dispatch), but prevents blind injection to destroyed handles.
+        """
+        if hwnd == 0:
+            return True
+        return bool(user32.IsWindow(hwnd))
+
     def fast_check_foreground(self, expected_hwnd: int) -> bool:
         """
         Ultra-fast (<1 µs) check verifying that the current foreground window matches expected HWND.

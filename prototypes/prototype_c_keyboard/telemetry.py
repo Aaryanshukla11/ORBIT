@@ -18,8 +18,8 @@ class KeyboardTelemetryLogger:
 
     def __init__(self):
         self.records: List[TelemetryRecord] = []
-        self.cancellation_latencies_us: List[float] = []
-        self.observation_latencies_us: List[float] = []
+        self.internal_cancellation_latencies_us: List[float] = []
+        self.worker_termination_latencies_us: List[float] = []
         self.sanitization_latencies_us: List[float] = []
         self.worker_teardown_latencies_us: List[float] = []
         self.cps_values: List[float] = []
@@ -39,12 +39,12 @@ class KeyboardTelemetryLogger:
 
         if record.stage_latency and record.stage_latency.t4_cancel_requested_ns:
             self.cancelled_sessions += 1
-            lat = record.stage_latency.true_cancellation_latency_us
-            if lat > 0:
-                self.cancellation_latencies_us.append(lat)
-            obs = record.stage_latency.signal_to_observation_us
-            if obs > 0:
-                self.observation_latencies_us.append(obs)
+            prop = record.stage_latency.internal_cancellation_propagation_us
+            if prop > 0:
+                self.internal_cancellation_latencies_us.append(prop)
+            term = record.stage_latency.worker_termination_latency_us
+            if term > 0:
+                self.worker_termination_latencies_us.append(term)
             san = record.stage_latency.sanitization_latency_us
             if san > 0:
                 self.sanitization_latencies_us.append(san)
@@ -75,10 +75,11 @@ class KeyboardTelemetryLogger:
             "total_characters_typed": self.total_characters_typed,
             "total_errors": self.total_errors,
             "characters_per_second": calc_stats(self.cps_values),
-            "true_cancellation_latency_us (T7 - T4)": calc_stats(self.cancellation_latencies_us),
-            "signal_to_observation_us (T5 - T4)": calc_stats(self.observation_latencies_us),
-            "sanitization_latency_us (T6 - T5)": calc_stats(self.sanitization_latencies_us),
+            "internal_cancellation_propagation_us (Metric A: T5 - T4)": calc_stats(self.internal_cancellation_latencies_us),
+            "worker_termination_latency_us (Metric B: T7 - T4)": calc_stats(self.worker_termination_latencies_us),
+            "sanitization_latency_us (Metric C: T6 - T5)": calc_stats(self.sanitization_latencies_us),
             "worker_teardown_latency_us (T7 - T6)": calc_stats(self.worker_teardown_latencies_us),
+            "observable_destination_halt_latency": "NOT FULLY MEASURABLE (Destination application timestamps required)",
         }
 
     def export_json(self, filepath: str):

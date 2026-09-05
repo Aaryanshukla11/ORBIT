@@ -12,14 +12,15 @@ from app_types import PressedKey, KeyOwner
 
 class KeyboardStateManager:
     """
-    Thread-safe tracker for depressed keys categorized by provenance.
-    Strictly prevents blind global key release.
+    Thread-safe tracker for depressed keys categorized by provenance and session.
+    Supports overlapping logical key states (e.g. Human and ORBIT holding Ctrl simultaneously)
+    and strictly prevents blind global key release.
     """
 
     def __init__(self):
         self._lock = threading.RLock()
-        # Map (vk_code, scan_code, is_extended, is_unicode) -> PressedKey
-        self._pressed_keys: Dict[Tuple[int, int, bool, bool], PressedKey] = {}
+        # Map (vk_code, scan_code, is_extended, is_unicode, owner, session_id) -> PressedKey
+        self._pressed_keys: Dict[Tuple[int, int, bool, bool, KeyOwner, str], PressedKey] = {}
         self._history: List[PressedKey] = []
 
     def register_key_down(
@@ -32,7 +33,7 @@ class KeyboardStateManager:
         session_id: str = "default",
     ) -> PressedKey:
         """
-        Records that a key has entered the down state.
+        Records that a key has entered the down state for the specified owner and session.
         """
         key = PressedKey(
             vk_code=vk_code,
@@ -43,7 +44,7 @@ class KeyboardStateManager:
             timestamp_ns=time.perf_counter_ns(),
             session_id=session_id,
         )
-        lookup = (vk_code, scan_code, is_extended, is_unicode)
+        lookup = (vk_code, scan_code, is_extended, is_unicode, owner, session_id)
         with self._lock:
             self._pressed_keys[lookup] = key
             self._history.append(key)
@@ -55,17 +56,21 @@ class KeyboardStateManager:
         scan_code: int = 0,
         is_extended: bool = False,
         is_unicode: bool = False,
-        owner: KeyOwner = KeyOwner.ORBIT_INJECTED_TRACKED,
-        session_id: str = "default",
+        owner: Optional[KeyOwner] = None,
+        session_id: Optional[str] = None,
     ) -> Optional[PressedKey]:
         """
         Removes a key from the depressed state tracker upon key release.
         """
-        lookup = (vk_code, scan_code, is_extended, is_unicode)
         with self._lock:
-            return self._pressed_keys.pop(lookup, None)
+            for lookup, key in list(self._pressed_keys.items()):
+                if key.vk_code == vk_code and key.scan_code == scan_code and key.is_extended == is_extended and key.is_unicode == is_unicode:
+                    if (owner is None or key.owner == owner) and (session_id is None or key.session_id == session_id):
+                        return self._pressed_keys.pop(lookup, None)
+            return None
 
     def is_key_down(self, vk_code: int, scan_code: int = 0) -> bool:
+        """Returns True if the logical key is held down by ANY owner."""
         with self._lock:
             for k in self._pressed_keys.values():
                 if k.vk_code == vk_code or (scan_code and k.scan_code == scan_code):
@@ -112,7 +117,7 @@ class KeyboardStateManager:
             sanitized: List[PressedKey] = []
 
             for k in reversed(orbit_keys):  # Release in reverse order (action key, then modifiers)
-                lookup = (k.vk_code, k.scan_code, k.is_extended, k.is_unicode)
+                lookup = (k.vk_code, k.scan_code, k.is_extended, k.is_unicode, k.owner, k.session_id)
                 self._pressed_keys.pop(lookup, None)
                 if release_callback:
                     try:

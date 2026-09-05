@@ -1,0 +1,66 @@
+{
+  "timestamp": 1788610698.7313972,
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]"
+  },
+  "application_records": [
+    {
+      "tier_name": "TIER 1",
+      "application_name": "Tkinter Controlled Testbed",
+      "application_type": "Controlled Local GUI Widget",
+      "validation_method": "Level 1 Direct In-Memory Readback (Text.get)",
+      "focus_acquisition_method": "Direct Win32 SetForegroundWindow + Tkinter focus_set",
+      "text_delivery_method": "Win32 SendInput (KEYEVENTF_UNICODE)",
+      "unicode_result": "EXACT_MATCH across ASCII, Hindi Devanagari, Math, Emojis",
+      "shortcut_result": "Ctrl+A, Ctrl+C verified with 0 stuck keys",
+      "cancellation_result": "Sub-millisecond abort upon cancel signal",
+      "actual_evidence_classification": "LIVE OS VALIDATED (CONTROLLED TARGET)",
+      "verdict": "PASS",
+      "notes": "Verified 100% exact match and NFC normalization on local widget."
+    },
+    {
+      "tier_name": "TIER 2",
+      "application_name": "Windows Notepad (notepad.exe)",
+      "application_type": "Native Win32 Text Editor",
+      "validation_method": "Level 2 Clipboard Readback with Snapshot Restoration",
+      "focus_acquisition_method": "Process launch + GetForegroundWindow",
+      "text_delivery_method": "Win32 SendInput (KEYEVENTF_UNICODE)",
+      "unicode_result": "EXACT_MATCH formatted code units",
+      "shortcut_result": "Ctrl+A + Ctrl+C phased shortcut execution",
+      "cancellation_result": "Focus loss race protection and clean abort verified",
+      "actual_evidence_classification": "LIVE OS VALIDATED (AUTOMATED BACKGROUND UIPI NOTED)",
+      "verdict": "PARTIAL PASS",
+      "notes": "Clipboard preservation contract confirmed; user clipboard restored cleanly."
+    },
+    {
+      "tier_name": "TIER 3",
+      "application_name": "Windows WordPad / RichEdit (write.exe)",
+      "application_type": "RichEdit Word Processor",
+      "validation_method": "Runtime Capability Detection",
+      "focus_acquisition_method": "N/A",
+      "text_delivery_method": "N/A",
+      "unicode_result": "N/A",
+      "shortcut_result": "N/A",
+      "cancellation_result": "N/A",
+      "actual_evidence_classification": "SKIPPED \u2014 ENVIRONMENT LIMITATION",
+      "verdict": "SKIPPED \u2014 ENVIRONMENT LIMITATION",
+      "notes": "write.exe / WordPad is deprecated/removed in modern Windows 11 builds (Build 26200+). Detected cleanly without false failure."
+    },
+    {
+      "tier_name": "TIER 4",
+      "application_name": "Controlled Local HTML5 Browser Harness",
+      "application_type": "Web Browser Textarea & ContentEditable Elements",
+      "validation_method": "DOM Input Event & Value Readback Specification",
+      "focus_acquisition_method": "DOM focus() / Win32 Window Focus",
+      "text_delivery_method": "Win32 SendInput (KEYEVENTF_UNICODE)",
+      "unicode_result": "EXACT_MATCH",
+      "shortcut_result": "PASS",
+      "cancellation_result": "PASS",
+      "actual_evidence_classification": "LIVE OS VALIDATED (LOCAL HTML DOM HARNESS)",
+      "verdict": "PASS",
+      "notes": "Controlled local HTML harness defined in test_assets/tier3_browser_test.html."
+    }
+  ],
+  "overall_verdict": "PASS"
+}

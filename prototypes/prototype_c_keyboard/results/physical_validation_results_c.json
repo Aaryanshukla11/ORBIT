@@ -1,0 +1,64 @@
+{
+  "timestamp": 1788610693.9027698,
+  "mode": "AUTOMATED_INFRASTRUCTURE",
+  "safety_invariant": "THE HUMAN ALWAYS OWNS THE KEYBOARD",
+  "test_cases": [
+    {
+      "test_id": "TEST H1",
+      "name": "Physical Keypress During Typing (Harness Validation)",
+      "mode": "AUTOMATED_INFRASTRUCTURE",
+      "operator_action_required": "None (Automated infrastructure execution)",
+      "expected_safety_behavior": "Typing stream halts immediately; state = PAUSED_BY_USER; 0 stuck keys; NO automatic resumption.",
+      "observed_state": "PAUSED_BY_USER",
+      "measured_latency_us": 5434.7,
+      "orbit_keys_remaining": 0,
+      "auto_resumed": false,
+      "evidence_classification": "SYNTHETICALLY SIMULATED / INTERNAL LOGIC VALIDATED",
+      "verdict": "PASS",
+      "operator_notes": "Harness validated cancellation pipeline and zero auto-resumption under automated test."
+    },
+    {
+      "test_id": "TEST H2",
+      "name": "Physical Modifier Interaction",
+      "mode": "AUTOMATED_INFRASTRUCTURE",
+      "operator_action_required": "None",
+      "expected_safety_behavior": "ORBIT sanitization releases only ORBIT-injected keys; does NOT corrupt human physical Ctrl hold state.",
+      "observed_state": "USER_KEY_PRESERVED",
+      "measured_latency_us": 0.0,
+      "orbit_keys_remaining": 0,
+      "auto_resumed": false,
+      "evidence_classification": "INTERNAL LOGIC + PLATFORM LIMITATION AUDITED",
+      "verdict": "PASS",
+      "operator_notes": "Windows API Limitation Note: Windows OS GetAsyncKeyState()/GetKeyState() does not maintain reference counts for identical logical keys held simultaneously by hardware and SendInput. ORBIT KeyboardStateManager mitigates this by tracking per-session ownership and releasing only confirmed ORBIT-injected keys."
+    },
+    {
+      "test_id": "TEST H3",
+      "name": "Shortcut Phase Interruption",
+      "mode": "AUTOMATED_INFRASTRUCTURE",
+      "operator_action_required": "None",
+      "expected_safety_behavior": "Interruption at any shortcut phase sanitizes all active modifiers (0 stuck keys).",
+      "observed_state": "ALL_PHASES_SANITIZED",
+      "measured_latency_us": 0.0,
+      "orbit_keys_remaining": 0,
+      "auto_resumed": false,
+      "evidence_classification": "INTERNAL LOGIC & PHASED STATE VALIDATED",
+      "verdict": "PASS",
+      "operator_notes": "Validated atomic sanitization across all 4 shortcut phases (Phase 1 (Modifiers Down), Phase 2 (Action Key Down), Phase 3 (Action Key Up), Phase 4 (Modifiers Up))."
+    },
+    {
+      "test_id": "TEST H4",
+      "name": "Physical Emergency Stop Activation",
+      "mode": "AUTOMATED_INFRASTRUCTURE",
+      "operator_action_required": "None",
+      "expected_safety_behavior": "Emergency stop signal halts execution immediately, sanitizes all ORBIT keys, pauses state, no auto-resume.",
+      "observed_state": "ESTOP_HALTED_SANITIZED",
+      "measured_latency_us": 59.4,
+      "orbit_keys_remaining": 0,
+      "auto_resumed": false,
+      "evidence_classification": "CONTRACT & EMERGENCY STOP VALIDATED",
+      "verdict": "PASS",
+      "operator_notes": "Emergency stop halted active session and sanitized 2 keys in 59.4 \u00b5s."
+    }
+  ],
+  "overall_verdict": "PASS"
+}

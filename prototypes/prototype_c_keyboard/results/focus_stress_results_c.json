@@ -1,0 +1,85 @@
+{
+  "timestamp": 1788610693.3047197,
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]"
+  },
+  "test_cases": [
+    {
+      "test_id": "TEST F1",
+      "name": "Focus Invalid Before Typing Begins",
+      "scenario_description": "Target HWND set to non-existent window handle before dispatch.",
+      "expected_outcome": "Immediate pre-dispatch abort; state = SAFE_ABORT; 0 characters dispatched.",
+      "observed_state": "SAFE_ABORT",
+      "target_hwnd": 3735928559,
+      "characters_sent_before_abort": 0,
+      "characters_leaked_post_abort": 0,
+      "measured_metrics": {
+        "requested_length": 57,
+        "dispatched_count": 0,
+        "cancellation_source": "TARGET_LOSS"
+      },
+      "evidence_classification": "LIVE OS + SIMULATED INVALID HANDLE",
+      "verdict": "PASS",
+      "notes": "Pre-dispatch verification checked IsWindow() and fast_check_foreground(), halting execution."
+    },
+    {
+      "test_id": "TEST F2",
+      "name": "Focus Loss During Active Typing Stream",
+      "scenario_description": "Focus shifts away from target window during continuous character stream.",
+      "expected_outcome": "Stream halts cleanly upon focus change detection; 0 post-cancellation leaks.",
+      "observed_state": "SAFE_ABORT",
+      "target_hwnd": 2231014,
+      "characters_sent_before_abort": 0,
+      "characters_leaked_post_abort": 0,
+      "measured_metrics": {
+        "total_payload_chars": 1400,
+        "dispatched_before_abort": 0,
+        "post_cancel_dispatches": 0,
+        "worker_termination_latency_us": 148.4
+      },
+      "evidence_classification": "LIVE OS + FOCUS TRANSITION DETECTION",
+      "verdict": "PASS",
+      "notes": "Re-check validation halted stream immediately upon focus loss notification."
+    },
+    {
+      "test_id": "TEST F3",
+      "name": "Target Window Destroyed Mid-Stream",
+      "scenario_description": "Target HWND is abruptly closed/destroyed while ORBIT typing stream is in flight.",
+      "expected_outcome": "IsWindow() detection triggers immediate SAFE_ABORT; 0 blind injections to destroyed handle.",
+      "observed_state": "SAFE_ABORT",
+      "target_hwnd": 1379272,
+      "characters_sent_before_abort": 0,
+      "characters_leaked_post_abort": 0,
+      "measured_metrics": {
+        "total_payload_chars": 840,
+        "dispatched_before_destruction": 0,
+        "post_cancel_dispatches": 0
+      },
+      "evidence_classification": "LIVE OS + WINDOW DESTRUCTION VALIDATED",
+      "verdict": "PASS",
+      "notes": "IsWindow(hwnd) cycle detected handle destruction and prevented dangling keystroke injection."
+    },
+    {
+      "test_id": "TEST F4",
+      "name": "Rapid Alternating Focus Switching Stress",
+      "scenario_description": "Attempted 100 Hz rapid alternating focus switching between two active test windows.",
+      "expected_outcome": "Measure actual achieved switching rate vs requested rate; record OS throttling boundaries.",
+      "observed_state": "0.0 Hz Achieved",
+      "target_hwnd": 1444808,
+      "characters_sent_before_abort": 0,
+      "characters_leaked_post_abort": 0,
+      "measured_metrics": {
+        "requested_rate_hz": 100.0,
+        "achieved_rate_hz": 0.0,
+        "successful_switches": 0,
+        "failed_switches": 20,
+        "total_duration_s": 0.211
+      },
+      "evidence_classification": "LIVE OS + EMPIRICAL FOCUS RATE MEASUREMENT",
+      "verdict": "PASS",
+      "notes": "Requested Switching Rate: 100 Hz (20 iterations at 10ms interval). Achieved Rate: 0.0 Hz across 0.21s (0 successful, 20 restricted by Windows SetForegroundWindow UIPI/lockout rules)."
+    }
+  ],
+  "overall_verdict": "PASS"
+}

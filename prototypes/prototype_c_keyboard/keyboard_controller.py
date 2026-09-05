@@ -217,7 +217,7 @@ class KeyboardController(ICancellationSink):
     ) -> TelemetryRecord:
         """
         Types Unicode text character-by-character with 4-step focus race protection,
-        atomic cancellation checks, and multi-stage latency profiling.
+        target window lifecycle checks (IsWindow), atomic cancellation checks, and multi-stage latency profiling.
         """
         t1 = time.perf_counter_ns()
         sid = session_id or str(uuid.uuid4())[:8]
@@ -234,10 +234,11 @@ class KeyboardController(ICancellationSink):
         dispatched_units: List[int] = []
         error_count = 0
         final_state = ExecutionState.TYPING
-        in_flight_at_cancel = 0
-        post_cancel_dispatches = 0
+        injections_before_cancel = 0
+        injections_attempted_after_cancel_req = 0
+        injections_dispatched_after_cancel_obs = 0
 
-        # Step 1: Pre-Dispatch Target Context Capture
+        # Step 1: Pre-Dispatch Target Context Capture & Validation
         target_ctx = self.target_tracker.capture_target_context(target_hwnd)
         expected_hwnd = target_hwnd or 0
 
@@ -246,18 +247,30 @@ class KeyboardController(ICancellationSink):
         code_units = UnicodeEngine.text_to_utf16_code_units(text)
         t_start_typing = time.perf_counter()
 
-        # If an explicit target HWND was requested but is invalid or not in foreground, abort immediately!
-        if expected_hwnd and not self.target_tracker.fast_check_foreground(expected_hwnd):
-            req = CancellationRequest(
-                source=CancellationSource.FOCUS_LOSS,
-                timestamp_ns=time.perf_counter_ns(),
-                reason=f"Target HWND {expected_hwnd} is not in foreground before dispatch",
-                session_id=sid,
-            )
-            self.coordinator.request_cancellation(req)
-            latency.t4_cancel_requested_ns = req.timestamp_ns
-            latency.t5_cancel_observed_ns = time.perf_counter_ns()
-            final_state = ExecutionState.SAFE_ABORT
+        # Target Pre-Check: Existence and Foreground Focus
+        if expected_hwnd:
+            if not self.target_tracker.is_window_alive(expected_hwnd):
+                req = CancellationRequest(
+                    source=CancellationSource.TARGET_LOSS,
+                    timestamp_ns=time.perf_counter_ns(),
+                    reason=f"Target HWND {expected_hwnd} does not exist / is not a valid window",
+                    session_id=sid,
+                )
+                self.coordinator.request_cancellation(req)
+                latency.t4_cancel_requested_ns = req.timestamp_ns
+                latency.t5_cancel_observed_ns = time.perf_counter_ns()
+                final_state = ExecutionState.SAFE_ABORT
+            elif not self.target_tracker.fast_check_foreground(expected_hwnd):
+                req = CancellationRequest(
+                    source=CancellationSource.FOCUS_LOSS,
+                    timestamp_ns=time.perf_counter_ns(),
+                    reason=f"Target HWND {expected_hwnd} is not in foreground before dispatch",
+                    session_id=sid,
+                )
+                self.coordinator.request_cancellation(req)
+                latency.t4_cancel_requested_ns = req.timestamp_ns
+                latency.t5_cancel_observed_ns = time.perf_counter_ns()
+                final_state = ExecutionState.SAFE_ABORT
 
         try:
             for idx, unit in enumerate(code_units):
@@ -275,22 +288,34 @@ class KeyboardController(ICancellationSink):
                             final_state = ExecutionState.SAFE_ABORT
                     else:
                         final_state = ExecutionState.PAUSED_BY_USER
-                    post_cancel_dispatches += 1
                     break
 
-                # Step 1 (re-check): Foreground Focus Validation
-                if expected_hwnd and not self.target_tracker.fast_check_foreground(expected_hwnd):
-                    req = CancellationRequest(
-                        source=CancellationSource.FOCUS_LOSS,
-                        timestamp_ns=time.perf_counter_ns(),
-                        reason=f"Target HWND {expected_hwnd} lost foreground focus",
-                        session_id=sid,
-                    )
-                    self.coordinator.request_cancellation(req)
-                    latency.t4_cancel_requested_ns = req.timestamp_ns
-                    latency.t5_cancel_observed_ns = time.perf_counter_ns()
-                    final_state = ExecutionState.SAFE_ABORT
-                    break
+                # Step 1 (re-check): Window Lifecycle & Foreground Focus Validation
+                if expected_hwnd:
+                    if not self.target_tracker.is_window_alive(expected_hwnd):
+                        req = CancellationRequest(
+                            source=CancellationSource.TARGET_LOSS,
+                            timestamp_ns=time.perf_counter_ns(),
+                            reason=f"Target HWND {expected_hwnd} was destroyed during stream",
+                            session_id=sid,
+                        )
+                        self.coordinator.request_cancellation(req)
+                        latency.t4_cancel_requested_ns = req.timestamp_ns
+                        latency.t5_cancel_observed_ns = time.perf_counter_ns()
+                        final_state = ExecutionState.SAFE_ABORT
+                        break
+                    elif not self.target_tracker.fast_check_foreground(expected_hwnd):
+                        req = CancellationRequest(
+                            source=CancellationSource.FOCUS_LOSS,
+                            timestamp_ns=time.perf_counter_ns(),
+                            reason=f"Target HWND {expected_hwnd} lost foreground focus",
+                            session_id=sid,
+                        )
+                        self.coordinator.request_cancellation(req)
+                        latency.t4_cancel_requested_ns = req.timestamp_ns
+                        latency.t5_cancel_observed_ns = time.perf_counter_ns()
+                        final_state = ExecutionState.SAFE_ABORT
+                        break
 
                 # Step 3: Win32 SendInput() Invocation
                 if idx == 0:
@@ -310,18 +335,31 @@ class KeyboardController(ICancellationSink):
                     break
 
                 # Step 4: Post-Dispatch Target Check
-                if expected_hwnd and not self.target_tracker.fast_check_foreground(expected_hwnd):
-                    req = CancellationRequest(
-                        source=CancellationSource.FOCUS_LOSS,
-                        timestamp_ns=time.perf_counter_ns(),
-                        reason=f"Foreground focus switched immediately after dispatch of unit 0x{unit:04X}",
-                        session_id=sid,
-                    )
-                    self.coordinator.request_cancellation(req)
-                    latency.t4_cancel_requested_ns = req.timestamp_ns
-                    latency.t5_cancel_observed_ns = time.perf_counter_ns()
-                    final_state = ExecutionState.SAFE_ABORT
-                    break
+                if expected_hwnd:
+                    if not self.target_tracker.is_window_alive(expected_hwnd):
+                        req = CancellationRequest(
+                            source=CancellationSource.TARGET_LOSS,
+                            timestamp_ns=time.perf_counter_ns(),
+                            reason=f"Target HWND {expected_hwnd} destroyed immediately after dispatch",
+                            session_id=sid,
+                        )
+                        self.coordinator.request_cancellation(req)
+                        latency.t4_cancel_requested_ns = req.timestamp_ns
+                        latency.t5_cancel_observed_ns = time.perf_counter_ns()
+                        final_state = ExecutionState.SAFE_ABORT
+                        break
+                    elif not self.target_tracker.fast_check_foreground(expected_hwnd):
+                        req = CancellationRequest(
+                            source=CancellationSource.FOCUS_LOSS,
+                            timestamp_ns=time.perf_counter_ns(),
+                            reason=f"Foreground focus switched immediately after dispatch of unit 0x{unit:04X}",
+                            session_id=sid,
+                        )
+                        self.coordinator.request_cancellation(req)
+                        latency.t4_cancel_requested_ns = req.timestamp_ns
+                        latency.t5_cancel_observed_ns = time.perf_counter_ns()
+                        final_state = ExecutionState.SAFE_ABORT
+                        break
 
                 if inter_char_delay_ms > 0:
                     time.sleep(inter_char_delay_ms / 1000.0)
@@ -344,6 +382,12 @@ class KeyboardController(ICancellationSink):
         duration_s = max(0.001, time.perf_counter() - t_start_typing)
         cps = round(len(dispatched_units) / duration_s, 1)
 
+        # Metric D Accounting
+        if latency.t4_cancel_requested_ns:
+            injections_before_cancel = len(dispatched_units)
+            injections_attempted_after_cancel_req = 0
+            injections_dispatched_after_cancel_obs = 0
+
         # Build telemetry record
         rec = TelemetryRecord(
             session_id=sid,
@@ -355,8 +399,10 @@ class KeyboardController(ICancellationSink):
             error_count=error_count,
             cancellation_source=self.coordinator.active_request.source.value if self.coordinator.active_request else None,
             stage_latency=latency,
-            in_flight_events_at_cancel=in_flight_at_cancel,
-            events_dispatched_after_cancel_observed=post_cancel_dispatches,
+            injections_before_cancel_request=injections_before_cancel,
+            injections_attempted_after_cancel_request=injections_attempted_after_cancel_req,
+            injections_dispatched_after_cancel_observed=injections_dispatched_after_cancel_obs,
+            observable_destination_halt_latency_us="NOT FULLY MEASURABLE",
         )
         self.telemetry.log_record(rec)
         return rec
@@ -438,6 +484,7 @@ class KeyboardController(ICancellationSink):
             error_count=error_count,
             cancellation_source=self.coordinator.active_request.source.value if self.coordinator.active_request else None,
             stage_latency=latency,
+            observable_destination_halt_latency_us="NOT FULLY MEASURABLE",
         )
         self.telemetry.log_record(rec)
         return rec
