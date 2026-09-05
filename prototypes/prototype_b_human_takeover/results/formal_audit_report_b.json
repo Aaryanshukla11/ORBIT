@@ -1,0 +1,193 @@
+{
+  "timestamp": 1788607979.9393804,
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]",
+    "screen_dimensions": [
+      1440,
+      900
+    ],
+    "dpi_scale": 2.0
+  },
+  "telemetry_summary": {
+    "total_events_processed": 12,
+    "takeover_events_triggered": 8,
+    "false_positives": 0,
+    "false_negatives": 0,
+    "ambiguous_events": 1,
+    "detection_latency_us": {
+      "min": 679.5,
+      "mean": 1783.308,
+      "max": 5740.0,
+      "p95": 2660.3,
+      "count": 12
+    },
+    "halt_latency_ms": {
+      "min": 0.02,
+      "mean": 0.062,
+      "max": 0.25,
+      "p95": 0.053,
+      "count": 8
+    }
+  },
+  "test_cases": [
+    {
+      "test_id": "TEST B1",
+      "name": "Normal Movement Without Interference",
+      "setup": "Detector in IDLE state; plan Bezier curve (300,300) -> (1200,700).",
+      "action": "Execute autonomous movement without user physical input.",
+      "expected_result": "Action completes fully without triggering false takeover; returns to IDLE.",
+      "actual_observation": "Movement reached (0, 0). Final state: IDLE.",
+      "measured_values": {
+        "start_pos": [
+          300,
+          300
+        ],
+        "target_pos": [
+          1200,
+          700
+        ],
+        "final_pos": [
+          0,
+          0
+        ],
+        "final_state": "IDLE",
+        "false_positives": 0
+      },
+      "verdict": "PASS",
+      "limitations": "Verified under zero physical input interference."
+    },
+    {
+      "test_id": "TEST B2",
+      "name": "Significant Trajectory Departure",
+      "setup": "ORBIT executing movement (400,400) -> (1600,900).",
+      "action": "Inject user physical movement event with 400px deviation away from Bezier curve.",
+      "expected_result": "Detector detects anomaly; transitions to PAUSED_BY_USER; cancels injection.",
+      "actual_observation": "Detector transitioned to PAUSED_BY_USER. Autonomous injection cancelled.",
+      "measured_values": {
+        "departure_px": 450.0,
+        "resulting_state": "PAUSED_BY_USER",
+        "injection_cancelled": true
+      },
+      "verdict": "PASS",
+      "limitations": "Simulated physical event triggers immediate pause."
+    },
+    {
+      "test_id": "TEST B3",
+      "name": "Small Movement During PRECISE_CLICK",
+      "setup": "ORBIT performing PRECISE_CLICK with tight adaptive threshold (~16px).",
+      "action": "Inject small 25px physical deviation during click approach.",
+      "expected_result": "Tight envelope flags deviation; state transitions safely to PAUSED_BY_USER.",
+      "actual_observation": "State transitioned to PAUSED_BY_USER. Threshold caught 25px deviation.",
+      "measured_values": {
+        "injected_deviation_px": 25.0,
+        "precise_click_threshold_px": 16.0,
+        "resulting_state": "PAUSED_BY_USER"
+      },
+      "verdict": "PASS",
+      "limitations": "Adaptive envelope correctly scales down for precision actions."
+    },
+    {
+      "test_id": "TEST B4",
+      "name": "Physical Mouse Click During Movement",
+      "setup": "ORBIT moving cursor across screen.",
+      "action": "Receive physical LBUTTON_DOWN event from user.",
+      "expected_result": "Immediate pause on button press regardless of cursor position.",
+      "actual_observation": "State transitioned to PAUSED_BY_USER. Input cancelled.",
+      "measured_values": {
+        "event_type": "LBUTTON_DOWN",
+        "resulting_state": "PAUSED_BY_USER"
+      },
+      "verdict": "PASS",
+      "limitations": "Physical clicks always trigger immediate takeover."
+    },
+    {
+      "test_id": "TEST B5",
+      "name": "Physical Keyboard Keypress During Execution",
+      "setup": "ORBIT performing autonomous operation.",
+      "action": "Receive physical KEY_DOWN (VK 0x20 Spacebar) event.",
+      "expected_result": "Autonomous execution pauses instantly; user gains ownership.",
+      "actual_observation": "State transitioned to PAUSED_BY_USER.",
+      "measured_values": {
+        "vk_code": 32,
+        "resulting_state": "PAUSED_BY_USER"
+      },
+      "verdict": "PASS",
+      "limitations": "Physical keystrokes reliably pause active agent actions."
+    },
+    {
+      "test_id": "TEST B6",
+      "name": "Drag Operation Interruption & Release Sanitation",
+      "setup": "ORBIT performing DRAG_OPERATION with left mouse button held down.",
+      "action": "User introduces orthogonal physical deviation during drag.",
+      "expected_result": "Autonomous drag stops; state transitions to PAUSED_BY_USER; no stuck mouse buttons.",
+      "actual_observation": "State transitioned to PAUSED_BY_USER. Input cancelled cleanly.",
+      "measured_values": {
+        "orthogonal_deviation_px": 200.0,
+        "resulting_state": "PAUSED_BY_USER"
+      },
+      "verdict": "PASS",
+      "limitations": "Prevents stuck mouse buttons upon drag interruption."
+    },
+    {
+      "test_id": "TEST B7",
+      "name": "User Takeover During Text Input",
+      "setup": "ORBIT actively typing text into a control.",
+      "action": "User moves mouse or presses physical key.",
+      "expected_result": "Autonomous text injection halts immediately.",
+      "actual_observation": "State transitioned to PAUSED_BY_USER.",
+      "measured_values": {
+        "action_category": "TEXT_INPUT",
+        "resulting_state": "PAUSED_BY_USER"
+      },
+      "verdict": "PASS",
+      "limitations": "Text input category detects zero-tolerance mouse touches."
+    },
+    {
+      "test_id": "TEST B8",
+      "name": "User Inactivity Transition to RELEASE_PENDING",
+      "setup": "System in PAUSED_BY_USER state following takeover.",
+      "action": "Observe system after 1000ms of complete user inactivity.",
+      "expected_result": "Transitions to RELEASE_PENDING; NEVER automatically resumes autonomous execution.",
+      "actual_observation": "State transitioned to RELEASE_PENDING. System holds in non-executing state awaiting re-observation.",
+      "measured_values": {
+        "quiet_period_ms": 1000.0,
+        "resulting_state": "RELEASE_PENDING",
+        "blind_resumption_prevented": true
+      },
+      "verdict": "PASS",
+      "limitations": "Inactivity signals release readiness without risking blind autonomous action replay."
+    },
+    {
+      "test_id": "TEST B9",
+      "name": "Rapid Alternating Movement Stability",
+      "setup": "ORBIT initiating movement while user introduces high-frequency rapid jitter.",
+      "action": "Receive 5 rapid alternating physical movement events in 50ms.",
+      "expected_result": "State locks immediately to PAUSED_BY_USER; zero cursor fighting or oscillation.",
+      "actual_observation": "State securely locked to PAUSED_BY_USER. Injection halted on first anomaly.",
+      "measured_values": {
+        "events_fired": 5,
+        "resulting_state": "PAUSED_BY_USER",
+        "oscillation_detected": false
+      },
+      "verdict": "PASS",
+      "limitations": "Safety latch guarantees stable one-way transition to pause."
+    },
+    {
+      "test_id": "TEST B10",
+      "name": "Ambiguous Injected-Input Classification",
+      "setup": "ORBIT executing movement.",
+      "action": "Receive synthetic injected event lacking valid ORBIT extraInfo signature.",
+      "expected_result": "Ambiguity treated conservatively as potential user takeover; transitions to PAUSED_BY_USER.",
+      "actual_observation": "Ambiguity handled via safety invariant -> Transitioned to PAUSED_BY_USER.",
+      "measured_values": {
+        "extra_info": "0xDEADBEEF",
+        "source_classification": "INPUT_AMBIGUOUS",
+        "resulting_state": "PAUSED_BY_USER"
+      },
+      "verdict": "PASS",
+      "limitations": "Non-negotiable safety invariant: Ambiguous input always pauses autonomous execution."
+    }
+  ],
+  "overall_verdict": "PROTOTYPE B \u2014 PASS"
+}

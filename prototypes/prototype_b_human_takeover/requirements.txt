@@ -1,0 +1,3 @@
+# ORBIT Prototype B — Dependencies
+# Prototype B relies exclusively on Python Standard Library + Windows Win32 APIs (via ctypes).
+# No external package installation is required.
