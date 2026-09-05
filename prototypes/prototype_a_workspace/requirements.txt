@@ -1,0 +1,4 @@
+# ORBIT Prototype A — Requirements
+# Pure Python 3.10+ on Windows 10/11 x64 or ARM64
+# Zero mandatory third-party packages required.
+# Uses Python Standard Library: ctypes, tkinter, dataclasses, json, subprocess, time.

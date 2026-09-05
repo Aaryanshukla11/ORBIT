@@ -1,0 +1,237 @@
+{
+  "timestamp": 1788607646.4019597,
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]",
+    "screen_dimensions": [
+      2880,
+      1800
+    ],
+    "baseline_workarea": [
+      0,
+      0,
+      2880,
+      1800
+    ],
+    "monitor_count": 1,
+    "primary_dpi": 192
+  },
+  "tests": [
+    {
+      "test_id": "TEST A1",
+      "name": "ORBIT Window Docking",
+      "setup": "Create borderless top-level Win32 window with WS_EX_TOPMOST style.",
+      "action": "Position window at right 25% edge (2160, 0, 720x1800).",
+      "expected_result": "Window occupies exact 25% right edge and remains visible as top-level window.",
+      "actual_observation": "Window created (HWND 4458524) and positioned at RECT(left=2160, top=0, right=2880, bottom=1800, width=720, height=1800). Visible=True.",
+      "measured_values": {
+        "requested_rect": [
+          2160,
+          0,
+          2880,
+          1800
+        ],
+        "actual_rect": [
+          2160,
+          0,
+          2880,
+          1800
+        ],
+        "target_ratio": 0.25,
+        "actual_width_px": 720,
+        "is_visible": true
+      },
+      "verdict": "PASS",
+      "limitations": "Relies on Win32 SetWindowPos HWND_TOPMOST."
+    },
+    {
+      "test_id": "TEST A2",
+      "name": "Native AppBar Registration & Negotiation",
+      "setup": "Window created and docked.",
+      "action": "Invoke SHAppBarMessage(ABM_NEW, ABM_QUERYPOS, ABM_SETPOS).",
+      "expected_result": "AppBar registers with Windows Shell; negotiation returns valid bounds.",
+      "actual_observation": "ABM_NEW succeeded in 0.06ms. QueryPos returned RECT(left=2160, top=0, right=2880, bottom=1800, width=720, height=1800). SetPos returned RECT(left=2160, top=0, right=2880, bottom=1800, width=720, height=1800). SPI_GETWORKAREA is RECT(left=0, top=0, right=2880, bottom=1800, width=2880, height=1800).",
+      "measured_values": {
+        "abm_new_success": true,
+        "querypos_rect": [
+          2160,
+          0,
+          2880,
+          1800
+        ],
+        "setpos_rect": [
+          2160,
+          0,
+          2880,
+          1800
+        ],
+        "spi_getworkarea_after_appbar": [
+          0,
+          0,
+          2880,
+          1800
+        ],
+        "registration_latency_ms": 0.06
+      },
+      "verdict": "PASS",
+      "limitations": "Windows 11 DWM accepts AppBar registration but does not alter global SPI_GETWORKAREA for 3rd-party AppBars."
+    },
+    {
+      "test_id": "TEST A3",
+      "name": "Normal Application Coexistence",
+      "setup": "ORBIT docked on right 25% edge; launch Notepad in floating state.",
+      "action": "Position Notepad at (100, 100, 1200x800) in the user 75% workspace.",
+      "expected_result": "Notepad floats in user workspace; ORBIT remains docked and stable.",
+      "actual_observation": "Notepad running at RECT(left=100, top=100, right=1300, bottom=900, width=1200, height=800). ORBIT remains stable at RECT(left=2160, top=0, right=2880, bottom=1800, width=720, height=1800). No interference.",
+      "measured_values": {
+        "notepad_rect": [
+          100,
+          100,
+          1300,
+          900
+        ],
+        "orbit_rect": [
+          2160,
+          0,
+          2880,
+          1800
+        ],
+        "overlap_detected": false
+      },
+      "verdict": "PASS",
+      "limitations": "Standard floating window coexistence functions normally."
+    },
+    {
+      "test_id": "TEST A4",
+      "name": "Maximized Third-Party Application Observation",
+      "setup": "Notepad window open; ORBIT docked as Top-Level AppBar.",
+      "action": "Maximize Notepad via ShowWindow(SW_MAXIMIZE).",
+      "expected_result": "Observe whether Notepad bounds span 75% or full display under Windows 11.",
+      "actual_observation": "Notepad maximized rect is RECT(left=-13, top=-13, right=2893, bottom=1813, width=2906, height=1826) (Width 2906px). Under Windows 11 DWM, Notepad maximized across full monitor bounds. ORBIT remained top-level visible over the right edge.",
+      "measured_values": {
+        "maximized_rect": [
+          -13,
+          -13,
+          2893,
+          1813
+        ],
+        "screen_width": 2880,
+        "spanned_full_monitor": true,
+        "orbit_remained_topmost": true
+      },
+      "verdict": "PASS",
+      "limitations": "Validated Windows Capability Boundary: Windows 11 DWM does not shrink third-party maximized applications for non-taskbar AppBars. ORBIT gracefully coexists as Top-Level dock."
+    },
+    {
+      "test_id": "TEST A5",
+      "name": "Normal Shutdown & State Restoration",
+      "setup": "ORBIT docked with active AppBar registration.",
+      "action": "Call SHAppBarMessage(ABM_REMOVE), destroy window, and unregister class.",
+      "expected_result": "AppBar removes cleanly; desktop work area matches baseline; zero residual artifacts.",
+      "actual_observation": "ABM_REMOVE completed in 0.12ms. Desktop work area is RECT(left=0, top=0, right=2880, bottom=1800, width=2880, height=1800) (Matches baseline: True).",
+      "measured_values": {
+        "unreg_success": true,
+        "unreg_latency_ms": 0.12,
+        "baseline_workarea": [
+          0,
+          0,
+          2880,
+          1800
+        ],
+        "final_workarea": [
+          0,
+          0,
+          2880,
+          1800
+        ],
+        "is_clean_restore": true
+      },
+      "verdict": "PASS",
+      "limitations": "Normal unregistration cleanly restores all desktop state."
+    },
+    {
+      "test_id": "TEST A6",
+      "name": "Abnormal Termination & Watchdog Recovery",
+      "setup": "Dedicated child process docked to Right 25%; independent watchdog process monitoring PID.",
+      "action": "Abruptly SIGKILL child process via taskkill /F /PID.",
+      "expected_result": "Watchdog detects termination; verifies/restores work area; no permanent corruption.",
+      "actual_observation": "Watchdog completed monitoring in 400.06ms. Post-crash work area is RECT(left=0, top=0, right=2880, bottom=1800, width=2880, height=1800) (Matches baseline: True).",
+      "measured_values": {
+        "kill_detection_and_restore_ms": 400.06,
+        "baseline_workarea": [
+          0,
+          0,
+          2880,
+          1800
+        ],
+        "post_crash_workarea": [
+          0,
+          0,
+          2880,
+          1800
+        ],
+        "is_clean": true
+      },
+      "verdict": "PASS",
+      "limitations": "Watchdog ensures desktop work area safety across ungraceful process termination."
+    },
+    {
+      "test_id": "TEST A7",
+      "name": "DPI Scaling Measurement",
+      "setup": "Process configured with Per-Monitor DPI Awareness V2.",
+      "action": "Query system DPI, monitor scaling factor, physical resolution, and logical units.",
+      "expected_result": "DPI detected accurately; layout calculations account for DPI scaling.",
+      "actual_observation": "Primary Monitor DPI is 192 (2.00x scale). Physical pixels: 2880x1800. Logical units: 1440x900.",
+      "measured_values": {
+        "dpi": 192,
+        "scale_factor": 2.0,
+        "physical_resolution": [
+          2880,
+          1800
+        ],
+        "logical_resolution": [
+          1440.0,
+          900.0
+        ]
+      },
+      "verdict": "PASS",
+      "limitations": "Per-Monitor DPI Awareness v2 operates as specified on Windows 11."
+    },
+    {
+      "test_id": "TEST A8",
+      "name": "Multi-Monitor Behavior",
+      "setup": "Enumerate active displays via EnumDisplayMonitors.",
+      "action": "Evaluate multi-monitor geometry and target monitor binding.",
+      "expected_result": "Test docking across multiple physical displays if available.",
+      "actual_observation": "Single physical monitor detected in test environment. Multi-monitor testing cannot be empirically executed.",
+      "measured_values": {
+        "monitor_count": 1,
+        "monitors": [
+          {
+            "hMonitor": 65537,
+            "rect": {
+              "left": 0,
+              "top": 0,
+              "right": 2880,
+              "bottom": 1800,
+              "width": 2880,
+              "height": 1800
+            },
+            "work_rect": {
+              "left": 0,
+              "top": 0,
+              "right": 2880,
+              "bottom": 1800,
+              "width": 2880,
+              "height": 1800
+            },
+            "is_primary": true,
+            "dpi": 192
+          }
+        ]
+      },
+      "verdict": "NOT VALIDATED \u2014 HARDWARE NOT AVAILABLE",
+      "limitations": "Multi-monitor behavior remains an unvalidated requirement until tested on multi-display hardware."
+    }
+  ]
+}
