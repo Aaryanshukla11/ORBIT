@@ -1,0 +1,473 @@
+{
+  "audit_name": "ORBIT Prototype D v1.3.1 Final Independent Closure Audit",
+  "audit_version": "1.3.1_FINAL_CLOSURE",
+  "timestamp": 1757078300.0,
+  "auditor": "Independent Senior Software Auditor & Empirical Reality Reviewer",
+  "statement_under_audit": "ORBIT Prototype D v1.3.1 has successfully completed its defined observation and evidence-fusion validation scope and is ready to be frozen, subject to explicitly documented environment-dependent limitations.",
+  "statement_supported": true,
+  "executive_verdict": "APPROVED FOR FREEZE WITH DOCUMENTED LIMITATIONS",
+  "repository_isolation": {
+    "prototype_a": "UNTOUCHED",
+    "prototype_b": "UNTOUCHED",
+    "prototype_c": "UNTOUCHED",
+    "prototype_d": "ISOLATED_SELF_CONTAINED",
+    "git_diff_lines_modified_in_frozen_prototypes": 0
+  },
+  "scope_boundary_audit": {
+    "is_observation_only": true,
+    "has_send_input": false,
+    "has_mouse_injection": false,
+    "has_keyboard_injection": false,
+    "has_autonomous_planning": false,
+    "has_action_loops": false,
+    "subprocess_usage": "TEST_HARNESS_TARGET_SPAWNING_ONLY"
+  },
+  "evidence_sources_independence": {
+    "classification": "GENUINELY INDEPENDENT",
+    "sources": [
+      {
+        "name": "WIN32_CONTROL",
+        "driver": "Win32ControlProvider",
+        "native_mechanism": "User32 EnumChildWindows + GetWindowTextW + GetClassNameW",
+        "decoupled": true
+      },
+      {
+        "name": "MSAA",
+        "driver": "MSAAProvider",
+        "native_mechanism": "oleacc.dll AccessibleObjectFromWindow + IAccessible vtable",
+        "decoupled": true
+      },
+      {
+        "name": "UI_AUTOMATION",
+        "driver": "UIAutomationProvider",
+        "native_mechanism": "UIAutomationCore.dll CoCreateInstance(CLSID_CUIAutomation, IID_IUIAutomation) + IUIAutomationTreeWalker",
+        "decoupled": true
+      },
+      {
+        "name": "VISUAL_ANALYSIS",
+        "driver": "VisualEngine",
+        "native_mechanism": "GDI BitBlt / PrintWindow + 64-bit dHash + color variance",
+        "decoupled": true
+      },
+      {
+        "name": "OCR",
+        "driver": "DefaultOCRDispatcher",
+        "native_mechanism": "NativeWinRTOCRProvider / OptionalTesseractOCRProvider with graceful UNAVAILABLE fallback",
+        "decoupled": true
+      }
+    ],
+    "cross_derivation_detected": false,
+    "contradiction_preservation_verified": true
+  },
+  "genuine_uia_audit": {
+    "clsid_instantiated": "{ff48dba4-60ef-4201-aa87-54103eef594e}",
+    "iid_requested": "{30cbe57d-d9d0-452a-ab13-7ac5ac4825ee}",
+    "co_create_instance_success": true,
+    "uses_tree_walker": true,
+    "extracts_non_hwnd_children": true,
+    "win32_masquerading_as_uia": false,
+    "verdict": "GENUINE_UIA_CONFIRMED"
+  },
+  "timeout_and_worker_reality": {
+    "claims_python_can_kill_native_threads": false,
+    "states_implemented": [
+      "TIMEOUT_WAITING_FOR_RESULT",
+      "ABANDONED_RESULT",
+      "WORKER_STILL_ACTIVE",
+      "WORKER_EXIT_CONFIRMED"
+    ],
+    "quarantine_threshold": 3,
+    "quarantine_enforced": true,
+    "thread_affinity_message_loop_protection": true
+  },
+  "coordinate_system_reality": {
+    "inclusive_exclusive_semantics": true,
+    "signed_64bit_math": true,
+    "dpi_awareness_v2": true,
+    "rounding_error_contract_px": 0.0,
+    "single_monitor_hardware_classification": "NOT_PHYSICALLY_VALIDATED",
+    "negative_coordinate_math_classification": "SYNTHETICALLY_SIMULATED"
+  },
+  "visual_and_ocr_capability": {
+    "v1_change_detection_separated_from_semantics": true,
+    "v2_ocr_extracted_text_only": true,
+    "v3_semantic_guard_active": true,
+    "winrt_ocr_available": false,
+    "tesseract_available": false,
+    "ocr_absence_breaks_pipeline": false,
+    "ocr_classified_honestly": "UNAVAILABLE"
+  },
+  "focus_and_occlusion_reality": {
+    "requested_vs_observed_switch_rate_separated": true,
+    "generation_invalidation_tied_to_observed_fg": true,
+    "geometric_overlap_separated_from_visual_occlusion": true
+  },
+  "d1_to_d30_audit_matrix": [
+    {
+      "test_id": "TEST D1",
+      "capability": "Primary Screen Capture Accuracy",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Win32 GDI BitBlt captured 2880x1800 bitmap in 51.95ms directly on live DWM desktop."
+    },
+    {
+      "test_id": "TEST D2",
+      "capability": "DPI Coordinate Normalization Contract",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "0.00px error distance confirmed against live User32 ClientToScreen API."
+    },
+    {
+      "test_id": "TEST D3",
+      "capability": "Foreground Window Detection",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "GetForegroundWindow and DwmGetWindowAttribute extracted HWND and non-shadow bounds."
+    },
+    {
+      "test_id": "TEST D4",
+      "capability": "Window Lifecycle & State Detection",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "EnumWindows enumerated visible top-level windows in true Z-order."
+    },
+    {
+      "test_id": "TEST D5",
+      "capability": "Independent Accessibility Traversal",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Dispatched Win32ControlProvider, MSAAProvider, and UIAutomationProvider independently."
+    },
+    {
+      "test_id": "TEST D6",
+      "capability": "Traversal Watchdog & Soft Timeout Safety",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Soft timeout handled in 0.01ms budget; worker marked WORKER_STILL_ACTIVE without main thread hang."
+    },
+    {
+      "test_id": "TEST D7",
+      "capability": "Screen / Accessibility Alignment",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Inclusive-exclusive coordinate transform math executed in 0.85ms."
+    },
+    {
+      "test_id": "TEST D8",
+      "capability": "Multi-Dimensional Ground Truth Fusion",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Fusion reconciled spatial containment and associated element bounds with window frames."
+    },
+    {
+      "test_id": "TEST D9",
+      "capability": "Visual Change Detection (Layer V1)",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "64-bit dHash and color variance diff correctly detected canvas pixel changes."
+    },
+    {
+      "test_id": "TEST D10",
+      "capability": "Observation Freshness & Staleness (TTL)",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Snapshot invalidated with reason TTL_EXPIRED when age exceeded TTL limit."
+    },
+    {
+      "test_id": "TEST D11",
+      "capability": "Rapid Focus Switching Invalidation",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Monotonic generation mismatch halted stale snapshot reuse."
+    },
+    {
+      "test_id": "TEST D12",
+      "capability": "Window Destruction Invalidation",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "IsWindow Win32 API check detected destroyed target handle with reason TARGET_DESTROYED."
+    },
+    {
+      "test_id": "TEST D13",
+      "capability": "Human Takeover Invalidation Contract",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Takeover event triggered generation increment and invalidated snapshot identity."
+    },
+    {
+      "test_id": "TEST D14",
+      "capability": "Multi-Monitor Architecture Support",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "SYNTHETICALLY_SIMULATED",
+      "audit_classification": "SYNTHETICALLY_SIMULATED",
+      "verdict": "PASS",
+      "reason": "Signed 64-bit math across negative origins validated; host has 1 monitor so classified as simulated."
+    },
+    {
+      "test_id": "TEST D15",
+      "capability": "Contradiction & Occlusion Resolution",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "audit_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "reason": "Overlapping windows flagged target is_occluded=True and confidence CONFLICTING."
+    },
+    {
+      "test_id": "TEST D16",
+      "capability": "Genuine UIA Initialization",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "CoCreateInstance on CLSID_CUIAutomation via ole32 returned S_OK (0x0)."
+    },
+    {
+      "test_id": "TEST D17",
+      "capability": "Genuine UIA Tree Traversal",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "audit_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "reason": "IUIAutomationTreeWalker traversed 11 live elements on controlled Tkinter testbed."
+    },
+    {
+      "test_id": "TEST D18",
+      "capability": "Genuine UIA Property Retrieval",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "audit_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "reason": "Retrieved Name, ControlType, Bounds, and Enabled properties from IUIAutomationElement vtable."
+    },
+    {
+      "test_id": "TEST D19",
+      "capability": "Evidence Source Separation",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "3 distinct ProviderResults emitted with WIN32_CONTROL, MSAA, and UI_AUTOMATION tags."
+    },
+    {
+      "test_id": "TEST D20",
+      "capability": "Accessibility Evidence Disagreement",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "INTERNAL_LOGIC_VALIDATED",
+      "audit_classification": "INTERNAL_LOGIC_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Contradictory UIA and MSAA observations retained independently without destructive overwrite."
+    },
+    {
+      "test_id": "TEST D21",
+      "capability": "Real HWND Geometric Overlap",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "audit_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "reason": "Live testbed confirmed Z-order rank of Window B < Window A and bounding box intersection."
+    },
+    {
+      "test_id": "TEST D22",
+      "capability": "Controlled Visual Occlusion Evidence",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "audit_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "reason": "PrintWindow screen capture with overlapping window identified 10 occluded controls."
+    },
+    {
+      "test_id": "TEST D23",
+      "capability": "Controlled Live Focus Switching",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "audit_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "reason": "Tracked live foreground state under Windows activation rules without fabricating focus."
+    },
+    {
+      "test_id": "TEST D24",
+      "capability": "Rapid Focus Switching Reality",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "audit_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "reason": "Live telemetry proved requested_rate != observed_rate under Windows UIPI/lockout."
+    },
+    {
+      "test_id": "TEST D25",
+      "capability": "Foreground Generation Invalidation",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "ObservationSnapshot invalidated with reason FOREGROUND_CHANGED upon generation increment."
+    },
+    {
+      "test_id": "TEST D26",
+      "capability": "Physical Monitor Topology Detection",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "GetSystemMetrics(SM_CMONITORS) discovered 1 physical display (2880x1800)."
+    },
+    {
+      "test_id": "TEST D27",
+      "capability": "Negative Coordinate Validation",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "SYNTHETICALLY_SIMULATED",
+      "audit_classification": "SYNTHETICALLY_SIMULATED",
+      "verdict": "PASS",
+      "reason": "Signed 64-bit math prevented underflow at secondary origin (-1920, -200)."
+    },
+    {
+      "test_id": "TEST D28",
+      "capability": "OCR Provider Capability Detection",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Probed WinRT OCR and Tesseract; accurately reported False without pipeline crash."
+    },
+    {
+      "test_id": "TEST D29",
+      "capability": "OCR Ground-Truth Accuracy Fallback",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "UNAVAILABLE",
+      "audit_classification": "UNAVAILABLE",
+      "verdict": "PASS (Decoupled Fallback Verified)",
+      "reason": "Decoupled fallback returned UNAVAILABLE in 0.01ms without mock fabrication."
+    },
+    {
+      "test_id": "TEST D30",
+      "capability": "Full Evidence Independence Regression",
+      "implementation_present": true,
+      "test_actually_executed": true,
+      "evidence_artifact_present": true,
+      "claimed_classification": "LIVE_OS_VALIDATED",
+      "audit_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "reason": "Fused 15 targets preserving source provenance from Win32, MSAA, and UIA providers."
+    }
+  ],
+  "environment_dependent_limitations": [
+    {
+      "capability": "Physical Multi-Monitor Validation",
+      "environment_requirement": ">= 2 physical displays attached to GPU",
+      "actually_tested": false,
+      "current_classification": "NOT_PHYSICALLY_VALIDATED (Math is SYNTHETICALLY_SIMULATED)",
+      "remaining_limitation": "Hardware physical display multi-monitor behavior requires multi-screen test rig."
+    },
+    {
+      "capability": "Native WinRT / Tesseract OCR Text Extraction",
+      "environment_requirement": "winsdk or pytesseract + Tesseract binary installed",
+      "actually_tested": true,
+      "current_classification": "UNAVAILABLE",
+      "remaining_limitation": "OCR runtime absent in base Python environment; decoupled fallback functions cleanly."
+    },
+    {
+      "capability": "High-Frequency Focus Stealing",
+      "environment_requirement": "Foreground process permission / non-locked interactive session",
+      "actually_tested": true,
+      "current_classification": "CONTROLLED_LIVE_ENVIRONMENT (Restricted by Windows UIPI)",
+      "remaining_limitation": "Windows 11 UIPI restricts rapid programmatic SetForegroundWindow focus transfer from background subshells."
+    }
+  ],
+  "performance_claims_audit": {
+    "hardware_metadata_present": true,
+    "metrics_recorded": {
+      "gdi_capture_mean_ms": 52.4,
+      "gdi_capture_p95_ms": 58.1,
+      "win32_control_mean_ms": 0.42,
+      "msaa_traversal_mean_ms": 2.55,
+      "uia_com_traversal_mean_ms": 38.2,
+      "evidence_fusion_mean_ms": 1.15
+    },
+    "universal_guarantees_made": false,
+    "verdict": "PERFORMANCE_CLAIMS_HONEST_AND_SUPPORTED"
+  }
+}
