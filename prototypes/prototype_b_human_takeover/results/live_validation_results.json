@@ -1,0 +1,208 @@
+{
+  "timestamp": 1788608482.5519652,
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]",
+    "display": [
+      1440,
+      900
+    ],
+    "dpi_scale": 2.0
+  },
+  "latency_profiling_stages": {
+    "hook_to_classification_us": {
+      "mean": 52.38,
+      "median": 27.5,
+      "p95": 262.0,
+      "max": 467.5
+    },
+    "classification_to_takeover_us": {
+      "mean": 1435.29,
+      "median": 922.2,
+      "p95": 2649.5,
+      "max": 7424.2
+    },
+    "takeover_to_cancel_signal_us": {
+      "mean": 38.48,
+      "median": 0.6,
+      "p95": 250.8,
+      "max": 438.0
+    },
+    "cancel_signal_to_worker_stop_us": {
+      "mean": 15851.62,
+      "median": 20314.7,
+      "p95": 21789.9,
+      "max": 21882.5
+    },
+    "total_observed_pipeline_latency_us": {
+      "mean": 17377.76,
+      "median": 21435.4,
+      "p95": 24359.5,
+      "max": 27961.9
+    }
+  },
+  "test_cases": [
+    {
+      "test_id": "TEST B-L1",
+      "scenario_name": "Physical Mouse Takeover During Flight",
+      "run_count": 10,
+      "validation_type": "SYNTHETIC PERTURBATION ON LIVE FLIGHT",
+      "expected_behavior": "Autonomous flight cancelled immediately; state transitions to PAUSED_BY_USER.",
+      "observed_behavior": "100% success across 10 runs. State locked to PAUSED_BY_USER without cursor fighting.",
+      "stage_latencies_us": {
+        "hook_to_classification_us": 25.18,
+        "classification_to_takeover_us": 818.04,
+        "takeover_to_cancel_signal_us": 0.78,
+        "cancel_signal_to_worker_stop_us": 1788.3,
+        "total_pipeline_latency_us": 2632.3
+      },
+      "state_transitions": [
+        "IDLE",
+        "EXECUTING",
+        "SUSPECTED_TAKEOVER",
+        "PAUSED_BY_USER"
+      ],
+      "verdict": "PASS",
+      "notes": "Verified instantaneous cancellation across 10 iterations."
+    },
+    {
+      "test_id": "TEST B-L2",
+      "scenario_name": "Physical Mouse Click Takeover",
+      "run_count": 10,
+      "validation_type": "SYNTHETIC PERTURBATION ON LIVE FLIGHT",
+      "expected_behavior": "Instant pause on LBUTTON_DOWN regardless of cursor position.",
+      "observed_behavior": "100% pause triggered across 10 runs.",
+      "stage_latencies_us": {
+        "hook_to_classification_us": 29.689999999999998,
+        "classification_to_takeover_us": 1968.27,
+        "takeover_to_cancel_signal_us": 0.5599999999999999,
+        "cancel_signal_to_worker_stop_us": 20530.629999999997,
+        "total_pipeline_latency_us": 22529.15
+      },
+      "state_transitions": [
+        "IDLE",
+        "EXECUTING",
+        "SUSPECTED_TAKEOVER",
+        "PAUSED_BY_USER"
+      ],
+      "verdict": "PASS",
+      "notes": "Physical clicks unconditionally supersede autonomous actions."
+    },
+    {
+      "test_id": "TEST B-L3",
+      "scenario_name": "Physical Keyboard Takeover",
+      "run_count": 10,
+      "validation_type": "SYNTHETIC PERTURBATION ON LIVE FLIGHT",
+      "expected_behavior": "Instant pause on KEY_DOWN (ESC, Spacebar, any key).",
+      "observed_behavior": "100% pause triggered across 10 runs.",
+      "stage_latencies_us": {
+        "hook_to_classification_us": 57.39,
+        "classification_to_takeover_us": 1022.5899999999999,
+        "takeover_to_cancel_signal_us": 0.48,
+        "cancel_signal_to_worker_stop_us": 20568.21,
+        "total_pipeline_latency_us": 21648.670000000002
+      },
+      "state_transitions": [
+        "IDLE",
+        "EXECUTING",
+        "SUSPECTED_TAKEOVER",
+        "PAUSED_BY_USER"
+      ],
+      "verdict": "PASS",
+      "notes": "Keystrokes instantly yield computer control to user."
+    },
+    {
+      "test_id": "TEST B-L4",
+      "scenario_name": "Drag Interruption & Button Sanitation",
+      "run_count": 10,
+      "validation_type": "SYNTHETIC PERTURBATION ON LIVE FLIGHT",
+      "expected_behavior": "Drag aborted, mouse button safely released, state moves to PAUSED_BY_USER.",
+      "observed_behavior": "100% clean release across 10 runs without sticky mouse buttons.",
+      "stage_latencies_us": {
+        "hook_to_classification_us": 97.24,
+        "classification_to_takeover_us": 1932.2400000000002,
+        "takeover_to_cancel_signal_us": 152.09,
+        "cancel_signal_to_worker_stop_us": 20519.35,
+        "total_pipeline_latency_us": 22700.920000000002
+      },
+      "state_transitions": [
+        "IDLE",
+        "EXECUTING",
+        "SUSPECTED_TAKEOVER",
+        "PAUSED_BY_USER"
+      ],
+      "verdict": "PASS",
+      "notes": "Sanitized button release prevents orphaned OS drag states."
+    },
+    {
+      "test_id": "TEST B-L5",
+      "scenario_name": "Injected vs Physical Input Classification Boundary",
+      "run_count": 5,
+      "validation_type": "INTERNAL LOGIC & STRUCTURAL VALIDATION",
+      "expected_behavior": "Exact categorization based on LLMHF_INJECTED flags and ORBIT session signature.",
+      "observed_behavior": "All 5 event categories classified deterministically with 100% accuracy.",
+      "stage_latencies_us": {
+        "total_pipeline_latency_us": 1.2
+      },
+      "state_transitions": [
+        "N/A (Classification Layer)"
+      ],
+      "verdict": "PASS",
+      "notes": "Known OS limitation: dwExtraInfo is unauthenticated user-space metadata."
+    },
+    {
+      "test_id": "TEST B-L6",
+      "scenario_name": "Ambiguity Safety Invariant (Ambiguous -> Pause)",
+      "run_count": 1,
+      "validation_type": "SYNTHETIC SAFETY VALIDATION",
+      "expected_behavior": "Any unauthenticated synthetic input causes immediate pause.",
+      "observed_behavior": "Transitioned to PAUSED_BY_USER. Autonomous injection halted.",
+      "stage_latencies_us": {
+        "total_pipeline_latency_us": 1.4
+      },
+      "state_transitions": [
+        "IDLE",
+        "EXECUTING",
+        "SUSPECTED_TAKEOVER",
+        "PAUSED_BY_USER"
+      ],
+      "verdict": "PASS",
+      "notes": "Non-negotiable safety invariant: AMBIGUOUS INPUT -> PAUSE ORBIT."
+    },
+    {
+      "test_id": "TEST B-L7",
+      "scenario_name": "Trajectory Envelope Practical Sensitivity",
+      "run_count": 2,
+      "validation_type": "INTERNAL LOGIC VALIDATION",
+      "expected_behavior": "Small natural deviations (<10px) tolerated; intentional deviations (>36px) trigger takeover.",
+      "observed_behavior": "Zero false takeover during small jitter; deterministic takeover on intentional pull.",
+      "stage_latencies_us": {
+        "total_pipeline_latency_us": 1.1
+      },
+      "state_transitions": [
+        "EXECUTING (held)",
+        "PAUSED_BY_USER (on deviation)"
+      ],
+      "verdict": "PASS",
+      "notes": "Classified as Engineering Heuristic with Practical Validation."
+    },
+    {
+      "test_id": "TEST B-L8",
+      "scenario_name": "No Silent Automatic Resume Safety",
+      "run_count": 1,
+      "validation_type": "INTERNAL LOGIC & TEMPORAL SAFETY VALIDATION",
+      "expected_behavior": "Quiet period moves state to RELEASE_PENDING; holds indefinitely without auto-replay.",
+      "observed_behavior": "State holds securely at RELEASE_PENDING. No autonomous actions replayed.",
+      "stage_latencies_us": {
+        "total_pipeline_latency_us": 0.0
+      },
+      "state_transitions": [
+        "PAUSED_BY_USER",
+        "RELEASE_PENDING (holding)"
+      ],
+      "verdict": "PASS",
+      "notes": "Strictly enforces: USER OWNS COMPUTER; AI MUST RE-OBSERVE BEFORE RESUMING."
+    }
+  ],
+  "final_verdict": "PROTOTYPE B \u2014 PASS"
+}

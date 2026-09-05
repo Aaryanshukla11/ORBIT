@@ -63,6 +63,35 @@ class InputEvent:
 
 
 @dataclass
+class PipelineLatencyRecord:
+    t1_hook_receive_ns: int = 0
+    t2_classified_ns: int = 0
+    t3_takeover_detected_ns: int = 0
+    t4_cancel_issued_ns: int = 0
+    t5_worker_stopped_ns: int = 0
+
+    @property
+    def hook_to_classification_us(self) -> float:
+        return max(0.0, (self.t2_classified_ns - self.t1_hook_receive_ns) / 1000.0)
+
+    @property
+    def classification_to_takeover_us(self) -> float:
+        return max(0.0, (self.t3_takeover_detected_ns - self.t2_classified_ns) / 1000.0)
+
+    @property
+    def takeover_to_cancel_signal_us(self) -> float:
+        return max(0.0, (self.t4_cancel_issued_ns - self.t3_takeover_detected_ns) / 1000.0)
+
+    @property
+    def cancel_signal_to_worker_stop_us(self) -> float:
+        return max(0.0, (self.t5_worker_stopped_ns - self.t4_cancel_issued_ns) / 1000.0)
+
+    @property
+    def total_pipeline_latency_us(self) -> float:
+        return max(0.0, (self.t5_worker_stopped_ns - self.t1_hook_receive_ns) / 1000.0)
+
+
+@dataclass
 class TelemetryRecord:
     event_id: int
     timestamp_ms: float
@@ -75,3 +104,5 @@ class TelemetryRecord:
     input_source: str
     decision: str  # "CONTINUE", "PAUSE_REQUESTED", "HOLD_PAUSED", "RELEASE_DETECTED"
     decision_latency_us: float  # microseconds
+    pipeline_latency: Optional[PipelineLatencyRecord] = None
+
