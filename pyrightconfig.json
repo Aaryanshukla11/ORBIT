@@ -1,0 +1,15 @@
+{
+  "include": [
+    "src",
+    "tests",
+    "prototypes"
+  ],
+  "extraPaths": [
+    "src",
+    "prototypes/prototype_a_workspace",
+    "prototypes/prototype_b_human_takeover",
+    "prototypes/prototype_c_keyboard",
+    "prototypes/prototype_d_observation",
+    "prototypes/prototype_e_pointer"
+  ]
+}

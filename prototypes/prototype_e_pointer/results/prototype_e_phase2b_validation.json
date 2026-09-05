@@ -1,0 +1,557 @@
+{
+  "metadata": {
+    "suite_name": "ORBIT Prototype E \u2014 Phase 2B Formal Acceptance Validation",
+    "version": "2.3.0",
+    "timestamp_utc": "2026-09-05T20:21:28Z",
+    "host_os": "Windows 11 Build 26200 AMD64",
+    "python_version": "3.13.7",
+    "virtual_desktop": {
+      "origin": [
+        0,
+        0
+      ],
+      "dimensions": [
+        2880,
+        1800
+      ],
+      "monitor_count": 1
+    },
+    "original_cursor_pos": [
+      2671,
+      1459
+    ],
+    "non_action_invariant_verified": true,
+    "button_actions_present": false
+  },
+  "summary": {
+    "total_executed": 24,
+    "passed": 24,
+    "failed": 0,
+    "verdict": "PASS"
+  },
+  "telemetry_summary": {
+    "total_movements": 6,
+    "latency_statistics": {
+      "count": 6,
+      "mean_us": 1573.63,
+      "median_us": 1480.15,
+      "min_us": 979.3,
+      "max_us": 2288.0
+    },
+    "delta_statistics": {
+      "max_delta_x": 0,
+      "max_delta_y": 0,
+      "mean_delta_x": 0,
+      "mean_delta_y": 0
+    },
+    "records": [
+      {
+        "target": [
+          720,
+          450
+        ],
+        "observed": [
+          720,
+          450
+        ],
+        "delta_px": [
+          0,
+          0
+        ],
+        "duration_us": 1673.6,
+        "status": "MOVEMENT_VERIFIED"
+      },
+      {
+        "target": [
+          2160,
+          450
+        ],
+        "observed": [
+          2160,
+          450
+        ],
+        "delta_px": [
+          0,
+          0
+        ],
+        "duration_us": 1995.9,
+        "status": "MOVEMENT_VERIFIED"
+      },
+      {
+        "target": [
+          1440,
+          900
+        ],
+        "observed": [
+          1440,
+          900
+        ],
+        "delta_px": [
+          0,
+          0
+        ],
+        "duration_us": 979.3,
+        "status": "MOVEMENT_VERIFIED"
+      },
+      {
+        "target": [
+          720,
+          1350
+        ],
+        "observed": [
+          720,
+          1350
+        ],
+        "delta_px": [
+          0,
+          0
+        ],
+        "duration_us": 1218.3,
+        "status": "MOVEMENT_VERIFIED"
+      },
+      {
+        "target": [
+          2160,
+          1350
+        ],
+        "observed": [
+          2160,
+          1350
+        ],
+        "delta_px": [
+          0,
+          0
+        ],
+        "duration_us": 2288.0,
+        "status": "MOVEMENT_VERIFIED"
+      },
+      {
+        "target": [
+          2671,
+          1459
+        ],
+        "observed": [
+          2671,
+          1459
+        ],
+        "delta_px": [
+          0,
+          0
+        ],
+        "duration_us": 1286.7,
+        "status": "MOVEMENT_VERIFIED",
+        "is_restoration": true
+      }
+    ]
+  },
+  "tests": [
+    {
+      "test_id": "P2B-1",
+      "name": "Named Flag Composition (C1)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "MOUSEEVENTF_MOVE": "0x1",
+        "MOUSEEVENTF_ABSOLUTE": "0x8000",
+        "MOUSEEVENTF_VIRTUALDESK": "0x4000",
+        "composed_flags": "0xc001",
+        "decimal_value": 49153
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-2",
+      "name": "Runtime ABI Gate Requirement",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "is_injection_enabled": true,
+        "abi_status": "ABI_VALID",
+        "sizeof_input": 40,
+        "sizeof_mouseinput": 32
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-3",
+      "name": "Zero-Action Rejection on Bad ABI",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "ABI_INVALID",
+        "accepted_packets": 0,
+        "error": "Fail-closed ABI gate rejected dispatch: INPUT structure size mismatch: expected 40 bytes, got 48"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-4",
+      "name": "Same Topology Identity, Different Timestamps (C2 Case 1)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "obs1_timestamp": 1000,
+        "obs2_timestamp": 5000000,
+        "matches": true
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-5",
+      "name": "Virtual Desktop Width Mutation (C2 Case 2)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "REJECTED_TOPOLOGY_MUTATED",
+        "accepted_packets": 0,
+        "error": "Display topology mutated before dispatch: Initial=VirtualDesktopTopologyIdentity(origin_x=0, origin_y=0, width=2880, height=1800, monitor_count=1) vs Current=VirtualDesktopTopologyIdentity(origin_x=0, origin_y=0, width=2980, height=1800, monitor_count=1)"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-6",
+      "name": "Virtual Desktop Height Mutation (C2 Case 3)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "REJECTED_TOPOLOGY_MUTATED",
+        "accepted_packets": 0
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-7",
+      "name": "Virtual Desktop Origin Mutation (C2 Case 4)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "REJECTED_TOPOLOGY_MUTATED",
+        "accepted_packets": 0
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-8",
+      "name": "Monitor Count Mutation (C2 Case 5)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "REJECTED_TOPOLOGY_MUTATED",
+        "accepted_packets": 0
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-9",
+      "name": "Single-Packet SendInput M=1 Classification (C4)",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "accepted_packets": 1,
+        "status": "MOVEMENT_VERIFIED",
+        "observed_pos": [
+          1440,
+          900
+        ]
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-10",
+      "name": "Single-Packet SendInput M=0 Classification (C4)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "DISPATCH_ZERO",
+        "diagnostic_reason": "SENDINPUT_FAILED",
+        "error": "SendInput returned 0 (Win32 GetLastError=0); zero packets accepted"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-11",
+      "name": "Partial Dispatch Inapplicability for N=1 (C4)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "enum_value": "DISPATCH_PARTIAL_NOT_APPLICABLE",
+        "packet_count_N": 1,
+        "possible_M_values": [
+          0,
+          1
+        ]
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-12",
+      "name": "Absolute Movement to Desktop Center",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "requested": [
+          1440,
+          900
+        ],
+        "observed": [
+          1440,
+          900
+        ],
+        "delta": [
+          0,
+          0
+        ],
+        "status": "MOVEMENT_VERIFIED",
+        "duration_us": 2698.6
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-13",
+      "name": "Top-Left Virtual Desktop Mapping",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "requested": [
+          0,
+          0
+        ],
+        "observed": [
+          0,
+          0
+        ],
+        "delta": [
+          0,
+          0
+        ]
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-14",
+      "name": "Bottom-Right Virtual Desktop Mapping",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "requested": [
+          2879,
+          1799
+        ],
+        "observed": [
+          2879,
+          1799
+        ],
+        "delta": [
+          0,
+          0
+        ]
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-15",
+      "name": "Negative-Origin Synthetic Topology Math",
+      "passed": true,
+      "reality_classification": "SYNTHETICALLY_SIMULATED",
+      "evidence": {
+        "origin_normalized": [
+          0,
+          0
+        ],
+        "max_normalized": [
+          65535,
+          65535
+        ]
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-16",
+      "name": "Out-of-Bounds Movement Rejection",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "status": "REJECTED_OUT_OF_BOUNDS",
+        "accepted_packets": 0,
+        "error": "Coordinate (99999, 99999) is outside virtual desktop bounds [0..2880), [0..1800)"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-17",
+      "name": "Cursor Readback Mismatch Classification (C3)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "CURSOR_READBACK_MISMATCH",
+        "diagnostic_reason": "EXTERNAL_CURSOR_INTERFERENCE_POSSIBLE",
+        "delta_px": [
+          25,
+          30
+        ],
+        "error": "Cursor readback (1465, 930) differed from requested (1440, 900) by delta (25, 30)px (tolerance: \u00b11px)"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-18",
+      "name": "Tolerance Multi-Point Verification (5 Points) (C5)",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "points_tested": 5,
+        "results": [
+          {
+            "requested": [
+              720,
+              450
+            ],
+            "observed": [
+              720,
+              450
+            ],
+            "delta": [
+              0,
+              0
+            ],
+            "status": "MOVEMENT_VERIFIED",
+            "duration_us": 1673.6
+          },
+          {
+            "requested": [
+              2160,
+              450
+            ],
+            "observed": [
+              2160,
+              450
+            ],
+            "delta": [
+              0,
+              0
+            ],
+            "status": "MOVEMENT_VERIFIED",
+            "duration_us": 1995.9
+          },
+          {
+            "requested": [
+              1440,
+              900
+            ],
+            "observed": [
+              1440,
+              900
+            ],
+            "delta": [
+              0,
+              0
+            ],
+            "status": "MOVEMENT_VERIFIED",
+            "duration_us": 979.3
+          },
+          {
+            "requested": [
+              720,
+              1350
+            ],
+            "observed": [
+              720,
+              1350
+            ],
+            "delta": [
+              0,
+              0
+            ],
+            "status": "MOVEMENT_VERIFIED",
+            "duration_us": 1218.3
+          },
+          {
+            "requested": [
+              2160,
+              1350
+            ],
+            "observed": [
+              2160,
+              1350
+            ],
+            "delta": [
+              0,
+              0
+            ],
+            "status": "MOVEMENT_VERIFIED",
+            "duration_us": 2288.0
+          }
+        ]
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-19",
+      "name": "Pre-Dispatch Cancellation (CP1-CP4)",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "status": "CANCELLED_BEFORE_DISPATCH",
+        "accepted_packets": 0,
+        "error": "Action cancelled before coordinate processing: User requested emergency stop"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-20",
+      "name": "Post-Dispatch Cancellation (CP5-CP7) (C3)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "CANCELLED_AFTER_DISPATCH",
+        "accepted_packets": 1,
+        "error": "Cancellation observed after SendInput accepted the packet"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-21",
+      "name": "Phase 1 Regression Suite (14/14 Tests)",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "phase1_total": 14,
+        "phase1_passed": 14
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-22",
+      "name": "Phase 2A Regression Suite (10/10 Tests)",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "phase2a_total": 10,
+        "phase2a_passed": 10
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-23",
+      "name": "ActionCounter SendInput Instrumentation Verification",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "delta_sendinput_calls": 1,
+        "accepted_packets": 1
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2B-24",
+      "name": "Zero-Click Non-Invasive Invariant Verification",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "pointer_controller_has_click_flags": false,
+        "movement_only_verified": true
+      },
+      "error_message": null
+    }
+  ]
+}

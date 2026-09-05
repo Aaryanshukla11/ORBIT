@@ -1,0 +1,150 @@
+{
+  "timestamp": "2026-09-05 22:36:09",
+  "total_tests": 10,
+  "passed_tests": 10,
+  "failed_tests": 0,
+  "verdict": "PHASE_2A_PASSED",
+  "live_abi_result": {
+    "is_valid": true,
+    "status": "ABI_VALID",
+    "platform_system": "win32",
+    "machine_arch": "AMD64",
+    "pointer_width_bytes": 8,
+    "sizeof_mouseinput": 32,
+    "sizeof_input": 40,
+    "offset_dx": 0,
+    "offset_dwflags": 12,
+    "offset_dwextrainfo": 24,
+    "offset_input_union": 8,
+    "is_pointer_sized_extrainfo": true,
+    "error_message": null,
+    "validation_timestamp_ns": 39375683150400
+  },
+  "results": [
+    {
+      "test_id": "P2A-1",
+      "name": "Supported Platform and Architecture Detection",
+      "status": "PASS",
+      "evidence_classification": "LIVE_OS_VALIDATED",
+      "details": {
+        "platform": "win32",
+        "machine": "AMD64",
+        "architecture_supported": true
+      },
+      "error_message": ""
+    },
+    {
+      "test_id": "P2A-2",
+      "name": "Pointer-Width Detection (64-bit AMD64)",
+      "status": "PASS",
+      "evidence_classification": "LIVE_OS_VALIDATED",
+      "details": {
+        "pointer_width_bytes": 8,
+        "pointer_width_bits": 64,
+        "is_64bit": true
+      },
+      "error_message": ""
+    },
+    {
+      "test_id": "P2A-3",
+      "name": "MOUSEINPUT Runtime Structure Size Validation",
+      "status": "PASS",
+      "evidence_classification": "LIVE_OS_VALIDATED",
+      "details": {
+        "measured_sizeof_bytes": 32,
+        "expected_sizeof_bytes": 32,
+        "matches": true
+      },
+      "error_message": ""
+    },
+    {
+      "test_id": "P2A-4",
+      "name": "INPUT Runtime Structure Size Validation",
+      "status": "PASS",
+      "evidence_classification": "LIVE_OS_VALIDATED",
+      "details": {
+        "measured_sizeof_bytes": 40,
+        "expected_sizeof_bytes": 40,
+        "matches": true
+      },
+      "error_message": ""
+    },
+    {
+      "test_id": "P2A-5",
+      "name": "MOUSEINPUT.dx Field Offset Validation",
+      "status": "PASS",
+      "evidence_classification": "LIVE_OS_VALIDATED",
+      "details": {
+        "measured_offset": 0,
+        "expected_offset": 0,
+        "matches": true
+      },
+      "error_message": ""
+    },
+    {
+      "test_id": "P2A-6",
+      "name": "MOUSEINPUT.dwFlags Field Offset Validation",
+      "status": "PASS",
+      "evidence_classification": "LIVE_OS_VALIDATED",
+      "details": {
+        "measured_offset": 12,
+        "expected_offset": 12,
+        "matches": true
+      },
+      "error_message": ""
+    },
+    {
+      "test_id": "P2A-7",
+      "name": "MOUSEINPUT.dwExtraInfo Offset & Pointer-Size Validation",
+      "status": "PASS",
+      "evidence_classification": "LIVE_OS_VALIDATED",
+      "details": {
+        "measured_offset": 24,
+        "expected_offset": 24,
+        "extra_info_size_bytes": 8,
+        "matches": true
+      },
+      "error_message": ""
+    },
+    {
+      "test_id": "P2A-8",
+      "name": "INPUT.union Field Offset Validation",
+      "status": "PASS",
+      "evidence_classification": "LIVE_OS_VALIDATED",
+      "details": {
+        "measured_offset": 8,
+        "expected_offset": 8,
+        "matches": true
+      },
+      "error_message": ""
+    },
+    {
+      "test_id": "P2A-9",
+      "name": "Fail-Closed Behavior Under Simulated ABI Mismatch",
+      "status": "PASS",
+      "evidence_classification": "INTERNAL_LOGIC_VALIDATED",
+      "details": {
+        "bad_size_rejected": true,
+        "bad_size_reason": "ABI_MISMATCH",
+        "bad_offset_rejected": true,
+        "bad_offset_reason": "ABI_MISMATCH",
+        "bad_plat_rejected": true,
+        "bad_plat_reason": "UNSUPPORTED_PROCESS_ARCHITECTURE",
+        "live_gate_valid": true
+      },
+      "error_message": ""
+    },
+    {
+      "test_id": "P2A-10",
+      "name": "Zero-Action Invariant Verification",
+      "status": "PASS",
+      "evidence_classification": "INTERNAL_LOGIC_VALIDATED",
+      "details": {
+        "phase2a_actions_emitted": 0,
+        "local_counter_total": 0,
+        "is_zero_action": true
+      },
+      "error_message": ""
+    }
+  ]
+}

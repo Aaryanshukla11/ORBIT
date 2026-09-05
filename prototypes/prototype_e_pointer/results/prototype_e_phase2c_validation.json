@@ -1,0 +1,336 @@
+{
+  "metadata": {
+    "suite_name": "ORBIT Prototype E \u2014 Phase 2C Formal Acceptance Validation",
+    "version": "2.4.0",
+    "timestamp_utc": "2026-09-05T20:21:28Z",
+    "host_os": "Windows 11 Build 26200 AMD64",
+    "python_version": "3.13.7",
+    "initial_cursor_pos": [
+      2672,
+      1459
+    ],
+    "primary_invariant": "ORBIT MUST NEVER LOSE TRACK OF A SYNTHETIC BUTTON STATE",
+    "live_actions_performed": [
+      {
+        "action": "LEFTDOWN",
+        "status": "SUCCESS"
+      },
+      {
+        "action": "LEFTUP",
+        "status": "SUCCESS"
+      },
+      {
+        "action": "LEFTDOWN",
+        "status": "SUCCESS"
+      },
+      {
+        "action": "LEFTUP",
+        "status": "SUCCESS"
+      },
+      {
+        "action": "SEQUENTIAL_CLICK",
+        "status": "SUCCESS"
+      },
+      {
+        "action": "COMPOSITE_ARRAY_CLICK",
+        "status": "SUCCESS"
+      },
+      {
+        "action": "MID_CLICK_CANCEL_SANITIZED",
+        "sanitized": true
+      },
+      {
+        "action": "INSTRUMENTED_DOWN_UP"
+      }
+    ]
+  },
+  "summary": {
+    "total_executed": 23,
+    "passed": 23,
+    "failed": 0,
+    "verdict": "PASS"
+  },
+  "tests": [
+    {
+      "test_id": "P2C-1",
+      "name": "Single DOWN Dispatch Success",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "down_status": "SUCCESS",
+        "resulting_state": "PRESSED",
+        "transaction_state": "ORBIT_BUTTON_DOWN",
+        "accepted_packets": 1,
+        "cleanup_up_status": "SUCCESS"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-2",
+      "name": "Single UP Dispatch Success",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "up_status": "SUCCESS",
+        "resulting_state": "RELEASED",
+        "transaction_state": "IDLE",
+        "accepted_packets": 1
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-3",
+      "name": "Double-DOWN Rejection",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "REJECTED_ALREADY_DOWN",
+        "accepted_packets": 0,
+        "error": "Synthetic button is already in PRESSED state; duplicate DOWN rejected."
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-4",
+      "name": "Redundant-UP Rejection",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "REJECTED_ALREADY_UP",
+        "accepted_packets": 0,
+        "error": "Synthetic button is already in RELEASED state; redundant UP rejected."
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-5",
+      "name": "Sequential Press-and-Release Click Transaction",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "status": "SUCCESS",
+        "total_accepted_packets": 2,
+        "dwell_ms": 10.0,
+        "duration_us": 12615.8
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-6",
+      "name": "Composite Array Click Dispatch (N=2, M=2)",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "status": "SUCCESS",
+        "total_accepted_packets": 2,
+        "duration_us": 2655.6
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-7",
+      "name": "Pre-DOWN Cancellation Checkpoint",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "status": "CANCELLED_BEFORE_DISPATCH",
+        "accepted_packets": 0,
+        "error": "Action cancelled before DOWN dispatch: User cancelled before DOWN"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-8",
+      "name": "Pre-UP Cancellation Checkpoint",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "status": "CANCELLED_BEFORE_DISPATCH",
+        "accepted_packets": 0,
+        "error": "Action cancelled before UP dispatch: User cancelled before UP"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-9",
+      "name": "Mid-Click Cancellation with Sanitization",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "down_status": "SUCCESS",
+        "sanitized": true,
+        "final_button_state": "RELEASED",
+        "final_transaction_state": "SANITIZED_RECOVERED"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-10",
+      "name": "DOWN Dispatch Failure (M=0) Reverts to IDLE",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "DISPATCH_ZERO",
+        "button_state": "RELEASED",
+        "transaction_state": "IDLE"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-11",
+      "name": "UP Dispatch Failure (M=0) with Sanitization Success",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "SANITIZED_AFTER_FAILURE",
+        "button_state": "RELEASED",
+        "transaction_state": "SANITIZED_RECOVERED",
+        "sendinput_calls": 2
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-12",
+      "name": "Partial Multi-Packet Dispatch (N=2, M=1) with Sanitization",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "PARTIAL_DISPATCH_SANITIZED",
+        "button_state": "RELEASED",
+        "transaction_state": "SANITIZED_RECOVERED",
+        "sendinput_calls": 2
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-13",
+      "name": "Sanitization Failure Transitions to Hard Lockout (UNRESOLVED_LOCKED)",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "UNRESOLVED_LOCKOUT",
+        "is_locked": true,
+        "transaction_state": "UNRESOLVED_LOCKED",
+        "lockout_reason": "SANITIZATION_DISPATCH_FAILED",
+        "button_state": "INDETERMINATE"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-14",
+      "name": "Fail-Closed Lockout Rejection of DOWN Actions",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "REJECTED_LOCKED",
+        "accepted_packets": 0,
+        "error": "State machine is UNRESOLVED_LOCKED (Reason: SANITIZATION_DISPATCH_FAILED)"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-15",
+      "name": "Fail-Closed Lockout Rejection of CLICK Actions",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "REJECTED_LOCKED",
+        "total_accepted_packets": 0
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-16",
+      "name": "Fail-Closed Lockout Refuses Automatic / Cancellation Unlock",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "can_begin_transaction": false,
+        "is_locked": true
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-17",
+      "name": "Manual Operator Recovery Procedure",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "bad_token_rejected": true,
+        "good_token_accepted": true,
+        "unlocked": true
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-18",
+      "name": "ActionCounter Instrumentation Verification",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "delta_sendinput": 2,
+        "delta_down": 1,
+        "delta_up": 1,
+        "total_actions": 33
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-19",
+      "name": "Windows Observable State Layer Separation",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "observable_pressed": false,
+        "synthetic_state": "RELEASED",
+        "separation_verified": true
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-20",
+      "name": "Fail-Closed Behavior on Bad ABI",
+      "passed": true,
+      "reality_classification": "INTERNAL_LOGIC_VALIDATED",
+      "evidence": {
+        "status": "ABI_INVALID",
+        "accepted_packets": 0,
+        "error": "Fail-closed ABI gate rejected dispatch: INPUT structure size mismatch: expected 40 bytes, got 48"
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-21",
+      "name": "Phase 1 Regression Suite (14/14 Tests)",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "phase1_total": 14,
+        "phase1_passed": 14
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-22",
+      "name": "Phase 2A Regression Suite (10/10 Tests)",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "phase2a_total": 10,
+        "phase2a_passed": 10
+      },
+      "error_message": null
+    },
+    {
+      "test_id": "P2C-23",
+      "name": "Phase 2B Regression Suite (24/24 Tests)",
+      "passed": true,
+      "reality_classification": "LIVE_OS_VALIDATED",
+      "evidence": {
+        "phase2b_total": 24,
+        "phase2b_passed": 24
+      },
+      "error_message": null
+    }
+  ]
+}
