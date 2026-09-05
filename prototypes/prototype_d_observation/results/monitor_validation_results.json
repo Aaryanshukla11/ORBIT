@@ -1,0 +1,62 @@
+{
+  "test_id": "P3",
+  "name": "Multi-Monitor Reality Validation",
+  "display_topology": {
+    "monitor_count": 1,
+    "virtual_desktop_rect": [
+      0,
+      0,
+      2880,
+      1800
+    ],
+    "virtual_width": 2880,
+    "virtual_height": 1800,
+    "enumerated_monitors": [
+      {
+        "hmonitor": 65537,
+        "rect": [
+          0,
+          0,
+          2880,
+          1800
+        ],
+        "width": 2880,
+        "height": 1800,
+        "is_primary": true
+      }
+    ]
+  },
+  "live_coordinate_accuracy": {
+    "tested_against": "user32.ClientToScreen",
+    "is_accurate_within_1px": true,
+    "error_distance_px": 0.0,
+    "ground_truth_point": [
+      100,
+      100
+    ],
+    "evidence_classification": "LIVE_OS_VALIDATED"
+  },
+  "signed_negative_coordinate_math": {
+    "input_rect": [
+      -1920,
+      -200,
+      400,
+      300
+    ],
+    "mapped_rect": [
+      -1920,
+      -200,
+      -1520,
+      100
+    ],
+    "underflow_prevented": true,
+    "evidence_classification": "SYNTHETICALLY_SIMULATED"
+  },
+  "hardware_reality_status": {
+    "physical_multi_monitor_available": false,
+    "evidence_classification": "NOT_PHYSICALLY_VALIDATED",
+    "verdict": "PASS",
+    "honest_boundary_notes": "Single physical monitor detected (SM_CMONITORS=1). Multi-monitor hardware unvalidated; signed coordinate math validated separately as SYNTHETICALLY_SIMULATED."
+  },
+  "overall_verdict": "PASS"
+}

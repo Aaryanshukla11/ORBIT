@@ -1,0 +1,39 @@
+{
+  "target_name": "Controlled Tkinter Testbed (Tier 1)",
+  "window_geometry": {
+    "width": 500,
+    "height": 400
+  },
+  "ground_truth_controls": [
+    {
+      "id": "btn_submit",
+      "name": "Submit Action",
+      "role": "PushButton",
+      "relative_bounds": {"left": 20, "top": 40, "right": 140, "bottom": 75}
+    },
+    {
+      "id": "btn_cancel",
+      "name": "Cancel Action",
+      "role": "PushButton",
+      "relative_bounds": {"left": 160, "top": 40, "right": 280, "bottom": 75}
+    },
+    {
+      "id": "entry_input",
+      "name": "Target Query",
+      "role": "Text",
+      "relative_bounds": {"left": 20, "top": 100, "right": 350, "bottom": 130}
+    },
+    {
+      "id": "chk_option",
+      "name": "Enable High-Accuracy Mode",
+      "role": "CheckButton",
+      "relative_bounds": {"left": 20, "top": 150, "right": 250, "bottom": 180}
+    },
+    {
+      "id": "lbl_status",
+      "name": "Status: Ready",
+      "role": "StaticText",
+      "relative_bounds": {"left": 20, "top": 210, "right": 350, "bottom": 240}
+    }
+  ]
+}

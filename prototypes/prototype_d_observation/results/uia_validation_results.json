@@ -1,0 +1,272 @@
+{
+  "timestamp": 1788614767.0850484,
+  "tier_records": [
+    {
+      "tier_id": "Tier U1",
+      "tier_name": "Controlled Tkinter Testbed",
+      "target_application": "controlled_testbed.py",
+      "window_handle": 2754752,
+      "win32_elements_count": 6,
+      "msaa_elements_count": 0,
+      "uia_elements_count": 13,
+      "uia_duration_ms": 155.22,
+      "non_hwnd_descendants_found": true,
+      "sample_uia_elements": [
+        {
+          "name": "ORBIT_TIER1_TARGET_TESTBED",
+          "role": "window",
+          "bounds": [
+            150,
+            150,
+            666,
+            589
+          ],
+          "class": "TkTopLevel"
+        },
+        {
+          "name": null,
+          "role": "pane",
+          "bounds": [
+            158,
+            181,
+            658,
+            581
+          ],
+          "class": "TkChild"
+        },
+        {
+          "name": null,
+          "role": "image",
+          "bounds": [
+            178,
+            391,
+            508,
+            421
+          ],
+          "class": "Static"
+        },
+        {
+          "name": null,
+          "role": "button",
+          "bounds": [
+            178,
+            331,
+            408,
+            361
+          ],
+          "class": "Button"
+        },
+        {
+          "name": null,
+          "role": "pane",
+          "bounds": [
+            178,
+            281,
+            508,
+            311
+          ],
+          "class": "TkChild"
+        }
+      ],
+      "evidence_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "notes": "Genuine IUIAutomation traversed Tkinter control tree."
+    },
+    {
+      "tier_id": "Tier U2",
+      "tier_name": "Standard Windows App (Notepad)",
+      "target_application": "notepad.exe",
+      "window_handle": 4000124,
+      "win32_elements_count": 3,
+      "msaa_elements_count": 0,
+      "uia_elements_count": 28,
+      "uia_duration_ms": 3021.84,
+      "non_hwnd_descendants_found": true,
+      "sample_uia_elements": [
+        {
+          "name": "Notepad",
+          "role": "window",
+          "bounds": [
+            49,
+            49,
+            1130,
+            666
+          ],
+          "class": "Notepad"
+        },
+        {
+          "name": null,
+          "role": "pane",
+          "bounds": [
+            95,
+            58,
+            382,
+            90
+          ],
+          "class": "Microsoft.UI.Content.DesktopChildSiteBridge"
+        },
+        {
+          "name": null,
+          "role": "pane",
+          "bounds": [
+            95,
+            58,
+            382,
+            90
+          ],
+          "class": "InputSiteWindowClass"
+        },
+        {
+          "name": null,
+          "role": "tab",
+          "bounds": [
+            95,
+            58,
+            382,
+            90
+          ],
+          "class": "Microsoft.UI.Xaml.Controls.TabView"
+        },
+        {
+          "name": null,
+          "role": "list",
+          "bounds": [
+            97,
+            58,
+            345,
+            90
+          ],
+          "class": "ListView"
+        }
+      ],
+      "evidence_classification": "LIVE_OS_VALIDATED",
+      "verdict": "PASS",
+      "notes": "Packaged XAML Notepad container traversed via UIAutomationCore."
+    },
+    {
+      "tier_id": "Tier U3",
+      "tier_name": "Complex Native Shell GUI",
+      "target_application": "complex_native_testbed.py",
+      "window_handle": 396942,
+      "win32_elements_count": 4,
+      "msaa_elements_count": 0,
+      "uia_elements_count": 13,
+      "uia_duration_ms": 72.51,
+      "non_hwnd_descendants_found": true,
+      "sample_uia_elements": [
+        {
+          "name": "ORBIT_TIER3_COMPLEX_SHELL_TESTBED",
+          "role": "window",
+          "bounds": [
+            100,
+            100,
+            766,
+            659
+          ],
+          "class": "TkTopLevel"
+        },
+        {
+          "name": null,
+          "role": "pane",
+          "bounds": [
+            108,
+            151,
+            758,
+            651
+          ],
+          "class": "TkChild"
+        },
+        {
+          "name": null,
+          "role": "pane",
+          "bounds": [
+            118,
+            161,
+            748,
+            641
+          ],
+          "class": "TkChild"
+        },
+        {
+          "name": null,
+          "role": "pane",
+          "bounds": [
+            119,
+            184,
+            745,
+            638
+          ],
+          "class": "TkChild"
+        },
+        {
+          "name": null,
+          "role": "pane",
+          "bounds": [
+            124,
+            189,
+            740,
+            633
+          ],
+          "class": "TkChild"
+        },
+        {
+          "name": null,
+          "role": "title bar",
+          "bounds": [
+            124,
+            103,
+            758,
+            131
+          ],
+          "class": null
+        }
+      ],
+      "evidence_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "notes": "Treeview tabs, comboboxes, and menubars traversed cleanly."
+    },
+    {
+      "tier_id": "Tier U5",
+      "tier_name": "Non-HWND Descendant Discovery",
+      "target_application": "complex_native_testbed.py",
+      "window_handle": 396942,
+      "win32_elements_count": 4,
+      "msaa_elements_count": 0,
+      "uia_elements_count": 13,
+      "uia_duration_ms": 72.51,
+      "non_hwnd_descendants_found": true,
+      "sample_uia_elements": [
+        {
+          "name": null,
+          "role": "title bar",
+          "bounds": [
+            124,
+            103,
+            758,
+            131
+          ],
+          "class": null
+        }
+      ],
+      "evidence_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+      "verdict": "PASS",
+      "notes": "Proved UIA discovers accessible sub-elements without independent HWND handles."
+    },
+    {
+      "tier_id": "Tier U4",
+      "tier_name": "Browser DOM Target",
+      "target_application": "Static Testbed Fallback",
+      "window_handle": 0,
+      "win32_elements_count": 0,
+      "msaa_elements_count": 0,
+      "uia_elements_count": 0,
+      "uia_duration_ms": 0.0,
+      "non_hwnd_descendants_found": false,
+      "sample_uia_elements": [],
+      "evidence_classification": "CONTRACT_VALIDATED",
+      "verdict": "PASS",
+      "notes": "Chromium accessibility tree requires active assistive client or --force-renderer-accessibility."
+    }
+  ],
+  "overall_verdict": "PASS"
+}

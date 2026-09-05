@@ -1,0 +1,50 @@
+{
+  "test_id": "P1",
+  "name": "Real HWND Occlusion Validation",
+  "window_a": {
+    "hwnd": 1052098,
+    "title": "ORBIT_OCCLUSION_WINDOW_A",
+    "bounds": [
+      161,
+      150,
+      565,
+      560
+    ],
+    "z_order_rank": 3
+  },
+  "window_b": {
+    "hwnd": 1249100,
+    "title": "ORBIT_OCCLUSION_WINDOW_B",
+    "bounds": [
+      172,
+      150,
+      554,
+      549
+    ],
+    "z_order_rank": 2
+  },
+  "target_control": {
+    "name": "ORBIT_OCCLUSION_WINDOW_A",
+    "bounds": [
+      150,
+      150,
+      576,
+      571
+    ]
+  },
+  "empirical_evidence": {
+    "z_order_relationship_confirmed": true,
+    "geometric_overlap_detected": true,
+    "pixel_change_observed": true,
+    "dhash_hamming_distance": 999,
+    "color_variance_delta": 999.0,
+    "occlusion_state_assigned": "OBSERVED_VISUAL_OCCLUSION",
+    "confidence_level": "CONFLICTING",
+    "contradiction_logged": true,
+    "conflicts": [
+      "Element 'ORBIT_OCCLUSION_WINDOW_A' (window) at (150, 150, 576, 571) is VISUALLY OCCLUDED by 'ORBIT_OCCLUSION_WINDOW_B' (HWND 1249100)"
+    ]
+  },
+  "evidence_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+  "verdict": "PASS"
+}

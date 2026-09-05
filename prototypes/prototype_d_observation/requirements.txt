@@ -1,0 +1,2 @@
+# ORBIT Prototype D — Zero-Cost Local Dependencies
+Pillow>=10.0.0

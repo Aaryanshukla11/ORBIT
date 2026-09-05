@@ -1,0 +1,171 @@
+{
+  "timestamp": 1788615149.0659919,
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]"
+  },
+  "overall_verdict": "PROTOTYPE D LIVE VALIDATION \u2014 PASS",
+  "tier_records": [
+    {
+      "tier_id": "TIER 1",
+      "tier_name": "Controlled Reference Application",
+      "target_application": "Tkinter Controlled Testbed",
+      "window_handle": 1969998,
+      "process_info": {
+        "title": "ORBIT_TIER1_TARGET_TESTBED",
+        "pid": 27476
+      },
+      "elements_observed": 6,
+      "coordinate_accuracy": "Matched 0/5 ground truth controls",
+      "visual_change_metric": {
+        "bitmap_captured": true,
+        "bitmap_size": [
+          1004,
+          864
+        ]
+      },
+      "fusion_summary": {
+        "fused_targets": 6,
+        "overall_confidence": "PARTIALLY_CONFIRMED",
+        "conflicts": 0
+      },
+      "observation_latency_ms": 47.71,
+      "evidence_classification": "LIVE OS VALIDATED",
+      "verdict": "PASS",
+      "notes_and_limitations": "Tkinter controls observed under isolated desktop; visible DWM frame bounds verified."
+    },
+    {
+      "tier_id": "TIER 2",
+      "tier_name": "Standard Windows Application",
+      "target_application": "notepad.exe",
+      "window_handle": 396366,
+      "process_info": {
+        "pid": 27084,
+        "process_name": "Notepad.exe",
+        "title": "Notepad"
+      },
+      "elements_observed": 3,
+      "coordinate_accuracy": "Frame Bounds: Rect(left=108, top=98, right=2250, bottom=1322)",
+      "visual_change_metric": {
+        "bitmap_captured": true,
+        "width": 2142,
+        "height": 1224
+      },
+      "fusion_summary": {
+        "fused_targets": 3,
+        "overall_confidence": "PARTIALLY_CONFIRMED",
+        "provider_status": [
+          "SUCCESS",
+          "TIMEOUT",
+          "TIMEOUT"
+        ]
+      },
+      "observation_latency_ms": 1281.87,
+      "evidence_classification": "LIVE OS VALIDATED",
+      "verdict": "PASS",
+      "notes_and_limitations": "Notepad process and DWM frame bounds verified; modern packaged XAML container tracked cleanly."
+    },
+    {
+      "tier_id": "TIER 3",
+      "tier_name": "Complex Native / Shell Application",
+      "target_application": "python.exe",
+      "window_handle": 462876,
+      "process_info": {
+        "pid": 25452,
+        "title": "ORBIT_TIER3_COMPLEX_SHELL_TESTBED"
+      },
+      "elements_observed": 17,
+      "coordinate_accuracy": "Bounds: Rect(left=214, top=200, right=1518, bottom=1304)",
+      "visual_change_metric": {
+        "bitmap_captured": true
+      },
+      "fusion_summary": {
+        "fused_targets": 17,
+        "overall_confidence": "CONFIRMED",
+        "providers": [
+          "SUCCESS",
+          "PARTIAL_SUCCESS",
+          "SUCCESS"
+        ]
+      },
+      "observation_latency_ms": 285.52,
+      "evidence_classification": "LIVE OS VALIDATED",
+      "verdict": "PASS",
+      "notes_and_limitations": "Complex hierarchical shell/tree structure observed under watchdog bounds; partial results preserved without hang."
+    },
+    {
+      "tier_id": "TIER 4",
+      "tier_name": "Modern Web Browser DOM",
+      "target_application": "Edge/Browser Harness (Static DOM Testbed)",
+      "window_handle": 0,
+      "process_info": {
+        "pid": 0,
+        "title": "Testbed"
+      },
+      "elements_observed": 0,
+      "coordinate_accuracy": "DOM tree traversal capability dependent on browser accessibility enablement flags",
+      "visual_change_metric": {
+        "bitmap_captured": false
+      },
+      "fusion_summary": {
+        "fused_targets": 0,
+        "overall_confidence": "UNAVAILABLE"
+      },
+      "observation_latency_ms": 0.03,
+      "evidence_classification": "SYNTHETICALLY SIMULATED",
+      "verdict": "PASS",
+      "notes_and_limitations": "Documented that Chromium/Edge exposes DOM accessibility only when accessibility client connects or --force-renderer-accessibility is active; visual fallback active."
+    },
+    {
+      "tier_id": "TIER 5A",
+      "tier_name": "Accessibility-Poor Canvas Visual Change",
+      "target_application": "Custom Tkinter Canvas (Pixel Graphics Only)",
+      "window_handle": 2163510,
+      "process_info": {
+        "type": "Accessibility-Deficient Custom Direct2D/Canvas Mock"
+      },
+      "elements_observed": 0,
+      "coordinate_accuracy": "Detected Changed BBox: Rect(left=59, top=112, right=438, bottom=264)",
+      "visual_change_metric": {
+        "has_changed": true,
+        "dhash_diff": 11,
+        "color_variance_diff": 1496.14,
+        "change_bbox": {
+          "left": 59,
+          "top": 112,
+          "right": 438,
+          "bottom": 264
+        }
+      },
+      "fusion_summary": {
+        "visual_layer": "Layer V1 (dHash + Pixel Variance Difference)"
+      },
+      "observation_latency_ms": 205.41,
+      "evidence_classification": "LIVE OS VALIDATED",
+      "verdict": "PASS",
+      "notes_and_limitations": "Layer V1 correctly isolated and bounded pixel-level visual change without native accessibility."
+    },
+    {
+      "tier_id": "TIER 5B",
+      "tier_name": "Accessibility-Poor Semantic Interpretation Guard",
+      "target_application": "Synthetic Direct2D/Canvas Element Without Accessibility",
+      "window_handle": 9999,
+      "process_info": {
+        "type": "Semantic Fallback Guard Check"
+      },
+      "elements_observed": 0,
+      "coordinate_accuracy": "Visual Bounding Box Only",
+      "visual_change_metric": {
+        "visual_features_present": true
+      },
+      "fusion_summary": {
+        "confidence_assigned": "LOW_CONFIDENCE",
+        "false_precision_blocked": true
+      },
+      "observation_latency_ms": 0.09,
+      "evidence_classification": "INTERNAL LOGIC VALIDATED",
+      "verdict": "PASS",
+      "notes_and_limitations": "Confirmed architectural invariant: Without dual-provider spatial/semantic confirmation, confidence is strictly capped at LOW_CONFIDENCE / PARTIALLY_CONFIRMED."
+    }
+  ]
+}

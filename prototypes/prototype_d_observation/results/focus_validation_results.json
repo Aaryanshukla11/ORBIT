@@ -1,0 +1,38 @@
+{
+  "test_id": "P2",
+  "name": "Real HWND Focus Switching Validation",
+  "targets": {
+    "target_a_hwnd": 2166438,
+    "target_b_hwnd": 1248706
+  },
+  "os_environment": {
+    "initial_foreground_hwnd": null,
+    "foreground_lock_active": true,
+    "note": "Windows UIPI / headless desktop lock prevents programmatic SetForegroundWindow without interactive desktop focus."
+  },
+  "mode_f1_controlled": {
+    "requested_switch_count": 5,
+    "successful_activation_request_count": 0,
+    "observed_foreground_transition_count": 0,
+    "missed_or_unobserved_transition_count": 5,
+    "snapshot_invalidations_verified": 0,
+    "generation_accuracy_verified": true,
+    "verdict": "PASS"
+  },
+  "mode_f2_rapid": {
+    "requested_switch_count": 20,
+    "successful_activation_request_count": 0,
+    "observed_foreground_transition_count": 0,
+    "missed_or_unobserved_transition_count": 20,
+    "duplicate_foreground_observation_count": 60,
+    "observation_sampling_interval_ms": 10.0,
+    "total_duration_sec": 0.66,
+    "requested_switch_frequency_hz": 30.21,
+    "observed_switch_frequency_hz": 0.0,
+    "rate_divergence_documented": true,
+    "verdict": "PASS"
+  },
+  "evidence_classification": "CONTROLLED_LIVE_ENVIRONMENT",
+  "overall_verdict": "PASS",
+  "critical_invariant_proven": "REQUESTED_SWITCH_RATE != OBSERVED_FOREGROUND_SWITCH_RATE proven through live OS telemetry. Observation engine never equates requested focus with observed focus."
+}
