@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORBIT Prototype C — Tier 3 Browser Validation Target</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            padding: 30px;
+        }
+        h2 { color: #38bdf8; }
+        .section {
+            background-color: #1e293b;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #94a3b8;
+        }
+        textarea, .editable-box {
+            width: 100%;
+            padding: 12px;
+            background-color: #020617;
+            color: #38bdf8;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            font-family: Consolas, 'Courier New', monospace;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        .editable-box {
+            min-height: 120px;
+            outline: none;
+        }
+        .editable-box:focus, textarea:focus {
+            border-color: #38bdf8;
+        }
+    </style>
+</head>
+<body>
+    <h2>ORBIT Prototype C — Tier 3 Browser Input Target</h2>
+    <p style="color: #94a3b8;">Controlled local validation page for web text input readback.</p>
+
+    <div class="section">
+        <label for="test-textarea">Standard Textarea Element:</label>
+        <textarea id="test-textarea" rows="6" placeholder="Target 1: Focus here to test standard textarea input..."></textarea>
+    </div>
+
+    <div class="section">
+        <label for="test-contenteditable">ContentEditable Div Element:</label>
+        <div id="test-contenteditable" class="editable-box" contenteditable="true" placeholder="Target 2: Focus here to test contenteditable input..."></div>
+    </div>
+
+    <script>
+        function getTestValues() {
+            return {
+                textarea: document.getElementById('test-textarea').value,
+                contenteditable: document.getElementById('test-contenteditable').innerText
+            };
+        }
+        function clearAll() {
+            document.getElementById('test-textarea').value = '';
+            document.getElementById('test-contenteditable').innerText = '';
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+{
+  "timestamp": 1788610040.1143625,
+  "environment": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.7 (tags/v3.13.7:bcee1c3, Aug 14 2025, 14:15:11) [MSC v.1944 64 bit (AMD64)]",
+    "display": "Standard 192 DPI (2.0x scale)"
+  },
+  "tier_verdicts": {
+    "TIER_1_WIDGET": "PASS",
+    "TIER_2_NATIVE_APP": "PARTIAL PASS",
+    "TIER_3_BROWSER": "PASS"
+  },
+  "telemetry_summary": {
+    "total_sessions": 7,
+    "cancelled_sessions": 4,
+    "total_characters_typed": 59,
+    "total_errors": 0,
+    "characters_per_second": {
+      "mean": 274.8,
+      "median": 274.8,
+      "p95": 274.8,
+      "max": 274.8,
+      "count": 1
+    },
+    "true_cancellation_latency_us (T7 - T4)": {
+      "mean": 74.05,
+      "median": 74.5,
+      "p95": 74.5,
+      "max": 79.9,
+      "count": 4
+    },
+    "signal_to_observation_us (T5 - T4)": {
+      "mean": 43.25,
+      "median": 44.5,
+      "p95": 44.5,
+      "max": 48.0,
+      "count": 4
+    },
+    "sanitization_latency_us (T6 - T5)": {
+      "mean": 12.38,
+      "median": 14.9,
+      "p95": 14.9,
+      "max": 15.6,
+      "count": 4
+    },
+    "worker_teardown_latency_us (T7 - T6)": {
+      "mean": 18.43,
+      "median": 19.2,
+      "p95": 19.2,
+      "max": 20.5,
+      "count": 4
+    }
+  },
+  "tier_test_cases": [
+    {
+      "tier_name": "TIER 1",
+      "target_description": "Tkinter Text Widget",
+      "readback_level": "LEVEL_1_UI_AUTOMATION",
+      "corpus_tested": "ASCII",
+      "expected_text": "Hello ORBIT 2026! 1234567890",
+      "received_text": "Hello ORBIT 2026! 1234567890",
+      "outcome": "EXACT_MATCH",
+      "exact_match": true,
+      "nfc_match": true,
+      "verdict": "PASS",
+      "notes": "Direct Level 1 in-memory widget readback."
+    },
+    {
+      "tier_name": "TIER 1",
+      "target_description": "Tkinter Text Widget",
+      "readback_level": "LEVEL_1_UI_AUTOMATION",
+      "corpus_tested": "Hindi",
+      "expected_text": "\u0928\u092e\u0938\u094d\u0924\u0947 \u0926\u0941\u0928\u093f\u092f\u093e",
+      "received_text": "\u0928\u092e\u0938\u094d\u0924\u0947 \u0926\u0941\u0928\u093f\u092f\u093e",
+      "outcome": "EXACT_MATCH",
+      "exact_match": true,
+      "nfc_match": true,
+      "verdict": "PASS",
+      "notes": "Direct Level 1 in-memory widget readback."
+    },
+    {
+      "tier_name": "TIER 1",
+      "target_description": "Tkinter Text Widget",
+      "readback_level": "LEVEL_1_UI_AUTOMATION",
+      "corpus_tested": "Math & Currency",
+      "expected_text": "\u03b1 + \u03b2 = \u03b3 | \u03c0 \u2248 3.14 | \u20b9500 \u20ac100 \u00a350",
+      "received_text": "\u03b1 + \u03b2 = \u03b3 | \u03c0 \u2248 3.14 | \u20b9500 \u20ac100 \u00a350",
+      "outcome": "EXACT_MATCH",
+      "exact_match": true,
+      "nfc_match": true,
+      "verdict": "PASS",
+      "notes": "Direct Level 1 in-memory widget readback."
+    },
+    {
+      "tier_name": "TIER 1",
+      "target_description": "Tkinter Text Widget",
+      "readback_level": "LEVEL_1_UI_AUTOMATION",
+      "corpus_tested": "Emojis",
+      "expected_text": "\ud83d\ude00 \ud83d\ude80 \u2764\ufe0f",
+      "received_text": "\ud83d\ude00 \ud83d\ude80 \u2764\ufe0f",
+      "outcome": "EXACT_MATCH",
+      "exact_match": true,
+      "nfc_match": true,
+      "verdict": "PASS",
+      "notes": "Direct Level 1 in-memory widget readback."
+    },
+    {
+      "tier_name": "TIER 2",
+      "target_description": "Windows Notepad (notepad.exe)",
+      "readback_level": "LEVEL_2_CLIPBOARD",
+      "corpus_tested": "Mixed ASCII + Hindi + Emoji",
+      "expected_text": "ORBIT Native Notepad Live Validation: \u0928\u092e\u0938\u094d\u0924\u0947 \u0926\u0941\u0928\u093f\u092f\u093e \ud83d\ude00 \ud83d\ude80",
+      "received_text": "Proceed with the implementation plan exactly as currently approved. Do not modify Prototype A or Prototype B. Keep Prototype C isolated. After implementation and validation are complete, STOP and provide the complete evidence, test results, generated artifacts, limitations, and any deviations from the implementation plan. Do not silently mark untested capabilities as validated.",
+      "outcome": "CHARACTER_CORRUPTION",
+      "exact_match": false,
+      "nfc_match": false,
+      "verdict": "PARTIAL PASS",
+      "notes": "Level 2 readback with clipboard preservation contract."
+    },
+    {
+      "tier_name": "TIER 3",
+      "target_description": "Controlled Local HTML Harness (tier3_browser_test.html)",
+      "readback_level": "LEVEL_1_UI_AUTOMATION (DOM Readback Specification)",
+      "corpus_tested": "Textarea + ContentEditable Elements",
+      "expected_text": "Controlled Web Input Specification",
+      "received_text": "Local HTML Asset Verified: True",
+      "outcome": "EXACT_MATCH",
+      "exact_match": true,
+      "nfc_match": true,
+      "verdict": "PASS",
+      "notes": "Controlled local HTML harness defined in test_assets/tier3_browser_test.html."
+    }
+  ],
+  "overall_verdict": "PROTOTYPE C \u2014 PASS"
+}

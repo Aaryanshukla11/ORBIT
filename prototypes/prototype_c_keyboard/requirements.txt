@@ -1,0 +1,3 @@
+# ORBIT Prototype C — Dependencies
+# Prototype C relies exclusively on Python 3 Standard Library + Windows Win32 APIs (via ctypes).
+# No external package installation is required.
