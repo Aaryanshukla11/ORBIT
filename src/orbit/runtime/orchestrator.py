@@ -108,6 +108,16 @@ from orbit.runtime.model_runtime import (
 )
 from orbit.runtime.model_providers import OllamaProvider
 
+from orbit.runtime.history import (
+    CompletionEvidenceRecord,
+    ExecutionHistoryStore,
+    ExecutionRecord,
+    ExecutionStatus,
+    ExecutionStepRecord,
+    ReplanAuditRecord,
+)
+from orbit.runtime.diagnostics.service import DiagnosticService
+
 logger = logging.getLogger(__name__)
 
 
@@ -132,6 +142,7 @@ class OrbitOrchestrator:
         replanner: Optional[DynamicReplanner] = None,
         model_manager: Optional[ModelManager] = None,
         model_session_manager: Optional[ModelSessionManager] = None,
+        history_store: Optional[ExecutionHistoryStore] = None,
     ) -> None:
         self._event_bus = event_bus
         self._clock = clock or SystemClock()
@@ -199,9 +210,19 @@ class OrbitOrchestrator:
         if self._model_session_manager.event_bus is None:
             self._model_session_manager.set_event_bus(self._event_bus)
         self._model_session_manager.set_task_executing_predicate(lambda: self.is_task_executing)
+        self._history_store = history_store or ExecutionHistoryStore()
+        self._diagnostic_service = DiagnosticService(orchestrator=self)
         self._active_cancellation_sources: Dict[str, CancellationSource] = {}
         self._active_execution_tasks: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
+
+    @property
+    def diagnostic_service(self) -> DiagnosticService:
+        return self._diagnostic_service
+
+    @property
+    def history_store(self) -> ExecutionHistoryStore:
+        return self._history_store
 
     @property
     def system_state(self) -> SystemState:
@@ -563,6 +584,21 @@ class OrbitOrchestrator:
             metadata=context or {},
         )
 
+        active_ctx = self._model_session_manager.get_active_context() if hasattr(self._model_session_manager, "get_active_context") else None
+        active_model_id = active_ctx.model_id if active_ctx else None
+        model_prov = active_ctx.provider.value if active_ctx and hasattr(active_ctx.provider, "value") else (str(active_ctx.provider) if active_ctx else None)
+
+        history_rec = ExecutionRecord(
+            task_id=task.task_id,
+            session_id=session_id,
+            goal=prompt,
+            status=ExecutionStatus.RUNNING,
+            started_at=datetime.now(timezone.utc),
+            active_model=active_model_id,
+            model_provider=model_prov,
+        )
+        await self._history_store.save_record(history_rec)
+
         await self._emit_event(
             EventType.TASK_STATE_CHANGED,
             session_id=session_id,
@@ -573,6 +609,12 @@ class OrbitOrchestrator:
                 status=task.status,
                 prompt=task.prompt,
             ).model_dump(),
+        )
+        await self._emit_event(
+            EventType.EXECUTION_RECORD_UPDATED,
+            session_id=session_id,
+            correlation_id=task.task_id,
+            payload={"record": history_rec.model_dump(mode="json")},
         )
 
         # Launch execution in background task
@@ -599,6 +641,20 @@ class OrbitOrchestrator:
                 TaskStatus.CANCELLED,
                 error=ErrorDetail(code="TASK_CANCELLED", message=reason, recoverable=False),
             )
+            rec = await self._history_store.get_record_by_task_id(task_id)
+            if rec:
+                rec.status = ExecutionStatus.CANCELLED
+                rec.cancellation_reason = reason
+                rec.completed_at = datetime.now(timezone.utc)
+                rec.duration_ms = (rec.completed_at - rec.started_at).total_seconds() * 1000.0
+                await self._history_store.save_record(rec)
+                await self._emit_event(
+                    EventType.EXECUTION_RECORD_UPDATED,
+                    session_id=updated.session_id,
+                    correlation_id=task_id,
+                    payload={"record": rec.model_dump(mode="json")},
+                )
+
             await self._emit_event(
                 EventType.TASK_STATE_CHANGED,
                 session_id=updated.session_id,
@@ -1403,6 +1459,59 @@ class OrbitOrchestrator:
     ) -> None:
         task = await self._task_manager.get_task(task_id)
         if task:
+            rec = await self._history_store.get_record_by_task_id(task_id)
+            if rec:
+                now_utc = datetime.now(timezone.utc)
+                if status == TaskStatus.COMPLETED:
+                    rec.status = ExecutionStatus.COMPLETED
+                    rec.completed_at = now_utc
+                    rec.duration_ms = (now_utc - rec.started_at).total_seconds() * 1000.0
+                    rec.steps_completed = len(rec.steps)
+                    if task.plan and not rec.steps:
+                        rec.steps = [
+                            ExecutionStepRecord(
+                                step_id=s.step_id,
+                                name=s.description,
+                                status="COMPLETED",
+                                action_type=s.actions[0].action_type if s.actions else None,
+                            )
+                            for s in task.plan.steps
+                        ]
+                        rec.total_steps = len(rec.steps)
+                        rec.steps_completed = len(rec.steps)
+                elif status == TaskStatus.FAILED:
+                    rec.status = ExecutionStatus.FAILED
+                    rec.completed_at = now_utc
+                    rec.duration_ms = (now_utc - rec.started_at).total_seconds() * 1000.0
+                    rec.failure_reason = error.message if error else "Task execution failed"
+                    rec.failure_code = error.code if error else "FAILED"
+                elif status == TaskStatus.CANCELLED:
+                    rec.status = ExecutionStatus.CANCELLED
+                    rec.completed_at = now_utc
+                    rec.duration_ms = (now_utc - rec.started_at).total_seconds() * 1000.0
+                    rec.cancellation_reason = error.message if error else "Cancelled"
+                elif status == TaskStatus.RUNNING:
+                    rec.status = ExecutionStatus.RUNNING
+                    if task.plan and not rec.steps:
+                        rec.steps = [
+                            ExecutionStepRecord(
+                                step_id=s.step_id,
+                                name=s.description,
+                                status="PENDING",
+                                action_type=s.actions[0].action_type if s.actions else None,
+                            )
+                            for s in task.plan.steps
+                        ]
+                        rec.total_steps = len(rec.steps)
+
+                await self._history_store.save_record(rec)
+                await self._emit_event(
+                    EventType.EXECUTION_RECORD_UPDATED,
+                    session_id=task.session_id,
+                    correlation_id=task_id,
+                    payload={"record": rec.model_dump(mode="json")},
+                )
+
             await self._emit_event(
                 EventType.TASK_STATE_CHANGED,
                 session_id=task.session_id,

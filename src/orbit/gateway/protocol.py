@@ -36,6 +36,10 @@ from orbit.contracts.commands import (
     RequestFramePayload,
     ResumeTaskPayload,
     SubmitTaskPayload,
+    TaskHistoryClearPayload,
+    TaskHistoryDetailPayload,
+    TaskHistoryListPayload,
+    DiagnosticsRunPayload,
     TriggerTakeoverPayload,
     TypeTextPayload,
 )
@@ -81,6 +85,10 @@ COMMAND_PAYLOAD_MAP = {
     CommandType.MODEL_ACTIVATE: ModelActivatePayload,
     CommandType.MODEL_SWITCH: ModelSwitchPayload,
     CommandType.MODEL_HEALTH: ModelHealthPayload,
+    CommandType.TASK_HISTORY_LIST: TaskHistoryListPayload,
+    CommandType.TASK_HISTORY_DETAIL: TaskHistoryDetailPayload,
+    CommandType.TASK_HISTORY_CLEAR: TaskHistoryClearPayload,
+    CommandType.DIAGNOSTICS_RUN: DiagnosticsRunPayload,
 }
 
 

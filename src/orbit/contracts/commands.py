@@ -42,6 +42,10 @@ class CommandType(str, Enum):
     MODEL_ACTIVATE = "MODEL_ACTIVATE"
     MODEL_SWITCH = "MODEL_SWITCH"
     MODEL_HEALTH = "MODEL_HEALTH"
+    TASK_HISTORY_LIST = "TASK_HISTORY_LIST"
+    TASK_HISTORY_DETAIL = "TASK_HISTORY_DETAIL"
+    TASK_HISTORY_CLEAR = "TASK_HISTORY_CLEAR"
+    DIAGNOSTICS_RUN = "DIAGNOSTICS_RUN"
 
 
 
@@ -208,5 +212,29 @@ class ModelSwitchPayload(BaseModel):
 class ModelHealthPayload(BaseModel):
     """Inbound payload to probe model health."""
     model_id: Optional[str] = Field(default=None, description="Optional target model ID, or active model if omitted")
+
+
+class TaskHistoryListPayload(BaseModel):
+    """Inbound payload to list historical execution records."""
+    limit: int = Field(default=50, ge=1, le=500)
+    status_filter: Optional[str] = Field(default=None, description="ALL, RUNNING, COMPLETED, FAILED, CANCELLED")
+    search_query: Optional[str] = Field(default=None, description="Optional search term across goal, model, app")
+
+
+class TaskHistoryDetailPayload(BaseModel):
+    """Inbound payload to get full execution record detail."""
+    execution_id: Optional[str] = Field(default=None)
+    task_id: Optional[str] = Field(default=None)
+
+
+class TaskHistoryClearPayload(BaseModel):
+    """Inbound payload to clear execution history."""
+    pass
+
+
+class DiagnosticsRunPayload(BaseModel):
+    """Inbound payload to trigger on-demand diagnostics run."""
+    pass
+
 
 

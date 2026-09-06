@@ -107,6 +107,47 @@ def create_app(
             }
         )
 
+    @app.get("/api/history")
+    async def get_execution_history(
+        limit: int = Query(default=50, ge=1, le=500),
+        status: Optional[str] = Query(default=None),
+        search: Optional[str] = Query(default=None),
+    ) -> JSONResponse:
+        """Fetch historical execution records."""
+        records = await orch.history_store.list_records(limit=limit, status_filter=status, search_query=search)
+        return JSONResponse(
+            content={
+                "records": [r.model_dump(mode="json") for r in records],
+                "total_count": len(records),
+            }
+        )
+
+    @app.get("/api/history/{execution_id}")
+    async def get_execution_record(execution_id: str) -> JSONResponse:
+        """Fetch a specific execution record."""
+        record = await orch.history_store.get_record(execution_id)
+        if record is None:
+            return JSONResponse(status_code=404, content={"error": "Record not found"})
+        return JSONResponse(content={"record": record.model_dump(mode="json")})
+
+    @app.delete("/api/history")
+    async def clear_execution_history() -> JSONResponse:
+        """Clear all historical execution records."""
+        await orch.history_store.clear_history()
+        return JSONResponse(content={"status": "CLEARED"})
+
+    @app.get("/api/diagnostics")
+    async def get_diagnostics() -> JSONResponse:
+        """Fetch latest cached or evaluated system diagnostic report."""
+        report = await orch.diagnostic_service.get_cached_or_fresh_report()
+        return JSONResponse(content=report.model_dump(mode="json"))
+
+    @app.post("/api/diagnostics/run")
+    async def run_diagnostics() -> JSONResponse:
+        """Trigger an on-demand real-time system diagnostic probe."""
+        report = await orch.diagnostic_service.run_diagnostics()
+        return JSONResponse(content=report.model_dump(mode="json"))
+
     @app.websocket("/ws")
     async def websocket_endpoint_default(websocket: WebSocket) -> None:
         """WebSocket connection endpoint with automatic session assignment."""

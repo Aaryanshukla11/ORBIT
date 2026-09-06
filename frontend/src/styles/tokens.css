@@ -1,0 +1,77 @@
+/**
+ * ORBIT Desktop Light Workstation Design Tokens
+ * Recreated precisely from the visual target reference.
+ */
+
+:root {
+  /* ==========================================================================
+     Surfaces & Backgrounds (Premium Light Palette)
+     ========================================================================== */
+  --bg-app: #f4f6fb;               /* Soft calm off-white / light blue-gray background */
+  --bg-surface: #ffffff;           /* Primary cards, header, input card */
+  --bg-surface-subtle: #f8fafc;    /* Task list container, sub-cards */
+  --bg-surface-hover: #f1f5f9;     /* Subtle hover on interactive elements */
+  --bg-tab-active: #eff6ff;        /* Active tab light-blue highlight */
+  --bg-pill: #f1f5f9;              /* Bottom pill button background */
+  --bg-pill-hover: #e2e8f0;
+
+  /* ==========================================================================
+     Borders & Dividers
+     ========================================================================== */
+  --border-subtle: #edf2f7;        /* Very light card borders */
+  --border-default: #e2e8f0;       /* Standard card and container borders */
+  --border-strong: #cbd5e1;        /* Focus/active borders */
+  --border-tab-active: #bfdbfe;
+
+  /* ==========================================================================
+     Accents & Status Colors
+     ========================================================================== */
+  --accent-primary: #2563eb;       /* Royal Blue */
+  --accent-primary-hover: #1d4ed8;
+  --accent-primary-subtle: #eff6ff;
+  --accent-green: #22c55e;         /* Emerald Online & Checkmark */
+  --accent-green-subtle: #ecfdf5;
+
+  /* ==========================================================================
+     Typography
+     ========================================================================== */
+  --text-primary: #0f172a;         /* High-contrast headings and labels */
+  --text-secondary: #475569;       /* Standard body text */
+  --text-muted: #94a3b8;           /* Subtitles, timestamps, placeholders */
+  --text-blue: #2563eb;            /* Active tab and accent text */
+
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', Consolas, "Courier New", monospace;
+
+  /* Font Sizes */
+  --font-size-xs: 11px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-md: 15px;
+  --font-size-lg: 17px;
+  --font-size-xl: 19px;
+
+  /* ==========================================================================
+     Border Radius
+     ========================================================================== */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-full: 9999px;
+
+  /* ==========================================================================
+     Shadows (Subtle, Crisp, Light)
+     ========================================================================== */
+  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.03);
+  --shadow-card: 0 2px 8px -2px rgba(15, 23, 42, 0.04), 0 1px 3px 0 rgba(15, 23, 42, 0.02);
+  --shadow-elevated: 0 8px 24px -4px rgba(15, 23, 42, 0.06), 0 2px 6px -1px rgba(15, 23, 42, 0.02);
+  --shadow-input: 0 4px 16px -2px rgba(15, 23, 42, 0.05), 0 2px 6px 0 rgba(15, 23, 42, 0.02);
+
+  /* ==========================================================================
+     Transitions
+     ========================================================================== */
+  --transition-fast: 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-normal: 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}

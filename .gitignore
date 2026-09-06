@@ -1,15 +1,93 @@
-# Python
+# =============================================================================
+# Python & Bytecode
+# =============================================================================
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.env
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+
+# Virtual Environments
 venv/
 env/
 ENV/
+.venv/
+env.bak/
+venv.bak/
 
-# OS / IDE
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# =============================================================================
+# Node.js / Electron / Frontend
+# =============================================================================
+node_modules/
+*/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Frontend / Electron Build Outputs
+dist/
+*/dist/
+dist-electron/
+*/dist-electron/
+out/
+*/out/
+
+# Local Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+
+# =============================================================================
+# ORBIT Runtime Data & Logs
+# =============================================================================
+*.log
+*.tmp
+.orbit/
+execution_history.json
+
+# =============================================================================
+# Operating System & IDE Artifacts
+# =============================================================================
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon\r\r
+._*
+
+# Windows
 Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+
+# IDEs / Editors
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace
+.gemini/

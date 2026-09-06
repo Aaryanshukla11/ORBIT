@@ -1,70 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ORBIT Dev Console — Milestone M0</title>
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <div class="app-container">
-    <header class="app-header">
-      <div class="brand">
-        <span class="logo">⚡</span>
-        <h1>ORBIT Dev Console</h1>
-        <span class="version-badge">v0.1.0-M0</span>
-      </div>
-      <div class="system-status">
-        <span class="status-indicator" id="connIndicator"></span>
-        <span id="connStatus">Disconnected</span>
-        <span class="badge" id="systemStateBadge">BOOTING</span>
-      </div>
-    </header>
-
-    <main class="main-content">
-      <!-- Left Column: Controls & Task Input -->
-      <section class="panel control-panel">
-        <h2>Task Orchestration</h2>
-        <div class="form-group">
-          <label for="wsUrl">WebSocket Gateway URL</label>
-          <div class="input-row">
-            <input type="text" id="wsUrl" value="ws://127.0.0.1:8765/ws" />
-            <button id="btnConnect" class="btn btn-primary">Connect</button>
-            <button id="btnDisconnect" class="btn btn-secondary" disabled>Disconnect</button>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label for="taskPrompt">Task Instruction</label>
-          <textarea id="taskPrompt" rows="3" placeholder="e.g. Open browser and search for quarterly report..."></textarea>
-          <div class="button-row">
-            <button id="btnSubmitTask" class="btn btn-success" disabled>Submit Task</button>
-            <button id="btnCancelTask" class="btn btn-danger" disabled>Cancel Task</button>
-          </div>
-        </div>
-
-        <div class="takeover-box">
-          <h3>Emergency & Safety Controls</h3>
-          <div class="button-row">
-            <button id="btnTriggerTakeover" class="btn btn-warning" disabled>Trigger Human Takeover</button>
-            <button id="btnReleaseTakeover" class="btn btn-outline" disabled>Release Takeover</button>
-          </div>
-        </div>
-      </section>
-
-      <!-- Right Column: Live Event Stream & Telemetry -->
-      <section class="panel telemetry-panel">
-        <div class="telemetry-header">
-          <h2>Live Runtime Telemetry</h2>
-          <button id="btnClearLogs" class="btn btn-sm btn-outline">Clear Logs</button>
-        </div>
-        <div class="log-timeline" id="logTimeline">
-          <!-- Live events streamed here -->
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <script src="app.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>ORBIT — Autonomous Desktop Intelligence</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

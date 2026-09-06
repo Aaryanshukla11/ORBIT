@@ -38,6 +38,10 @@ from orbit.contracts.commands import (
     RequestFramePayload,
     ResumeTaskPayload,
     SubmitTaskPayload,
+    TaskHistoryClearPayload,
+    TaskHistoryDetailPayload,
+    TaskHistoryListPayload,
+    DiagnosticsRunPayload,
     TriggerTakeoverPayload,
     TypeTextPayload,
 )
@@ -691,6 +695,113 @@ class WebSocketManager:
             await self._handle_model_switch(conn, cmd, payload)
         elif cmd.command_type == CommandType.MODEL_HEALTH:
             await self._handle_model_health(conn, cmd, payload)
+        elif cmd.command_type == CommandType.TASK_HISTORY_LIST:
+            await self._handle_task_history_list(conn, cmd, payload)
+        elif cmd.command_type == CommandType.TASK_HISTORY_DETAIL:
+            await self._handle_task_history_detail(conn, cmd, payload)
+        elif cmd.command_type == CommandType.TASK_HISTORY_CLEAR:
+            await self._handle_task_history_clear(conn, cmd, payload)
+        elif cmd.command_type == CommandType.DIAGNOSTICS_RUN:
+            await self._handle_diagnostics_run(conn, cmd, payload)
+
+    # =========================================================================
+    # Task Execution History Handlers
+    # =========================================================================
+
+    async def _handle_task_history_list(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: TaskHistoryListPayload,
+    ) -> None:
+        """Return historical execution records matching optional filter/search."""
+        records = await self._orchestrator.history_store.list_records(
+            limit=payload.limit,
+            status_filter=payload.status_filter,
+            search_query=payload.search_query,
+        )
+        resp_payload = {
+            "records": [r.model_dump(mode="json") for r in records],
+            "total_count": len(records),
+            "status_filter": payload.status_filter,
+            "search_query": payload.search_query,
+        }
+        resp_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.TASK_HISTORY_LIST_RESPONSE,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload=resp_payload,
+        )
+        await conn.enqueue_message(serialize_outbound_event(resp_event))
+
+    async def _handle_task_history_detail(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: TaskHistoryDetailPayload,
+    ) -> None:
+        """Return full detail for a specific historical execution record."""
+        rec = None
+        if payload.execution_id:
+            rec = await self._orchestrator.history_store.get_record(payload.execution_id)
+        elif payload.task_id:
+            rec = await self._orchestrator.history_store.get_record_by_task_id(payload.task_id)
+
+        resp_payload = {
+            "record": rec.model_dump(mode="json") if rec else None,
+            "found": rec is not None,
+        }
+        resp_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.TASK_HISTORY_DETAIL_RESPONSE,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload=resp_payload,
+        )
+        await conn.enqueue_message(serialize_outbound_event(resp_event))
+
+    async def _handle_task_history_clear(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: TaskHistoryClearPayload,
+    ) -> None:
+        """Clear all historical execution records."""
+        await self._orchestrator.history_store.clear_history()
+        resp_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.TASK_HISTORY_LIST_RESPONSE,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload={"records": [], "total_count": 0, "cleared": True},
+        )
+        await conn.enqueue_message(serialize_outbound_event(resp_event))
+
+    async def _handle_diagnostics_run(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: DiagnosticsRunPayload,
+    ) -> None:
+        """Run deep diagnostic probe across all subsystems and return structured report."""
+        report = await self._orchestrator.diagnostic_service.run_diagnostics()
+        resp_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.DIAGNOSTICS_RUN_RESPONSE,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload=report.model_dump(mode="json"),
+        )
+        await conn.enqueue_message(serialize_outbound_event(resp_event))
 
     # =========================================================================
     # Model Control Command Handlers (Milestone M1.9 Step 5)
