@@ -1,43 +1,18 @@
 import React, { useState } from 'react';
 import { useTaskConsole } from '../../context/TaskConsoleContext';
-import { PlayIcon, PauseIcon, StopIcon, CheckCircleIcon, ActiveRadioCircleIcon, PendingCircleIcon, TasksTabIcon } from '../icons/Icons';
+import { useActivityHistory } from '../../context/ActivityHistoryContext';
+import { PlayIcon, PauseIcon, StopIcon, TasksTabIcon } from '../icons/Icons';
 
 export const TasksView: React.FC = () => {
   const { activeTask, activePlan, isProcessing, pauseActiveTask, resumeActiveTask, cancelActiveTask } = useTaskConsole();
+  const { records, filter, setFilter, selectExecution } = useActivityHistory();
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'active' | 'completed'>('all');
 
-  const mockTasks = [
-    {
-      id: 'task_001',
-      title: 'Analyze and summarize repository architecture',
-      target: 'Visual Studio Code',
-      status: isProcessing ? 'RUNNING' : 'COMPLETED',
-      progress: isProcessing ? 65 : 100,
-      steps: 6,
-      completedSteps: isProcessing ? 4 : 6,
-      time: '2 mins ago',
-    },
-    {
-      id: 'task_002',
-      title: 'Inspect active terminal logs for build warnings',
-      target: 'Windows Terminal',
-      status: 'COMPLETED',
-      progress: 100,
-      steps: 3,
-      completedSteps: 3,
-      time: '14 mins ago',
-    },
-    {
-      id: 'task_003',
-      title: 'Verify UI responsiveness in Chrome DevTools',
-      target: 'Google Chrome',
-      status: 'IDLE',
-      progress: 0,
-      steps: 4,
-      completedSteps: 0,
-      time: '1 hour ago',
-    },
-  ];
+  const filteredRecords = records.filter((r) => {
+    if (selectedFilter === 'active') return r.status === 'RUNNING' || r.status === 'REPLANNING';
+    if (selectedFilter === 'completed') return r.status === 'COMPLETED';
+    return true;
+  });
 
   return (
     <div style={styles.container}>
@@ -48,20 +23,20 @@ export const TasksView: React.FC = () => {
           <span style={styles.title}>Execution Pipeline</span>
         </div>
         <div style={styles.pillFilterGroup}>
-          {(['all', 'active', 'completed'] as const).map((filter) => (
+          {(['all', 'active', 'completed'] as const).map((f) => (
             <button
-              key={filter}
+              key={f}
               type="button"
               style={{
                 ...styles.filterBtn,
-                backgroundColor: selectedFilter === filter ? 'var(--bg-surface)' : 'transparent',
-                color: selectedFilter === filter ? 'var(--accent-primary)' : 'var(--text-muted)',
-                fontWeight: selectedFilter === filter ? 700 : 500,
-                boxShadow: selectedFilter === filter ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                backgroundColor: selectedFilter === f ? 'var(--bg-surface)' : 'transparent',
+                color: selectedFilter === f ? 'var(--accent-primary)' : 'var(--text-muted)',
+                fontWeight: selectedFilter === f ? 700 : 500,
+                boxShadow: selectedFilter === f ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
               }}
-              onClick={() => setSelectedFilter(filter)}
+              onClick={() => setSelectedFilter(f)}
             >
-              {filter.charAt(0).toUpperCase() + filter.slice(1)}
+              {f.charAt(0).toUpperCase() + f.slice(1)}
             </button>
           ))}
         </div>
@@ -108,69 +83,79 @@ export const TasksView: React.FC = () => {
         </div>
 
         <div style={styles.taskTitle}>
-          {activeTask ? activeTask.prompt : 'Locate Visual Studio Code & Summarize ORBIT Codebase'}
+          {activeTask ? activeTask.prompt : isProcessing ? 'Processing Active Task...' : 'No active task running'}
         </div>
 
         {/* Progress Bar */}
-        <div style={styles.progressContainer}>
-          <div style={styles.progressBarTrack}>
-            <div
-              style={{
-                ...styles.progressBarFill,
-                width: isProcessing ? '65%' : '100%',
-              }}
-            />
+        {activeTask && (
+          <div style={styles.progressContainer}>
+            <div style={styles.progressBarTrack}>
+              <div
+                style={{
+                  ...styles.progressBarFill,
+                  width: activeTask.status === 'COMPLETED' ? '100%' : isProcessing ? '60%' : '0%',
+                }}
+              />
+            </div>
+            <div style={styles.progressLabelRow}>
+              <span>Status: {activeTask.status}</span>
+              <span>{activePlan ? `${activePlan.steps.length} steps planned` : ''}</span>
+            </div>
           </div>
-          <div style={styles.progressLabelRow}>
-            <span>Target: VS Code</span>
-            <span>{isProcessing ? 'Step 3 of 6 (65%)' : 'Completed (100%)'}</span>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Task Queue List */}
-      <div style={styles.queueHeader}>Task History & Queue</div>
+      <div style={styles.queueHeader}>Task History & Queue ({filteredRecords.length})</div>
       <div style={styles.taskList}>
-        {mockTasks
-          .filter((t) => {
-            if (selectedFilter === 'active') return t.status === 'RUNNING';
-            if (selectedFilter === 'completed') return t.status === 'COMPLETED';
-            return true;
-          })
-          .map((task) => (
-            <div key={task.id} style={styles.taskItem}>
+        {filteredRecords.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '24px 12px', color: 'var(--text-muted)', fontSize: '11.5px' }}>
+            No task records yet. Submit a task in Chat to begin execution.
+          </div>
+        ) : (
+          filteredRecords.map((record) => (
+            <div
+              key={record.execution_id}
+              style={styles.taskItem}
+              onClick={() => selectExecution(record.execution_id)}
+            >
               <div style={styles.taskItemTop}>
-                <div style={styles.itemTitle}>{task.title}</div>
+                <div style={styles.itemTitle}>{record.prompt}</div>
                 <span
                   style={{
                     ...styles.statusTag,
                     backgroundColor:
-                      task.status === 'RUNNING'
+                      record.status === 'RUNNING' || record.status === 'REPLANNING'
                         ? 'var(--accent-primary-subtle)'
-                        : task.status === 'COMPLETED'
+                        : record.status === 'COMPLETED'
                         ? 'var(--accent-green-subtle)'
+                        : record.status === 'FAILED'
+                        ? 'rgba(239, 68, 68, 0.15)'
                         : 'var(--bg-subtle)',
                     color:
-                      task.status === 'RUNNING'
+                      record.status === 'RUNNING' || record.status === 'REPLANNING'
                         ? 'var(--accent-primary)'
-                        : task.status === 'COMPLETED'
+                        : record.status === 'COMPLETED'
                         ? 'var(--accent-green)'
+                        : record.status === 'FAILED'
+                        ? 'var(--accent-red)'
                         : 'var(--text-muted)',
                   }}
                 >
-                  {task.status}
+                  {record.status}
                 </span>
               </div>
 
               <div style={styles.taskItemMeta}>
-                <span>{task.target}</span>
+                <span>{record.plan_summary || 'Task'}</span>
                 <span>•</span>
-                <span>{task.completedSteps}/{task.steps} Steps</span>
+                <span>{record.step_count || 0} Steps</span>
                 <span>•</span>
-                <span>{task.time}</span>
+                <span>{new Date(record.started_at).toLocaleTimeString()}</span>
               </div>
             </div>
-          ))}
+          ))
+        )}
       </div>
     </div>
   );

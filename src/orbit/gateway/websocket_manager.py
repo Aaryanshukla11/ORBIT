@@ -6,7 +6,7 @@ import asyncio
 from datetime import datetime, timezone
 import inspect
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -42,6 +42,8 @@ from orbit.contracts.commands import (
     TaskHistoryDetailPayload,
     TaskHistoryListPayload,
     DiagnosticsRunPayload,
+    UpdateSecurityPolicyPayload,
+    UpdateAppPolicyPayload,
     TriggerTakeoverPayload,
     TypeTextPayload,
 )
@@ -403,6 +405,26 @@ class WebSocketManager:
         elif cmd.command_type == CommandType.CANCEL_TASK:
             cancel_payload: CancelTaskPayload = payload
             await self._orchestrator.cancel_task(task_id=cancel_payload.task_id, reason=cancel_payload.reason or "Cancelled by user")
+        elif cmd.command_type == CommandType.PAUSE_TASK:
+            pause_payload: PauseTaskPayload = payload
+            await self._orchestrator.pause_task(task_id=pause_payload.task_id, reason=pause_payload.reason or "Paused by user")
+        elif cmd.command_type == CommandType.RESUME_TASK:
+            resume_payload: ResumeTaskPayload = payload
+            await self._orchestrator.resume_task(task_id=resume_payload.task_id)
+        elif cmd.command_type == CommandType.AUTHORIZE_ACTION:
+            auth_payload: AuthorizeActionPayload = payload
+            await self._orchestrator.authorize_action(
+                task_id=auth_payload.task_id,
+                action_id=auth_payload.action_id,
+                approved=auth_payload.approved,
+                reason=auth_payload.reason,
+            )
+        elif cmd.command_type == CommandType.UPDATE_SECURITY_POLICY:
+            sec_payload: UpdateSecurityPolicyPayload = payload
+            await self._handle_update_security_policy(conn, cmd, sec_payload)
+        elif cmd.command_type == CommandType.UPDATE_APP_POLICY:
+            app_pol_payload: UpdateAppPolicyPayload = payload
+            await self._handle_update_app_policy(conn, cmd, app_pol_payload)
         elif cmd.command_type == CommandType.TRIGGER_TAKEOVER:
             takeover_payload: TriggerTakeoverPayload = payload
             await self._orchestrator.handle_human_takeover(takeover_payload.reason or "Manual takeover triggered")
@@ -803,6 +825,44 @@ class WebSocketManager:
         )
         await conn.enqueue_message(serialize_outbound_event(resp_event))
 
+    async def _handle_update_security_policy(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: UpdateSecurityPolicyPayload,
+    ) -> None:
+        """Handle capability security policy update and emit audit event."""
+        logger.info("Security capability policy updated: %s -> %s", payload.policy_id, payload.level)
+        ack_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.POLICY_UPDATED,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload={"policy_id": payload.policy_id, "level": payload.level, "status": "APPLIED"},
+        )
+        await conn.enqueue_message(serialize_outbound_event(ack_event))
+
+    async def _handle_update_app_policy(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: UpdateAppPolicyPayload,
+    ) -> None:
+        """Handle application access policy update and emit audit event."""
+        logger.info("App policy updated: %s -> %s", payload.app_id, payload.access_level)
+        ack_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.POLICY_UPDATED,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload={"app_id": payload.app_id, "access_level": payload.access_level, "status": "APPLIED"},
+        )
+        await conn.enqueue_message(serialize_outbound_event(ack_event))
+
     # =========================================================================
     # Model Control Command Handlers (Milestone M1.9 Step 5)
     # =========================================================================
@@ -840,8 +900,8 @@ class WebSocketManager:
             status_val = desc.status.value if hasattr(desc.status, "value") else str(desc.status)
 
             if inv_item:
-                is_installed = inv_item.installed
-                is_configured = inv_item.configured
+                is_installed = getattr(inv_item, "installed", True)
+                is_configured = getattr(inv_item, "configured", True)
                 status_val = inv_item.status.value if hasattr(inv_item.status, "value") else str(inv_item.status)
 
             if not payload.include_all and not (is_installed and is_configured):
@@ -1164,7 +1224,7 @@ class WebSocketManager:
                     pass
 
         result = await msm.switch_model(
-            new_model_id=payload.model_id,
+            new_model_id=str(payload.model_id or payload.target_model_id or ""),
             policy=policy_enum,
             timeout_seconds=payload.timeout_seconds,
             preload_weights=payload.preload_weights,
@@ -1275,7 +1335,7 @@ class WebSocketManager:
                 }
             else:
                 prov = self._orchestrator.model_manager.get_provider(desc.provider)
-                if prov and prov.is_available:
+                if prov and getattr(prov, "is_available", True):
                     resp_payload = {
                         "model_id": target_id,
                         "status": "UNKNOWN",

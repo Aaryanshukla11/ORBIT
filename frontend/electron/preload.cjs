@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('orbitDesktop', {
   getSystemDisplays: () => ipcRenderer.invoke('get-system-displays'),
   getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
   getInstalledApps: () => ipcRenderer.invoke('get-installed-apps'),
+  launchApp: (cmd) => ipcRenderer.invoke('launch-app', cmd),
   onDisplayChanged: (callback) => {
     const handler = () => callback();
     ipcRenderer.on('display-changed', handler);

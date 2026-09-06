@@ -40,6 +40,8 @@ from orbit.contracts.commands import (
     TaskHistoryDetailPayload,
     TaskHistoryListPayload,
     DiagnosticsRunPayload,
+    UpdateSecurityPolicyPayload,
+    UpdateAppPolicyPayload,
     TriggerTakeoverPayload,
     TypeTextPayload,
 )
@@ -89,6 +91,8 @@ COMMAND_PAYLOAD_MAP = {
     CommandType.TASK_HISTORY_DETAIL: TaskHistoryDetailPayload,
     CommandType.TASK_HISTORY_CLEAR: TaskHistoryClearPayload,
     CommandType.DIAGNOSTICS_RUN: DiagnosticsRunPayload,
+    CommandType.UPDATE_SECURITY_POLICY: UpdateSecurityPolicyPayload,
+    CommandType.UPDATE_APP_POLICY: UpdateAppPolicyPayload,
 }
 
 

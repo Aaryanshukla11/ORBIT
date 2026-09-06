@@ -25,12 +25,12 @@ class PlanExecutionValidationResult:
         is_valid: bool,
         error_code: Optional[str] = None,
         error_message: Optional[str] = None,
-        diagnostics: Optional[List[str]] = None,
+        diagnostics: Optional[Any] = None,
     ) -> None:
         self.is_valid = is_valid
         self.error_code = error_code
         self.error_message = error_message
-        self.diagnostics = diagnostics or []
+        self.diagnostics = diagnostics if diagnostics is not None else []
 
     def __bool__(self) -> bool:
         return self.is_valid

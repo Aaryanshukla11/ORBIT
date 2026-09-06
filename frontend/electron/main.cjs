@@ -165,30 +165,56 @@ ipcMain.handle('get-system-info', () => {
 });
 
 ipcMain.handle('get-installed-apps', async () => {
-
   const fs = require('fs');
   const path = require('path');
+  const { execSync } = require('child_process');
+
+  // Query running process names
+  const runningProcesses = new Set();
+  try {
+    const stdout = execSync('tasklist /fo csv /nh', { encoding: 'utf-8', timeout: 2500 });
+    const lines = stdout.trim().split('\n');
+    for (const line of lines) {
+      const match = line.match(/^"([^"]+)"/);
+      if (match) runningProcesses.add(match[1].toLowerCase());
+    }
+  } catch (err) {
+    console.warn('[Electron] tasklist query notice:', err.message);
+  }
+
+  const userProfile = process.env.USERPROFILE || 'C:\\Users\\' + (process.env.USERNAME || 'User');
+  const localAppData = process.env.LOCALAPPDATA || path.join(userProfile, 'AppData', 'Local');
 
   const knownApps = [
+    {
+      id: 'notepad',
+      name: 'Notepad',
+      publisher: 'Microsoft Windows',
+      processName: 'notepad.exe',
+      iconType: 'editor',
+      category: 'Utilities',
+      executablePath: 'C:\\Windows\\System32\\notepad.exe',
+      launchCommand: 'notepad.exe',
+    },
+    {
+      id: 'paint',
+      name: 'Paint',
+      publisher: 'Microsoft Windows',
+      processName: 'mspaint.exe',
+      iconType: 'editor',
+      category: 'Utilities',
+      executablePath: 'C:\\Windows\\System32\\mspaint.exe',
+      launchCommand: 'mspaint.exe',
+    },
     {
       id: 'vscode',
       name: 'Visual Studio Code',
       publisher: 'Microsoft Corporation',
       processName: 'Code.exe',
       iconType: 'code',
-      installed: true,
       category: 'Development',
-      executablePath: 'C:\\Program Files\\Microsoft VS Code\\Code.exe',
-    },
-    {
-      id: 'edge',
-      name: 'Microsoft Edge',
-      publisher: 'Microsoft Corporation',
-      processName: 'msedge.exe',
-      iconType: 'browser',
-      installed: true,
-      category: 'Browser',
-      executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      executablePath: path.join(localAppData, 'Programs', 'Microsoft VS Code', 'Code.exe'),
+      launchCommand: 'code',
     },
     {
       id: 'terminal',
@@ -196,9 +222,19 @@ ipcMain.handle('get-installed-apps', async () => {
       publisher: 'Microsoft Corporation',
       processName: 'wt.exe',
       iconType: 'terminal',
-      installed: true,
       category: 'System',
-      executablePath: 'C:\\Users\\%USERNAME%\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe',
+      executablePath: path.join(localAppData, 'Microsoft', 'WindowsApps', 'wt.exe'),
+      launchCommand: 'wt.exe',
+    },
+    {
+      id: 'edge',
+      name: 'Microsoft Edge',
+      publisher: 'Microsoft Corporation',
+      processName: 'msedge.exe',
+      iconType: 'browser',
+      category: 'Browser',
+      executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+      launchCommand: 'msedge.exe',
     },
     {
       id: 'chrome',
@@ -206,19 +242,19 @@ ipcMain.handle('get-installed-apps', async () => {
       publisher: 'Google LLC',
       processName: 'chrome.exe',
       iconType: 'browser',
-      installed: true,
       category: 'Browser',
       executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      launchCommand: 'chrome.exe',
     },
     {
-      id: 'docker',
-      name: 'Docker Desktop',
-      publisher: 'Docker Inc.',
-      processName: 'Docker Desktop.exe',
-      iconType: 'server',
-      installed: true,
-      category: 'Virtualization',
-      executablePath: 'C:\\Program Files\\Docker\\Docker\\Docker Desktop.exe',
+      id: 'brave',
+      name: 'Brave Browser',
+      publisher: 'Brave Software Inc.',
+      processName: 'brave.exe',
+      iconType: 'browser',
+      category: 'Browser',
+      executablePath: 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+      launchCommand: 'brave.exe',
     },
     {
       id: 'ollama',
@@ -226,19 +262,9 @@ ipcMain.handle('get-installed-apps', async () => {
       publisher: 'Ollama Team',
       processName: 'ollama.exe',
       iconType: 'ai',
-      installed: true,
       category: 'AI & Inference',
-      executablePath: 'C:\\Users\\%USERNAME%\\AppData\\Local\\Programs\\Ollama\\ollama.exe',
-    },
-    {
-      id: 'notepad',
-      name: 'Notepad',
-      publisher: 'Microsoft Windows',
-      processName: 'notepad.exe',
-      iconType: 'editor',
-      installed: true,
-      category: 'Utilities',
-      executablePath: 'C:\\Windows\\System32\\notepad.exe',
+      executablePath: path.join(localAppData, 'Programs', 'Ollama', 'ollama.exe'),
+      launchCommand: 'ollama.exe',
     },
     {
       id: 'explorer',
@@ -246,9 +272,9 @@ ipcMain.handle('get-installed-apps', async () => {
       publisher: 'Microsoft Windows',
       processName: 'explorer.exe',
       iconType: 'system',
-      installed: true,
       category: 'System',
       executablePath: 'C:\\Windows\\explorer.exe',
+      launchCommand: 'explorer.exe',
     },
     {
       id: 'calculator',
@@ -256,13 +282,46 @@ ipcMain.handle('get-installed-apps', async () => {
       publisher: 'Microsoft Windows',
       processName: 'CalculatorApp.exe',
       iconType: 'utility',
-      installed: true,
       category: 'Utilities',
-      executablePath: 'C:\\Program Files\\WindowsApps\\CalculatorApp.exe',
+      executablePath: 'C:\\Windows\\System32\\calc.exe',
+      launchCommand: 'calc.exe',
     },
   ];
 
-  return knownApps;
+  return knownApps.map((app) => {
+    let existsOnDisk = false;
+    try {
+      existsOnDisk = fs.existsSync(app.executablePath);
+    } catch {
+      existsOnDisk = false;
+    }
+    const isRunning = runningProcesses.has(app.processName.toLowerCase()) || 
+                      (app.id === 'notepad' && runningProcesses.has('notepad.exe')) ||
+                      (app.id === 'calculator' && (runningProcesses.has('calculatorapp.exe') || runningProcesses.has('calc.exe')));
+
+    return {
+      ...app,
+      installed: existsOnDisk || isRunning,
+      isRunning: isRunning,
+      state: isRunning ? 'Running (Active Process)' : existsOnDisk ? 'Installed (Idle)' : 'Not Installed',
+      windowTitle: isRunning ? `${app.name} • Active in OS` : 'Ready to Launch',
+    };
+  });
+});
+
+ipcMain.handle('launch-app', async (_, launchCommand) => {
+  const { spawn } = require('child_process');
+  try {
+    const child = spawn(launchCommand, [], {
+      detached: true,
+      stdio: 'ignore',
+      shell: true,
+    });
+    child.unref();
+    return { success: true, message: `Launched ${launchCommand}` };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 

@@ -13,7 +13,7 @@ class RuntimeConfig(BaseModel):
     """Configuration model for ORBIT runtime and capability subsystems."""
 
     adapter_mode: AdapterMode = Field(
-        default=AdapterMode.MOCK,
+        default=AdapterMode.PRODUCTION,
         description="Global adapter mode: MOCK or PRODUCTION",
     )
     capability_overrides: Dict[CapabilityType, AdapterMode] = Field(
@@ -31,7 +31,7 @@ class RuntimeConfig(BaseModel):
     @classmethod
     def from_env(cls) -> RuntimeConfig:
         """Create configuration from environment variables."""
-        mode_str = os.getenv("ORBIT_ADAPTER_MODE", "MOCK").upper()
+        mode_str = os.getenv("ORBIT_ADAPTER_MODE", "PRODUCTION").upper()
         mode = AdapterMode.PRODUCTION if mode_str == "PRODUCTION" else AdapterMode.MOCK
         host = os.getenv("ORBIT_HOST", "127.0.0.1")
         port = int(os.getenv("ORBIT_PORT", "8765"))

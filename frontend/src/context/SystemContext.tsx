@@ -89,30 +89,6 @@ const DEFAULT_CAPABILITIES: CapabilityItem[] = [
   },
 ];
 
-const DEFAULT_OBSERVED_WINDOWS: ObservedWindowItem[] = [
-  {
-    hwnd: '0x00240E9A',
-    title: 'ORBIT - Visual Studio Code',
-    processName: 'Code.exe',
-    isForeground: true,
-    bounds: '0, 0, 1500, 1040',
-  },
-  {
-    hwnd: '0x001904C2',
-    title: 'PowerShell 7 (Administrator)',
-    processName: 'wt.exe',
-    isForeground: false,
-    bounds: '100, 100, 900, 600',
-  },
-  {
-    hwnd: '0x000F0288',
-    title: 'Google Chrome - ORBIT Development',
-    processName: 'chrome.exe',
-    isForeground: false,
-    bounds: '200, 150, 1200, 800',
-  },
-];
-
 const SystemContext = createContext<SystemContextType | undefined>(undefined);
 
 export const SystemProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -121,7 +97,7 @@ export const SystemProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext>(DEFAULT_WORKSPACE);
   const [capabilities, setCapabilities] = useState<CapabilityItem[]>(DEFAULT_CAPABILITIES);
-  const [observedWindows, setObservedWindows] = useState<ObservedWindowItem[]>(DEFAULT_OBSERVED_WINDOWS);
+  const [observedWindows, setObservedWindows] = useState<ObservedWindowItem[]>([]);
   const [selectedDisplayId, setSelectedDisplayId] = useState<number | null>(1);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
@@ -142,6 +118,23 @@ export const SystemProvider: React.FC<{ children: ReactNode }> = ({ children }) 
           const realSysInfo = await window.orbitDesktop.getSystemInfo();
           if (realSysInfo) {
             setSystemInfo(realSysInfo);
+          }
+        }
+
+        if (window.orbitDesktop.getInstalledApps) {
+          const realApps = await window.orbitDesktop.getInstalledApps();
+          if (realApps && Array.isArray(realApps)) {
+            const running = realApps
+              .filter((a: any) => a.isRunning)
+              .map((a: any, idx: number) => ({
+                hwnd: `0x${(idx + 1).toString(16).padStart(6, '0')}`,
+                title: a.name,
+                processName: a.processName || a.name,
+                isForeground: idx === 0,
+              }));
+            if (running.length > 0) {
+              setObservedWindows(running);
+            }
           }
         }
       }

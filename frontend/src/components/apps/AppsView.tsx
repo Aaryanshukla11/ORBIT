@@ -1,48 +1,112 @@
-import React, { useState } from 'react';
-import { AppsTabIcon, VsCodeIcon, TerminalIcon, GlobeWebIcon, ExpandScanIcon, CheckIcon } from '../icons/Icons';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  AppsTabIcon,
+  VsCodeIcon,
+  TerminalIcon,
+  GlobeWebIcon,
+  ExpandScanIcon,
+  CheckIcon,
+  ServerIcon,
+  PlayIcon,
+} from '../icons/Icons';
+
+interface RealAppItem {
+  id: string;
+  name: string;
+  publisher?: string;
+  processName: string;
+  iconType?: string;
+  category?: string;
+  installed: boolean;
+  isRunning: boolean;
+  state: string;
+  windowTitle: string;
+  launchCommand?: string;
+}
 
 export const AppsView: React.FC = () => {
-  const [activeApp, setActiveApp] = useState<string>('vscode');
+  const [apps, setApps] = useState<RealAppItem[]>([]);
+  const [activeApp, setActiveApp] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'all' | 'running' | 'installed'>('all');
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const apps = [
-    {
-      id: 'vscode',
-      name: 'Visual Studio Code',
-      icon: VsCodeIcon,
-      process: 'Code.exe',
-      state: 'Running (Foreground)',
-      isForeground: true,
-      windowTitle: 'ORBIT - Visual Studio Code',
-      capabilities: ['Code Editing', 'Terminal', 'Git Integration'],
-    },
-    {
-      id: 'terminal',
-      name: 'Windows Terminal',
-      icon: TerminalIcon,
-      process: 'wt.exe',
-      state: 'Running (Background)',
-      isForeground: false,
-      windowTitle: 'PowerShell 7 - Administrator',
-      capabilities: ['Shell Execution', 'Python Env', 'CLI Tools'],
-    },
-    {
-      id: 'chrome',
-      name: 'Google Chrome',
-      icon: GlobeWebIcon,
-      process: 'chrome.exe',
-      state: 'Running (Background)',
-      isForeground: false,
-      windowTitle: 'Vite + React Localhost',
-      capabilities: ['DOM Inspection', 'Web Automation', 'DevTools'],
-    },
-  ];
+  const fetchApps = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      if (typeof window !== 'undefined' && window.orbitDesktop && window.orbitDesktop.getInstalledApps) {
+        const discovered = await window.orbitDesktop.getInstalledApps();
+        if (discovered && Array.isArray(discovered)) {
+          setApps(discovered);
+          if (!activeApp && discovered.length > 0) {
+            setActiveApp(discovered[0].id);
+          }
+        }
+      } else {
+        // Fallback truthful minimal list
+        setApps([
+          {
+            id: 'notepad',
+            name: 'Notepad',
+            processName: 'notepad.exe',
+            category: 'Utilities',
+            installed: true,
+            isRunning: false,
+            state: 'Installed (OS Default)',
+            windowTitle: 'Notepad Text Editor',
+            launchCommand: 'notepad.exe',
+          },
+        ]);
+      }
+    } catch (err: any) {
+      console.warn('[AppsView] Failed to query installed apps:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeApp]);
 
-  const handleAction = (appName: string, action: string) => {
-    setStatusMessage(`${action} triggered on ${appName}`);
+  useEffect(() => {
+    fetchApps();
+    const interval = setInterval(fetchApps, 5000);
+    return () => clearInterval(interval);
+  }, [fetchApps]);
+
+  const handleLaunchOrFocus = async (app: RealAppItem) => {
+    if (typeof window !== 'undefined' && window.orbitDesktop && window.orbitDesktop.launchApp && app.launchCommand) {
+      const res = await window.orbitDesktop.launchApp(app.launchCommand);
+      if (res && res.success) {
+        setStatusMessage(`Successfully dispatched: ${app.name}`);
+        setTimeout(() => fetchApps(), 1000);
+      } else {
+        setStatusMessage(`Launch notice: ${app.name} (${res?.error || 'dispatched'})`);
+      }
+    } else {
+      setStatusMessage(`Selected ${app.name}`);
+    }
     setTimeout(() => {
       setStatusMessage(null);
-    }, 2000);
+    }, 2500);
+  };
+
+  const filteredApps = apps.filter((app) => {
+    if (filter === 'running') return app.isRunning;
+    if (filter === 'installed') return app.installed;
+    return true;
+  });
+
+  const getAppIcon = (iconType?: string) => {
+    switch (iconType) {
+      case 'code':
+        return VsCodeIcon;
+      case 'terminal':
+        return TerminalIcon;
+      case 'browser':
+        return GlobeWebIcon;
+      case 'ai':
+        return ServerIcon;
+      default:
+        return AppsTabIcon;
+    }
   };
 
   return (
@@ -52,7 +116,24 @@ export const AppsView: React.FC = () => {
           <AppsTabIcon size={16} color="var(--accent-primary)" />
           <span style={styles.title}>Target Applications</span>
         </div>
-        <span style={styles.countBadge}>{apps.length} Active Targets</span>
+        <div style={styles.filterGroup}>
+          {(['all', 'running', 'installed'] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              style={{
+                ...styles.filterBtn,
+                backgroundColor: filter === f ? 'var(--bg-surface)' : 'transparent',
+                color: filter === f ? 'var(--accent-primary)' : 'var(--text-muted)',
+                fontWeight: filter === f ? 700 : 500,
+                boxShadow: filter === f ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              }}
+              onClick={() => setFilter(f)}
+            >
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
+        </div>
       </div>
 
       {statusMessage && (
@@ -62,61 +143,69 @@ export const AppsView: React.FC = () => {
         </div>
       )}
 
-      <div style={styles.appList}>
-        {apps.map((app) => {
-          const Icon = app.icon;
-          const isSelected = activeApp === app.id;
+      {isLoading && apps.length === 0 ? (
+        <div style={styles.emptyState}>Probing running Windows processes and installed software...</div>
+      ) : (
+        <div style={styles.appList}>
+          {filteredApps.map((app) => {
+            const Icon = getAppIcon(app.iconType);
+            const isSelected = activeApp === app.id;
 
-          return (
-            <div
-              key={app.id}
-              style={{
-                ...styles.appCard,
-                borderColor: isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)',
-              }}
-              onClick={() => setActiveApp(app.id)}
-            >
-              <div style={styles.appTop}>
-                <div style={styles.iconBox}>
-                  <Icon size={20} color="var(--accent-primary)" />
+            return (
+              <div
+                key={app.id}
+                style={{
+                  ...styles.appCard,
+                  borderColor: isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)',
+                }}
+                onClick={() => setActiveApp(app.id)}
+              >
+                <div style={styles.appTop}>
+                  <div
+                    style={{
+                      ...styles.iconBox,
+                      backgroundColor: app.isRunning ? 'rgba(16, 185, 129, 0.1)' : 'var(--bg-subtle)',
+                    }}
+                  >
+                    <Icon size={18} color={app.isRunning ? 'var(--accent-green)' : 'var(--accent-primary)'} />
+                  </div>
+                  <div style={styles.appHead}>
+                    <div style={styles.appNameRow}>
+                      <span style={styles.appName}>{app.name}</span>
+                      {app.isRunning && <span style={styles.runningBadge}>ACTIVE</span>}
+                    </div>
+                    <div style={styles.appProcess}>
+                      {app.processName} • {app.state}
+                    </div>
+                  </div>
                 </div>
-                <div style={styles.appHead}>
-                  <div style={styles.appName}>{app.name}</div>
-                  <div style={styles.appProcess}>{app.process} • {app.state}</div>
+
+                <div style={styles.windowTitleBox}>
+                  <span style={styles.windowTitleText}>{app.windowTitle}</span>
+                </div>
+
+                <div style={styles.actionRow}>
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.actionBtnPrimary,
+                      backgroundColor: app.isRunning ? 'var(--accent-primary)' : 'var(--bg-subtle)',
+                      color: app.isRunning ? '#ffffff' : 'var(--text-primary)',
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleLaunchOrFocus(app);
+                    }}
+                  >
+                    <PlayIcon size={11} color={app.isRunning ? '#ffffff' : 'var(--text-primary)'} />
+                    <span>{app.isRunning ? 'Focus Window' : 'Launch Application'}</span>
+                  </button>
                 </div>
               </div>
-
-              <div style={styles.windowTitleBox}>
-                <span style={styles.windowTitleText}>{app.windowTitle}</span>
-              </div>
-
-              <div style={styles.actionRow}>
-                <button
-                  type="button"
-                  style={styles.actionBtnPrimary}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleAction(app.name, 'Focus');
-                  }}
-                >
-                  Focus Window
-                </button>
-                <button
-                  type="button"
-                  style={styles.actionBtnSecondary}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleAction(app.name, 'OCR Ground');
-                  }}
-                >
-                  <ExpandScanIcon size={13} color="var(--text-secondary)" />
-                  Ground
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };

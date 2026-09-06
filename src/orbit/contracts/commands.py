@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from orbit.contracts.sessions import DisconnectionPolicy
 
@@ -46,6 +46,8 @@ class CommandType(str, Enum):
     TASK_HISTORY_DETAIL = "TASK_HISTORY_DETAIL"
     TASK_HISTORY_CLEAR = "TASK_HISTORY_CLEAR"
     DIAGNOSTICS_RUN = "DIAGNOSTICS_RUN"
+    UPDATE_SECURITY_POLICY = "UPDATE_SECURITY_POLICY"
+    UPDATE_APP_POLICY = "UPDATE_APP_POLICY"
 
 
 
@@ -202,11 +204,20 @@ class ModelActivatePayload(BaseModel):
 
 class ModelSwitchPayload(BaseModel):
     """Inbound payload to safely switch between AI models."""
-    model_id: str = Field(..., min_length=1, description="Target model ID to switch to")
+    model_id: Optional[str] = Field(default=None, description="Target model ID to switch to")
+    target_model_id: Optional[str] = Field(default=None, description="Target model ID alias")
     policy: str = Field(default="REJECT_DURING_ACTIVE_TASK", description="Policy: REJECT_DURING_ACTIVE_TASK, CANCEL_AND_SWITCH, etc.")
     timeout_seconds: float = Field(default=30.0, gt=0.0, description="Switching timeout in seconds")
     preload_weights: bool = Field(default=True, description="Whether to preload model weights")
     required_capabilities: Optional[list[str]] = Field(default=None, description="Optional list of required capabilities")
+
+    @model_validator(mode="after")
+    def resolve_model_id(self):
+        if not self.model_id and self.target_model_id:
+            self.model_id = self.target_model_id
+        if not self.model_id:
+            raise ValueError("Either model_id or target_model_id is required")
+        return self
 
 
 class ModelHealthPayload(BaseModel):
@@ -235,6 +246,20 @@ class TaskHistoryClearPayload(BaseModel):
 class DiagnosticsRunPayload(BaseModel):
     """Inbound payload to trigger on-demand diagnostics run."""
     pass
+
+
+class UpdateSecurityPolicyPayload(BaseModel):
+    """Inbound payload to update a system capability security policy."""
+    policy_id: str
+    level: str = Field(default="ALLOW", description="ALLOW, ASK, or DENY")
+    reason: Optional[str] = None
+
+
+class UpdateAppPolicyPayload(BaseModel):
+    """Inbound payload to update an application access policy."""
+    app_id: str
+    access_level: Optional[str] = Field(default=None, description="ALLOW, ASK, or DENY")
+    permissions: Optional[Dict[str, Any]] = None
 
 
 

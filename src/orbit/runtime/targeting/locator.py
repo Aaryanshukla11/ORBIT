@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import ctypes
+from ctypes import wintypes
 import logging
+import sys
+import time
 from typing import TYPE_CHECKING, List, Optional, Protocol, runtime_checkable
 from uuid import uuid4
 
@@ -203,6 +207,73 @@ class EvidenceBasedTargetLocator:
                     continue
 
             candidates.append(win)
+
+        if len(candidates) == 0:
+            title_query = intent.window_title or intent.name
+            if title_query and sys.platform == "win32":
+                tq_clean = title_query.strip().lower()
+                known_app_launchers = {
+                    "notepad": "notepad.exe",
+                    "paint": "mspaint.exe",
+                    "calculator": "calc.exe",
+                    "cmd": "cmd.exe",
+                    "terminal": "wt.exe",
+                    "explorer": "explorer.exe",
+                }
+                exe_name = known_app_launchers.get(tq_clean)
+                if exe_name:
+                    try:
+                        import subprocess
+                        subprocess.Popen([exe_name], shell=False)
+                        time.sleep(0.8)
+                        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+                        ctypes.windll.user32.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
+                        ctypes.windll.user32.EnumWindows.restype = wintypes.BOOL
+                        GetWindowTextLength = ctypes.windll.user32.GetWindowTextLengthW
+                        GetWindowText = ctypes.windll.user32.GetWindowTextW
+                        IsWindowVisible = ctypes.windll.user32.IsWindowVisible
+                        GetWindowRect = ctypes.windll.user32.GetWindowRect
+
+                        found_hwnds = []
+                        def _enum_cb(hwnd, lparam):
+                            if IsWindowVisible(hwnd):
+                                length = GetWindowTextLength(hwnd)
+                                if length > 0:
+                                    buff = ctypes.create_unicode_buffer(length + 1)
+                                    GetWindowText(hwnd, buff, length + 1)
+                                    w_title = buff.value
+                                    if tq_clean in w_title.lower() or tq_clean in exe_name.lower():
+                                        r = wintypes.RECT()
+                                        if GetWindowRect(hwnd, ctypes.byref(r)):
+                                            if (r.right - r.left) > 50 and (r.bottom - r.top) > 50:
+                                                found_hwnds.append((hwnd, w_title, r))
+                            return True
+
+                        cb = WNDENUMPROC(_enum_cb)
+                        ctypes.windll.user32.EnumWindows(cb, 0)
+                        if found_hwnds:
+                            h, wt, r = found_hwnds[0]
+                            ctypes.windll.user32.SetForegroundWindow(h)
+                            from orbit.models.common import BoundingBox
+                            pid = wintypes.DWORD(0)
+                            ctypes.windll.user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+                            new_win = ObservedWindow(
+                                hwnd=h,
+                                process_id=pid.value or 0,
+                                window_title=wt,
+                                process_name=exe_name,
+                                is_visible=True,
+                                is_foreground=True,
+                                extended_bounds=BoundingBox(
+                                    left=r.left,
+                                    top=r.top,
+                                    width=r.right - r.left,
+                                    height=r.bottom - r.top,
+                                ),
+                            )
+                            candidates.append(new_win)
+                    except Exception as launch_err:
+                        logger.warning("Failed to launch application '%s': %s", title_query, launch_err)
 
         if len(candidates) == 0:
             title_query = intent.window_title or intent.name
@@ -759,13 +830,17 @@ class EvidenceBasedTargetLocator:
                         diagnostic_message="No screenshot image available in snapshot telemetry for visual matching",
                     )
 
-                visual_result = visual_engine.matcher._execute_matching(
-                    template=template,
-                    image=search_img,
-                    policy=policy,
-                    desktop_generation_id=snapshot.generation_id,
-                    observation_id=snapshot.snapshot_id,
-                )
+                matcher = visual_engine.matcher
+                if hasattr(matcher, "_execute_matching"):
+                    visual_result = matcher._execute_matching(
+                        template=template,
+                        image=search_img,
+                        policy=policy,
+                        desktop_generation_id=snapshot.generation_id,
+                        observation_id=snapshot.snapshot_id,
+                    )
+                else:
+                    visual_result = None
             except Exception as ex:
                 return TargetResolutionResult(
                     status=TargetResolutionStatus.INVALID_REQUEST,

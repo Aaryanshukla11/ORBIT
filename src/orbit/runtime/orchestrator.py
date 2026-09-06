@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 from orbit.adapters.base import (
@@ -104,9 +104,14 @@ from orbit.runtime.models import (
 )
 from orbit.runtime.model_runtime import (
     ActiveModelContext,
+    ModelActivationRequest,
     ModelSessionManager,
 )
-from orbit.runtime.model_providers import OllamaProvider
+from orbit.runtime.model_providers import (
+    OllamaProvider,
+    LMStudioProvider,
+    CloudModelProvider,
+)
 
 from orbit.runtime.history import (
     CompletionEvidenceRecord,
@@ -198,7 +203,11 @@ class OrbitOrchestrator:
             task_planning_engine=self._task_planning_engine,
             perception_engine=self._perception_engine,
         )
-        self._model_manager = model_manager or ModelManager(providers=[OllamaProvider()], event_bus=self._event_bus)
+        self._model_manager = model_manager or ModelManager(
+            providers=[OllamaProvider(), LMStudioProvider()],
+            cloud_providers=[CloudModelProvider()],
+            event_bus=self._event_bus,
+        )
         if self._model_manager.event_bus is None:
             self._model_manager.set_event_bus(self._event_bus)
         self._model_session_manager = model_session_manager or ModelSessionManager(
@@ -377,8 +386,8 @@ class OrbitOrchestrator:
 
             # Wire takeover check to workspace capability if supported
             wsp_adapter = self._registry.get_optional(CapabilityType.WORKSPACE)
-            if wsp_adapter and hasattr(wsp_adapter, "is_takeover_active_fn"):
-                wsp_adapter.is_takeover_active_fn = lambda: self._system_sm.current_state == SystemState.HUMAN_TAKEOVER_ACTIVE
+            if wsp_adapter:
+                setattr(wsp_adapter, "is_takeover_active_fn", lambda: self._system_sm.current_state == SystemState.HUMAN_TAKEOVER_ACTIVE)
 
             self._system_sm.transition_to(SystemState.IDLE)
 
@@ -397,6 +406,21 @@ class OrbitOrchestrator:
             ).model_dump(),
         )
         logger.info("OrbitOrchestrator initialized and state is IDLE (Capabilities: %s)", cap_summary)
+
+        # Auto-discover local models and register descriptors in ModelSessionManager
+        try:
+            inv_report = await self._model_manager.refresh_inventory()
+            for desc in inv_report.models:
+                await self._model_session_manager.register_descriptor(desc)
+            active_ctx = self._model_session_manager.get_active_context()
+            if active_ctx is None and inv_report.models:
+                first_model = inv_report.models[0]
+                logger.info("Auto-activating initial discovered model: %s", first_model.model_id)
+                await self._model_session_manager.activate_model(
+                    ModelActivationRequest(model_id=first_model.model_id)
+                )
+        except Exception as ex:
+            logger.warning("Initial model auto-discovery on startup: %s", ex)
 
     async def shutdown(self) -> None:
         """Gracefully shut down orchestrator, cancel in-flight tasks, and shut down capability registry."""
@@ -670,6 +694,34 @@ class OrbitOrchestrator:
             return True
         return False
 
+    async def pause_task(self, task_id: str, reason: str = "Operator paused task") -> bool:
+        """Pause execution of an in-flight task."""
+        task = await self._task_manager.get_task(task_id)
+        if task and task.status in {TaskStatus.RUNNING, TaskStatus.VALIDATING, TaskStatus.READY}:
+            updated = await self._task_manager.update_status(task_id, TaskStatus.PAUSED)
+            await self._emit_task_event(task_id, TaskStatus.PAUSED)
+            return True
+        return False
+
+    async def resume_task(self, task_id: str) -> bool:
+        """Resume execution of a paused task."""
+        task = await self._task_manager.get_task(task_id)
+        if task and task.status == TaskStatus.PAUSED:
+            updated = await self._task_manager.update_status(task_id, TaskStatus.RUNNING)
+            await self._emit_task_event(task_id, TaskStatus.RUNNING)
+            return True
+        return False
+
+    async def authorize_action(self, task_id: str, action_id: str, approved: bool, reason: Optional[str] = None) -> bool:
+        """Handle human authorization response for a gated action."""
+        await self._emit_event(
+            EventType.ACTION_AUTHORIZATION_RESOLVED,
+            session_id="system",
+            correlation_id=task_id,
+            payload={"task_id": task_id, "action_id": action_id, "approved": approved, "reason": reason},
+        )
+        return True
+
     async def _execute_task_lifecycle(self, task_id: str, cancel_token: CancellationToken) -> None:
         """Core execution pipeline executing task steps safely."""
         task = await self._task_manager.get_task(task_id)
@@ -753,7 +805,9 @@ class OrbitOrchestrator:
                     try:
                         exp_outcome = ExpectedOutcome.model_validate(exp_outcome)
                     except Exception:
-                        pass
+                        exp_outcome = None
+                elif not isinstance(exp_outcome, ExpectedOutcome):
+                    exp_outcome = None
 
                 exec_policy = task.metadata.get("execution_policy")
                 if exec_policy is not None and isinstance(exec_policy, dict):
@@ -824,130 +878,87 @@ class OrbitOrchestrator:
                 await self._emit_task_event(task_id, TaskStatus.COMPLETED)
                 return
             else:
-                # M1.8 Step 1 & Step 2: Execute Task Understanding and Task Planning on raw prompt
-                if "task_understanding" not in task.metadata:
-                    understanding = self._task_understanding_engine.understand(
-                        task.prompt, metadata=task.metadata
-                    )
-                    task.metadata["task_understanding"] = understanding.model_dump()
-                else:
-                    understanding = TaskUnderstandingResult.model_validate(task.metadata["task_understanding"])
-
-                if "task_plan" not in task.metadata and understanding.has_intents:
-                    plan_obj = self._task_planning_engine.plan_task(understanding, task_id=task_id)
-                    task.metadata["task_plan"] = plan_obj.model_dump()
-                elif "task_plan" in task.metadata:
-                    plan_obj = ExecutableTaskPlan.model_validate(task.metadata["task_plan"])
-                else:
-                    plan_obj = None
-
-                should_execute_plan = bool(
-                    task.metadata.get("execute_plan", False)
-                    or task.metadata.get("auto_execute_plan", False)
+                # M1.8: Execute Natural Language Autonomous Task end-to-end via TaskCompletionEngine
+                logger.info("Executing natural language task %s: '%s'", task_id, task.prompt)
+                task_exec_res: TaskExecutionResult = await self._task_completion_engine.execute_task(
+                    goal=task.prompt,
+                    session_id=session_id,
+                    task_id=task_id,
+                    context=task.metadata,
+                    policy=task.metadata.get("execution_policy"),
+                    cancel_token=cancel_token,
                 )
 
-                if should_execute_plan and plan_obj is not None:
-                    exec_policy = None
-                    policy_data = task.metadata.get("execution_policy")
-                    if policy_data and isinstance(policy_data, dict):
-                        try:
-                            exec_policy = ExecutionPolicy.model_validate(policy_data)
-                        except Exception:
-                            exec_policy = None
+                task.metadata["task_execution_result"] = task_exec_res.model_dump()
 
-                    plan_res = await self._plan_executor.execute_plan(
-                        plan=plan_obj,
+                # Emit Plan if formulated
+                if task_exec_res.plan:
+                    try:
+                        ui_plan = ExecutionPlan(
+                            plan_id=task_exec_res.plan.plan_id,
+                            task_id=task_id,
+                            description=task_exec_res.plan.description or task.prompt,
+                            steps=[
+                                Step(
+                                    step_id=s.step_id,
+                                    step_index=idx,
+                                    description=s.description or f"Step {idx + 1}",
+                                )
+                                for idx, s in enumerate(task_exec_res.plan.steps)
+                            ],
+                        )
+                        await self._task_manager.set_plan(task_id, ui_plan)
+                        await self._emit_event(
+                            EventType.PLAN_UPDATED,
+                            session_id=session_id,
+                            correlation_id=task_id,
+                            payload=PlanUpdatedPayload(task_id=task_id, plan=ui_plan).model_dump(),
+                        )
+                    except Exception as plan_err:
+                        logger.debug("Plan conversion notice: %s", plan_err)
+
+                # Update history store record
+                rec = await self._history_store.get_record_by_task_id(task_id)
+                is_successful = getattr(task_exec_res, "is_success", False)
+                comp_status = getattr(task_exec_res, "completion_status", None)
+                if rec:
+                    if comp_status and comp_status.value in ExecutionStatus.__members__:
+                        rec.status = ExecutionStatus[comp_status.value]
+                    else:
+                        rec.status = ExecutionStatus.COMPLETED if is_successful else ExecutionStatus.FAILED
+                    rec.completed_at = datetime.now(timezone.utc)
+                    rec.duration_ms = getattr(task_exec_res, "elapsed_duration_ms", 0.0)
+                    rec.failure_reason = getattr(task_exec_res, "failure_reason", None)
+                    rec.failure_code = getattr(task_exec_res, "failure_code", None)
+                    if task_exec_res.plan:
+                        rec.total_steps = len(task_exec_res.plan.steps)
+                        rec.steps_completed = len(task_exec_res.plan.steps) if is_successful else 0
+                    await self._history_store.save_record(rec)
+                    await self._emit_event(
+                        EventType.EXECUTION_RECORD_UPDATED,
                         session_id=session_id,
-                        task_id=task_id,
-                        policy=exec_policy,
-                        cancel_token=cancel_token,
+                        correlation_id=task_id,
+                        payload={"record": rec.model_dump(mode="json")},
                     )
-                    task.metadata["plan_execution_result"] = plan_res.model_dump()
 
-                    if not plan_res.is_success:
-                        err_code = plan_res.failure_code or "PLAN_EXECUTION_FAILED"
-                        err_msg = plan_res.failure_reason or f"Plan execution failed with status {plan_res.final_status.value}"
-                        terminal_status = (
-                            TaskStatus.CANCELLED
-                            if plan_res.final_status == PlanExecutionStatus.CANCELLED
-                            else TaskStatus.FAILED
-                        )
-                        error_detail = ErrorDetail(
-                            code=err_code,
-                            message=err_msg,
-                            recoverable=False,
-                            details={
-                                "final_status": plan_res.final_status.value,
-                                "total_steps": plan_res.total_steps,
-                                "completed_steps": plan_res.completed_steps,
-                                "failed_steps": plan_res.failed_steps,
-                                "blocked_steps": plan_res.blocked_steps,
-                            },
-                        )
-                        await self._task_manager.update_status(task_id, terminal_status, error=error_detail)
-                        await self._emit_task_event(task_id, terminal_status, error=error_detail)
-                        return
-
-                    # Plan succeeded
+                if is_successful:
                     await self._task_manager.update_status(task_id, TaskStatus.VERIFYING)
                     await self._emit_task_event(task_id, TaskStatus.VERIFYING)
                     await self._task_manager.update_status(task_id, TaskStatus.COMPLETED)
                     await self._emit_task_event(task_id, TaskStatus.COMPLETED)
-                    return
-
-                is_synthetic_dev = bool(
-                    task.metadata.get("is_synthetic_development", False)
-                    or task.metadata.get("allow_synthetic_fallback", False)
-                )
-                if not is_synthetic_dev:
-                    err_msg = (
-                        "Autonomous task execution rejected: missing required 'target_intent' in task metadata. "
-                        "Production autonomous execution fails closed when no valid structured TargetIntent exists."
-                    )
-                    logger.error("Task %s rejected: %s", task_id, err_msg)
-                    error_detail = ErrorDetail(
-                        code="TARGET_INTENT_REQUIRED",
-                        message=err_msg,
+                else:
+                    err_detail = ErrorDetail(
+                        code=getattr(task_exec_res, "failure_code", "TASK_EXECUTION_FAILED") or "TASK_EXECUTION_FAILED",
+                        message=getattr(task_exec_res, "failure_reason", "Task goal could not be completed") or "Task goal could not be completed",
                         recoverable=False,
                     )
-                    await self._task_manager.update_status(task_id, TaskStatus.FAILED, error=error_detail)
-                    await self._emit_task_event(task_id, TaskStatus.FAILED, error=error_detail)
-                    return
-
-                # Isolated development synthetic plan explicitly requested
-                active_gen = self.workspace.get_desktop_generation() if self.workspace and hasattr(self.workspace, "get_desktop_generation") else 0
-                plan = self._build_synthetic_plan(task_id, task.prompt, generation_id=active_gen)
-
-                await self._task_manager.set_plan(task_id, plan)
-                await self._emit_event(
-                    EventType.PLAN_UPDATED,
-                    session_id=session_id,
-                    correlation_id=task_id,
-                    payload=PlanUpdatedPayload(task_id=task_id, plan=plan).model_dump(),
-                )
-
-                # Step 3: Execute Planned Steps
-                for step_idx, step in enumerate(plan.steps):
-                    if cancel_token.is_cancelled:
-                        await self._handle_cancellation(task_id, cancel_token.reason)
-                        return
-
-                    await self._task_manager.set_current_step(task_id, step_idx)
-
-                    for action in step.actions:
-                        if cancel_token.is_cancelled:
-                            await self._handle_cancellation(task_id, cancel_token.reason)
-                            return
-
-                        await self._execute_action(session_id, action, cancel_token)
-
-                # 4. Verifying Phase
-                await self._task_manager.update_status(task_id, TaskStatus.VERIFYING)
-                await self._emit_task_event(task_id, TaskStatus.VERIFYING)
-
-                # 5. Completed Phase
-                await self._task_manager.update_status(task_id, TaskStatus.COMPLETED)
-                await self._emit_task_event(task_id, TaskStatus.COMPLETED)
+                    terminal_status = (
+                        TaskStatus.CANCELLED
+                        if (comp_status and comp_status.value == "CANCELLED")
+                        else TaskStatus.FAILED
+                    )
+                    await self._task_manager.update_status(task_id, terminal_status, error=err_detail)
+                    await self._emit_task_event(task_id, terminal_status, error=err_detail)
 
         except Exception as ex:
             logger.exception("Task execution failed for task %s: %s", task_id, ex)
@@ -1111,9 +1122,9 @@ class OrbitOrchestrator:
             if action.action_type == "pointer_click":
                 btn = action.parameters.get("button", "left")
                 count = action.parameters.get("count", 1)
-                await ptr.click(int(x), int(y), button=btn, count=count, cancellation_token=cancel_token)
+                await ptr.click(int(x), int(y), button=btn, count=count)
             elif action.action_type == "pointer_move":
-                await ptr.move_to(int(x), int(y), cancellation_token=cancel_token)
+                await ptr.move_to(int(x), int(y))
 
         elif action.action_type == "type_text":
             if self._system_sm.current_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
@@ -1129,7 +1140,7 @@ class OrbitOrchestrator:
             kbd = self._registry.resolve_typed(CapabilityType.KEYBOARD, KeyboardCapability)
             text = action.parameters.get("text", "")
             target_hwnd = action.parameters.get("target_hwnd")
-            await kbd.type_text(text, target_hwnd=target_hwnd, cancellation_token=cancel_token)
+            await kbd.type_text(text, target_hwnd=target_hwnd)
         elif action.action_type == "shortcut":
             if self._system_sm.current_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
                 err_msg = "Keyboard action blocked: Human takeover is currently active"
@@ -1144,7 +1155,7 @@ class OrbitOrchestrator:
             kbd = self._registry.resolve_typed(CapabilityType.KEYBOARD, KeyboardCapability)
             comb = action.parameters.get("combination", "ctrl+s")
             target_hwnd = action.parameters.get("target_hwnd")
-            await kbd.press_shortcut(comb, target_hwnd=target_hwnd, cancellation_token=cancel_token)
+            await kbd.press_shortcut(comb, target_hwnd=target_hwnd)
         elif action.action_type == "observe":
             if self._system_sm.current_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
                 err_msg = "Observation blocked: Human takeover is currently active"
@@ -1232,12 +1243,13 @@ class OrbitOrchestrator:
             except Exception:
                 post_snapshot = None
 
-        expected_outcome = action.parameters.get("expected_outcome")
         if expected_outcome is not None and isinstance(expected_outcome, dict):
             try:
                 expected_outcome = ExpectedOutcome.model_validate(expected_outcome)
             except Exception:
-                pass
+                expected_outcome = None
+        elif not isinstance(expected_outcome, ExpectedOutcome):
+            expected_outcome = None
 
         verif_res: ActionVerificationResult = self._action_verifier.verify(
             pre_snapshot=pre_snapshot,
