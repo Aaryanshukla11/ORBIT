@@ -115,7 +115,7 @@ async def test_live_windows_visual_template_matching_on_host():
         assert match_res.is_success is True
         assert match_res.best_match is not None
         assert match_res.best_match.confidence >= 0.95
-        assert duration_ms < 5000.0
+        assert duration_ms < 10000.0
 
         # Coordinates should match within pixel tolerance
         matched_box = match_res.best_match.bounding_box

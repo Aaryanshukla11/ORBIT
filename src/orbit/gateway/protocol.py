@@ -17,6 +17,13 @@ from orbit.contracts.commands import (
     HeartbeatPayload,
     KeyboardEmergencyReleasePayload,
     KeyboardKeyPayload,
+    ModelActivatePayload,
+    ModelActivePayload,
+    ModelDiscoverPayload,
+    ModelHealthPayload,
+    ModelListPayload,
+    ModelStatusPayload,
+    ModelSwitchPayload,
     MovePointerPayload,
     PauseTaskPayload,
     PointerButtonPayload,
@@ -67,6 +74,13 @@ COMMAND_PAYLOAD_MAP = {
     CommandType.KEYBOARD_EMERGENCY_RELEASE: KeyboardEmergencyReleasePayload,
     CommandType.RECOVER_KEYBOARD_LOCKOUT: RecoverKeyboardLockoutPayload,
     CommandType.HEARTBEAT: HeartbeatPayload,
+    CommandType.MODEL_LIST: ModelListPayload,
+    CommandType.MODEL_STATUS: ModelStatusPayload,
+    CommandType.MODEL_ACTIVE: ModelActivePayload,
+    CommandType.MODEL_DISCOVER: ModelDiscoverPayload,
+    CommandType.MODEL_ACTIVATE: ModelActivatePayload,
+    CommandType.MODEL_SWITCH: ModelSwitchPayload,
+    CommandType.MODEL_HEALTH: ModelHealthPayload,
 }
 
 

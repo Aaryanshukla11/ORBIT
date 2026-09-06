@@ -40,6 +40,26 @@ class EventType(str, Enum):
     KEYBOARD_LOCKOUT_CHANGED = "KEYBOARD_LOCKOUT_CHANGED"
     ERROR = "ERROR"
     HEARTBEAT_ACK = "HEARTBEAT_ACK"
+    MODEL_SELECTION_REQUESTED = "MODEL_SELECTION_REQUESTED"
+    MODEL_ACTIVATION_STARTED = "MODEL_ACTIVATION_STARTED"
+    MODEL_ACTIVATING = "MODEL_ACTIVATING"
+    MODEL_ACTIVATED = "MODEL_ACTIVATED"
+    MODEL_SWITCH_REQUESTED = "MODEL_SWITCH_REQUESTED"
+    MODEL_SWITCH_STARTED = "MODEL_SWITCH_STARTED"
+    MODEL_SWITCH_SUCCEEDED = "MODEL_SWITCH_SUCCEEDED"
+    MODEL_SWITCHED = "MODEL_SWITCHED"
+    MODEL_SWITCH_FAILED = "MODEL_SWITCH_FAILED"
+    MODEL_DEACTIVATED = "MODEL_DEACTIVATED"
+    MODEL_HEALTH_CHANGED = "MODEL_HEALTH_CHANGED"
+    MODEL_RUNTIME_FAILED = "MODEL_RUNTIME_FAILED"
+    MODEL_SHUTDOWN = "MODEL_SHUTDOWN"
+    MODEL_DISCOVERED = "MODEL_DISCOVERED"
+    MODEL_DISCOVERY_COMPLETED = "MODEL_DISCOVERY_COMPLETED"
+    MODEL_LIST_RESPONSE = "MODEL_LIST_RESPONSE"
+    MODEL_STATUS_RESPONSE = "MODEL_STATUS_RESPONSE"
+    MODEL_ACTIVE_RESPONSE = "MODEL_ACTIVE_RESPONSE"
+    MODEL_DISCOVER_RESPONSE = "MODEL_DISCOVER_RESPONSE"
+    MODEL_HEALTH_RESPONSE = "MODEL_HEALTH_RESPONSE"
 
 
 
@@ -112,3 +132,34 @@ class ErrorEventPayload(BaseModel):
     message: str
     recoverable: bool = True
     details: Optional[Dict[str, Any]] = None
+
+
+class ModelEventPayload(BaseModel):
+    """Safe structured payload for model selection, activation, and deactivation events."""
+    model_id: str
+    provider: str
+    generation: Optional[int] = None
+    status: Optional[str] = None
+    reason: Optional[str] = None
+    details: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelSwitchEventPayload(BaseModel):
+    """Safe structured payload for transactional model switch events."""
+    previous_model_id: Optional[str] = None
+    target_model_id: str
+    generation: int
+    is_successful: bool
+    failure_reason: Optional[str] = None
+    diagnostic_message: Optional[str] = None
+    duration_ms: float = 0.0
+
+
+class ModelHealthEventPayload(BaseModel):
+    """Safe structured payload for model health status change events."""
+    model_id: str
+    provider: str
+    status: str
+    latency_ms: Optional[float] = None
+    diagnostic_message: Optional[str] = None
+

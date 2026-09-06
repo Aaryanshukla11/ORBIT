@@ -35,6 +35,13 @@ class CommandType(str, Enum):
     KEYBOARD_EMERGENCY_RELEASE = "KEYBOARD_EMERGENCY_RELEASE"
     RECOVER_KEYBOARD_LOCKOUT = "RECOVER_KEYBOARD_LOCKOUT"
     HEARTBEAT = "HEARTBEAT"
+    MODEL_LIST = "MODEL_LIST"
+    MODEL_STATUS = "MODEL_STATUS"
+    MODEL_ACTIVE = "MODEL_ACTIVE"
+    MODEL_DISCOVER = "MODEL_DISCOVER"
+    MODEL_ACTIVATE = "MODEL_ACTIVATE"
+    MODEL_SWITCH = "MODEL_SWITCH"
+    MODEL_HEALTH = "MODEL_HEALTH"
 
 
 
@@ -149,4 +156,57 @@ class RecoverKeyboardLockoutPayload(BaseModel):
 
 class HeartbeatPayload(BaseModel):
     client_timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# =============================================================================
+# Milestone M1.9 Step 5: Model Manager WebSocket Inbound Payloads
+# =============================================================================
+
+
+class ModelListPayload(BaseModel):
+    """Inbound payload to list registered and discovered models."""
+    provider: Optional[str] = Field(default=None, description="Optional provider filter (e.g. 'OLLAMA')")
+    capability: Optional[str] = Field(default=None, description="Optional capability filter (e.g. 'TEXT_GENERATION')")
+    include_all: bool = Field(default=True, description="Whether to include discovered, installed, and configured models")
+
+
+class ModelStatusPayload(BaseModel):
+    """Inbound payload to query overall model runtime status."""
+    pass
+
+
+class ModelActivePayload(BaseModel):
+    """Inbound payload to query the currently active model context."""
+    pass
+
+
+class ModelDiscoverPayload(BaseModel):
+    """Inbound payload to trigger a model discovery scan."""
+    include_runtimes: bool = Field(default=True, description="Scan local provider runtimes like Ollama")
+    include_cloud: bool = Field(default=True, description="Scan configured cloud providers")
+    include_files: bool = Field(default=True, description="Scan local model weight files")
+
+
+class ModelActivatePayload(BaseModel):
+    """Inbound payload to activate a target AI model."""
+    model_id: str = Field(..., min_length=1, description="Target model ID (e.g. 'ollama:qwen2.5:latest')")
+    timeout_seconds: float = Field(default=30.0, gt=0.0, description="Activation timeout in seconds")
+    preload_weights: bool = Field(default=True, description="Whether to preload model weights into memory")
+    required_capabilities: Optional[list[str]] = Field(default=None, description="Optional list of required capabilities")
+    policy: str = Field(default="REJECT_DURING_ACTIVE_TASK", description="Switching policy")
+
+
+class ModelSwitchPayload(BaseModel):
+    """Inbound payload to safely switch between AI models."""
+    model_id: str = Field(..., min_length=1, description="Target model ID to switch to")
+    policy: str = Field(default="REJECT_DURING_ACTIVE_TASK", description="Policy: REJECT_DURING_ACTIVE_TASK, CANCEL_AND_SWITCH, etc.")
+    timeout_seconds: float = Field(default=30.0, gt=0.0, description="Switching timeout in seconds")
+    preload_weights: bool = Field(default=True, description="Whether to preload model weights")
+    required_capabilities: Optional[list[str]] = Field(default=None, description="Optional list of required capabilities")
+
+
+class ModelHealthPayload(BaseModel):
+    """Inbound payload to probe model health."""
+    model_id: Optional[str] = Field(default=None, description="Optional target model ID, or active model if omitted")
+
 

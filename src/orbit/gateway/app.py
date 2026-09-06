@@ -91,6 +91,7 @@ def create_app(
         """Detailed runtime diagnostic report including capability health."""
         active_sessions = await sess_mgr.list_active_sessions()
         capability_healths = await orch.registry.get_health_all()
+        active_model = orch.model_session_manager.get_active_context()
 
         return JSONResponse(
             content={
@@ -98,6 +99,7 @@ def create_app(
                 "system_state": orch.system_state.value,
                 "active_sessions_count": len(active_sessions),
                 "adapter_mode": cfg.adapter_mode.value,
+                "active_model_id": active_model.model_id if active_model else None,
                 "capabilities": {
                     cap_type.value: health.model_dump()
                     for cap_type, health in capability_healths.items()

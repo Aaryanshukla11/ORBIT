@@ -96,6 +96,17 @@ from orbit.runtime.task_completion import (
     TaskCompletionEngine,
     TaskExecutionResult,
 )
+from orbit.runtime.models import (
+    ActiveModelSession,
+    InventoryReport,
+    ModelManager,
+    ModelRuntimeAdapter,
+)
+from orbit.runtime.model_runtime import (
+    ActiveModelContext,
+    ModelSessionManager,
+)
+from orbit.runtime.model_providers import OllamaProvider
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +130,8 @@ class OrbitOrchestrator:
         action_verifier: Optional[ActionVerifier] = None,
         execution_engine: Optional[ClosedLoopExecutionEngine] = None,
         replanner: Optional[DynamicReplanner] = None,
+        model_manager: Optional[ModelManager] = None,
+        model_session_manager: Optional[ModelSessionManager] = None,
     ) -> None:
         self._event_bus = event_bus
         self._clock = clock or SystemClock()
@@ -174,6 +187,18 @@ class OrbitOrchestrator:
             task_planning_engine=self._task_planning_engine,
             perception_engine=self._perception_engine,
         )
+        self._model_manager = model_manager or ModelManager(providers=[OllamaProvider()], event_bus=self._event_bus)
+        if self._model_manager.event_bus is None:
+            self._model_manager.set_event_bus(self._event_bus)
+        self._model_session_manager = model_session_manager or ModelSessionManager(
+            registry=self._model_manager.registry,
+            providers=self._model_manager.providers,
+            event_bus=self._event_bus,
+            is_task_executing_fn=lambda: self.is_task_executing,
+        )
+        if self._model_session_manager.event_bus is None:
+            self._model_session_manager.set_event_bus(self._event_bus)
+        self._model_session_manager.set_task_executing_predicate(lambda: self.is_task_executing)
         self._active_cancellation_sources: Dict[str, CancellationSource] = {}
         self._active_execution_tasks: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
@@ -262,6 +287,62 @@ class OrbitOrchestrator:
         adapter = self._registry.get_optional(CapabilityType.SAFETY)
         return adapter if isinstance(adapter, EmergencySafetyCoordinator) else None
 
+    @property
+    def is_task_executing(self) -> bool:
+        """Whether an autonomous task or plan is currently actively executing."""
+        return self._system_sm.current_state == SystemState.BUSY or bool(self._active_execution_tasks)
+
+    @property
+    def model_manager(self) -> ModelManager:
+        return self._model_manager
+
+    @property
+    def model_session_manager(self) -> ModelSessionManager:
+        """Central Model Session Manager (M1.9 Step 4)."""
+        return self._model_session_manager
+
+    @property
+    def active_model_context(self) -> Optional[ActiveModelContext]:
+        """Current immutable snapshot of the active AI model context (M1.9 Step 4)."""
+        return self._model_session_manager.get_active_context()
+
+    @property
+    def active_model_session(self) -> Optional[ActiveModelSession]:
+        """Current immutable snapshot of the active AI model session."""
+        return self._model_manager.get_active_session()
+
+    @property
+    def active_model_generation(self) -> int:
+        """Current monotonic active model generation counter."""
+        return self._model_manager.get_active_generation()
+
+    @property
+    def is_model_active(self) -> bool:
+        """Whether an active AI model is loaded and ready for inference."""
+        return self._model_manager.is_model_active()
+
+    @property
+    def active_model_runtime(self) -> Optional[ModelRuntimeAdapter]:
+        """Unified runtime adapter for the active AI model."""
+        return self._model_manager.get_active_runtime()
+
+    async def get_model_inventory_report(self) -> InventoryReport:
+        """Get the latest AI model system inventory report without blocking."""
+        return await self._model_manager.get_inventory_report()
+
+    async def refresh_model_inventory(
+        self,
+        include_runtimes: bool = True,
+        include_cloud: bool = True,
+        include_files: bool = True,
+    ) -> InventoryReport:
+        """Execute a full inventory refresh across all available model sources."""
+        return await self._model_manager.refresh_inventory(
+            include_runtimes=include_runtimes,
+            include_cloud=include_cloud,
+            include_files=include_files,
+        )
+
     async def initialize(self) -> None:
         """Initialize capabilities and transition system state to IDLE."""
         async with self._lock:
@@ -327,6 +408,10 @@ class OrbitOrchestrator:
 
             # Shutdown all adapters in registry
             await self._registry.shutdown_all()
+
+            # Shutdown model manager and model session manager
+            await self._model_manager.shutdown()
+            await self._model_session_manager.shutdown()
 
             self._system_sm.transition_to(SystemState.SHUTDOWN)
 

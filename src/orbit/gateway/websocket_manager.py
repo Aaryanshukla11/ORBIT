@@ -19,6 +19,13 @@ from orbit.contracts.commands import (
     HeartbeatPayload,
     KeyboardEmergencyReleasePayload,
     KeyboardKeyPayload,
+    ModelActivatePayload,
+    ModelActivePayload,
+    ModelDiscoverPayload,
+    ModelHealthPayload,
+    ModelListPayload,
+    ModelStatusPayload,
+    ModelSwitchPayload,
     MovePointerPayload,
     PauseTaskPayload,
     PointerButtonPayload,
@@ -56,6 +63,19 @@ from orbit.gateway.protocol import (
 )
 from orbit.gateway.session_manager import SessionManager
 from orbit.infrastructure.event_bus import EventBus
+from orbit.runtime.model_runtime.contracts import (
+    ActiveModelContext,
+    ModelActivationRequest,
+    ModelActivationStatus,
+    ModelRuntimeKind,
+    ModelRuntimeStatus,
+    ModelSwitchPolicy,
+)
+from orbit.runtime.models.models import (
+    ModelCapability,
+    ModelDescriptor,
+    ModelStatus,
+)
 from orbit.runtime.orchestrator import OrbitOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -657,12 +677,529 @@ class WebSocketManager:
                 payload={"status": "OK"},
             )
             await conn.enqueue_message(serialize_outbound_event(ack_event))
+        elif cmd.command_type == CommandType.MODEL_LIST:
+            await self._handle_model_list(conn, cmd, payload)
+        elif cmd.command_type == CommandType.MODEL_STATUS:
+            await self._handle_model_status(conn, cmd, payload)
+        elif cmd.command_type == CommandType.MODEL_ACTIVE:
+            await self._handle_model_active(conn, cmd, payload)
+        elif cmd.command_type == CommandType.MODEL_DISCOVER:
+            await self._handle_model_discover(conn, cmd, payload)
+        elif cmd.command_type == CommandType.MODEL_ACTIVATE:
+            await self._handle_model_activate(conn, cmd, payload)
+        elif cmd.command_type == CommandType.MODEL_SWITCH:
+            await self._handle_model_switch(conn, cmd, payload)
+        elif cmd.command_type == CommandType.MODEL_HEALTH:
+            await self._handle_model_health(conn, cmd, payload)
+
+    # =========================================================================
+    # Model Control Command Handlers (Milestone M1.9 Step 5)
+    # =========================================================================
+
+    async def _handle_model_list(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: ModelListPayload,
+    ) -> None:
+        """Return safe metadata for registered and discovered AI models."""
+        models_list = []
+        registry = self._orchestrator.model_session_manager._registry
+        all_descriptors = await registry.list_models()
+
+        inv_report = await self._orchestrator.model_manager.get_inventory_report()
+        inv_map = {m.model_id: m for m in inv_report.models}
+
+        for desc in all_descriptors:
+            # Filter by provider if requested
+            if payload.provider:
+                prov_str = desc.provider.value if hasattr(desc.provider, "value") else str(desc.provider)
+                if payload.provider.upper() not in prov_str.upper():
+                    continue
+
+            # Filter by capability if requested
+            if payload.capability:
+                cap_names = [c.value if hasattr(c, "value") else str(c) for c in desc.capabilities]
+                if payload.capability.upper() not in [c.upper() for c in cap_names]:
+                    continue
+
+            inv_item = inv_map.get(desc.model_id)
+            is_installed = getattr(desc, "installed", True)
+            is_configured = getattr(desc, "configured", True)
+            status_val = desc.status.value if hasattr(desc.status, "value") else str(desc.status)
+
+            if inv_item:
+                is_installed = inv_item.installed
+                is_configured = inv_item.configured
+                status_val = inv_item.status.value if hasattr(inv_item.status, "value") else str(inv_item.status)
+
+            if not payload.include_all and not (is_installed and is_configured):
+                continue
+
+            runtime_kind_val = "LOCAL_OLLAMA"
+            if hasattr(desc, "runtime_kind") and desc.runtime_kind:
+                runtime_kind_val = desc.runtime_kind.value if hasattr(desc.runtime_kind, "value") else str(desc.runtime_kind)
+            elif "OLLAMA" in str(desc.provider).upper():
+                runtime_kind_val = "LOCAL_OLLAMA"
+            elif "LM_STUDIO" in str(desc.provider).upper():
+                runtime_kind_val = "LOCAL_LM_STUDIO"
+            elif "LOCAL" in str(desc.provider).upper():
+                runtime_kind_val = "LOCAL_FILE"
+            elif "MOCK" in str(desc.provider).upper():
+                runtime_kind_val = "MOCK"
+            else:
+                runtime_kind_val = "REMOTE_OPENAI_COMPATIBLE"
+
+            safe_item = {
+                "model_id": desc.model_id,
+                "display_name": desc.display_name or desc.provider_model_name,
+                "provider": desc.provider.value if hasattr(desc.provider, "value") else str(desc.provider),
+                "runtime_kind": runtime_kind_val,
+                "availability": status_val,
+                "status": status_val,
+                "installed": is_installed,
+                "configured": is_configured,
+                "capabilities": [c.value if hasattr(c, "value") else str(c) for c in desc.capabilities],
+                "context_window": desc.context_window,
+                "parameter_size": desc.parameter_size,
+                "family": desc.family,
+            }
+            models_list.append(safe_item)
+
+        active_ctx = self._orchestrator.model_session_manager.get_active_context()
+        active_id = active_ctx.model_id if active_ctx else None
+
+        resp_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.MODEL_LIST_RESPONSE,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload={
+                "models": models_list,
+                "total_count": len(models_list),
+                "active_model_id": active_id,
+            },
+        )
+        await conn.enqueue_message(serialize_outbound_event(resp_event))
+
+    async def _handle_model_status(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: ModelStatusPayload,
+    ) -> None:
+        """Return comprehensive status of active model and model subsystem."""
+        msm = self._orchestrator.model_session_manager
+        active_ctx = msm.get_active_context()
+        runtime_status = msm.get_runtime_status()
+        is_active = msm.is_model_active()
+
+        active_model_data = None
+        if active_ctx is not None:
+            active_model_data = {
+                "model_id": active_ctx.model_id,
+                "display_name": active_ctx.display_name,
+                "provider": active_ctx.provider.value if hasattr(active_ctx.provider, "value") else str(active_ctx.provider),
+                "runtime_kind": active_ctx.runtime_kind.value if hasattr(active_ctx.runtime_kind, "value") else str(active_ctx.runtime_kind),
+                "runtime_status": active_ctx.runtime_status.value if hasattr(active_ctx.runtime_status, "value") else str(active_ctx.runtime_status),
+                "capabilities": [c.value if hasattr(c, "value") else str(c) for c in active_ctx.capabilities],
+                "context_window": active_ctx.context_window,
+                "activated_at": active_ctx.activated_at.isoformat() if active_ctx.activated_at else None,
+                "generation": active_ctx.generation,
+            }
+
+        all_models = await msm._registry.list_models()
+        available_model_ids = [m.model_id for m in all_models]
+
+        health_data = None
+        if active_ctx and active_ctx.health:
+            h = active_ctx.health
+            health_data = {
+                "status": h.status.value if hasattr(h.status, "value") else str(h.status),
+                "is_healthy": h.is_healthy,
+                "latency_ms": h.latency_ms,
+                "diagnostic_message": h.diagnostic_message,
+            }
+
+        is_busy = self._orchestrator.is_task_executing or (
+            msm.get_active_runtime() is not None and getattr(msm.get_active_runtime(), "status", None) == ModelRuntimeStatus.BUSY
+        )
+
+        resp_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.MODEL_STATUS_RESPONSE,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload={
+                "active_model": active_model_data,
+                "is_active": is_active,
+                "runtime_status": runtime_status.value if hasattr(runtime_status, "value") else str(runtime_status),
+                "runtime_health": health_data,
+                "available_models": available_model_ids,
+                "available_models_count": len(available_model_ids),
+                "active_generation": msm.get_active_generation(),
+                "busy": is_busy,
+            },
+        )
+        await conn.enqueue_message(serialize_outbound_event(resp_event))
+
+    async def _handle_model_active(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: ModelActivePayload,
+    ) -> None:
+        """Return current ActiveModelContext or honest inactive state."""
+        msm = self._orchestrator.model_session_manager
+        active_ctx = msm.get_active_context()
+
+        if active_ctx is None:
+            resp_payload = {
+                "is_active": False,
+                "active_model": None,
+                "generation": msm.get_active_generation(),
+                "status": "NO_ACTIVE_MODEL",
+            }
+        else:
+            resp_payload = {
+                "is_active": True,
+                "generation": active_ctx.generation,
+                "active_model": {
+                    "model_id": active_ctx.model_id,
+                    "display_name": active_ctx.display_name,
+                    "provider": active_ctx.provider.value if hasattr(active_ctx.provider, "value") else str(active_ctx.provider),
+                    "runtime_kind": active_ctx.runtime_kind.value if hasattr(active_ctx.runtime_kind, "value") else str(active_ctx.runtime_kind),
+                    "runtime_status": active_ctx.runtime_status.value if hasattr(active_ctx.runtime_status, "value") else str(active_ctx.runtime_status),
+                    "capabilities": [c.value if hasattr(c, "value") else str(c) for c in active_ctx.capabilities],
+                    "context_window": active_ctx.context_window,
+                    "activated_at": active_ctx.activated_at.isoformat() if active_ctx.activated_at else None,
+                    "health": {
+                        "status": active_ctx.health.status.value if hasattr(active_ctx.health.status, "value") else str(active_ctx.health.status),
+                        "is_healthy": active_ctx.health.is_healthy,
+                        "latency_ms": active_ctx.health.latency_ms,
+                        "diagnostic_message": active_ctx.health.diagnostic_message,
+                    } if active_ctx.health else None,
+                },
+            }
+
+        resp_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.MODEL_ACTIVE_RESPONSE,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload=resp_payload,
+        )
+        await conn.enqueue_message(serialize_outbound_event(resp_event))
+
+    async def _handle_model_discover(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: ModelDiscoverPayload,
+    ) -> None:
+        """Trigger safe model discovery refresh across configured providers."""
+        inv_report = await self._orchestrator.model_manager.refresh_inventory(
+            include_runtimes=payload.include_runtimes,
+            include_cloud=payload.include_cloud,
+            include_files=payload.include_files,
+        )
+
+        for desc in inv_report.models:
+            await self._orchestrator.model_session_manager.register_descriptor(desc)
+            await self._event_bus.publish(
+                RuntimeEvent(
+                    event_id=f"evt_{uuid4().hex[:12]}",
+                    event_type=EventType.MODEL_DISCOVERED,
+                    event_seq=self._event_bus.next_sequence(),
+                    timestamp=datetime.now(timezone.utc),
+                    session_id="system",
+                    payload={
+                        "model_id": desc.model_id,
+                        "provider": desc.provider.value if hasattr(desc.provider, "value") else str(desc.provider),
+                        "display_name": desc.display_name or desc.provider_model_name,
+                        "capabilities": [c.value if hasattr(c, "value") else str(c) for c in desc.capabilities],
+                    },
+                )
+            )
+
+        resp_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.MODEL_DISCOVER_RESPONSE,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload={
+                "discovered_count": len(inv_report.models),
+                "models": [
+                    {
+                        "model_id": m.model_id,
+                        "display_name": m.display_name or m.provider_model_name,
+                        "provider": m.provider.value if hasattr(m.provider, "value") else str(m.provider),
+                        "status": m.status.value if hasattr(m.status, "value") else str(m.status),
+                    }
+                    for m in inv_report.models
+                ],
+                "scanned_runtimes": payload.include_runtimes,
+                "scanned_cloud": payload.include_cloud,
+                "scanned_files": payload.include_files,
+            },
+        )
+        await conn.enqueue_message(serialize_outbound_event(resp_event))
+
+    async def _handle_model_activate(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: ModelActivatePayload,
+    ) -> None:
+        """Route model activation through ModelSessionManager."""
+        msm = self._orchestrator.model_session_manager
+
+        policy_str = (payload.policy or "REJECT_DURING_ACTIVE_TASK").upper()
+        try:
+            policy_enum = ModelSwitchPolicy[policy_str]
+        except KeyError:
+            policy_enum = ModelSwitchPolicy.REJECT_DURING_ACTIVE_TASK
+
+        req_caps: Set[ModelCapability] = set()
+        if payload.required_capabilities:
+            for cap_str in payload.required_capabilities:
+                try:
+                    req_caps.add(ModelCapability[cap_str.upper()])
+                except KeyError:
+                    pass
+
+        activation_req = ModelActivationRequest(
+            model_id=payload.model_id,
+            timeout_seconds=payload.timeout_seconds,
+            preload_weights=payload.preload_weights,
+            required_capabilities=req_caps,
+            policy=policy_enum,
+        )
+
+        result = await msm.activate_model(activation_req)
+
+        if result.is_successful:
+            resp_event = RuntimeEvent(
+                event_id=f"evt_{uuid4().hex[:12]}",
+                event_type=EventType.MODEL_ACTIVATED,
+                event_seq=self._event_bus.next_sequence(),
+                timestamp=datetime.now(timezone.utc),
+                session_id=conn.session_id,
+                correlation_id=cmd.command_id,
+                payload={
+                    "model_id": result.model_id,
+                    "status": result.status.value if hasattr(result.status, "value") else str(result.status),
+                    "generation": result.generation,
+                    "duration_ms": result.duration_ms,
+                    "is_successful": True,
+                },
+            )
+            await conn.enqueue_message(serialize_outbound_event(resp_event))
+        else:
+            code_str = result.status.value if hasattr(result.status, "value") else str(result.status)
+            if result.failure_reason in {"ACTIVE_TASK_CONFLICT", "MODEL_NOT_FOUND", "MODEL_UNAVAILABLE", "INITIALIZATION_FAILED", "SWITCH_REJECTED"}:
+                code_str = result.failure_reason
+
+            err_event = RuntimeEvent(
+                event_id=f"evt_{uuid4().hex[:12]}",
+                event_type=EventType.ERROR,
+                event_seq=self._event_bus.next_sequence(),
+                timestamp=datetime.now(timezone.utc),
+                session_id=conn.session_id,
+                correlation_id=cmd.command_id,
+                payload=ErrorEventPayload(
+                    code=code_str,
+                    message=result.diagnostic_message or f"Activation failed for model '{payload.model_id}'",
+                    recoverable=True,
+                    details={
+                        "model_id": payload.model_id,
+                        "status": code_str,
+                        "failure_reason": result.failure_reason,
+                        "duration_ms": result.duration_ms,
+                    },
+                ).model_dump(),
+            )
+            await conn.enqueue_message(serialize_outbound_event(err_event))
+
+    async def _handle_model_switch(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: ModelSwitchPayload,
+    ) -> None:
+        """Route model switching through ModelSessionManager."""
+        msm = self._orchestrator.model_session_manager
+
+        policy_str = (payload.policy or "REJECT_DURING_ACTIVE_TASK").upper()
+        try:
+            policy_enum = ModelSwitchPolicy[policy_str]
+        except KeyError:
+            policy_enum = ModelSwitchPolicy.REJECT_DURING_ACTIVE_TASK
+
+        req_caps: Set[ModelCapability] = set()
+        if payload.required_capabilities:
+            for cap_str in payload.required_capabilities:
+                try:
+                    req_caps.add(ModelCapability[cap_str.upper()])
+                except KeyError:
+                    pass
+
+        result = await msm.switch_model(
+            new_model_id=payload.model_id,
+            policy=policy_enum,
+            timeout_seconds=payload.timeout_seconds,
+            preload_weights=payload.preload_weights,
+            required_capabilities=req_caps,
+        )
+
+        if result.is_successful:
+            resp_event = RuntimeEvent(
+                event_id=f"evt_{uuid4().hex[:12]}",
+                event_type=EventType.MODEL_SWITCHED,
+                event_seq=self._event_bus.next_sequence(),
+                timestamp=datetime.now(timezone.utc),
+                session_id=conn.session_id,
+                correlation_id=cmd.command_id,
+                payload={
+                    "previous_model_id": result.previous_model_id,
+                    "active_model_id": result.active_model_id,
+                    "generation": result.generation,
+                    "switched": result.switched,
+                    "duration_ms": result.duration_ms,
+                    "is_successful": True,
+                },
+            )
+            await conn.enqueue_message(serialize_outbound_event(resp_event))
+        else:
+            code_str = result.status.value if hasattr(result.status, "value") else str(result.status)
+            if result.failure_reason in {"ACTIVE_TASK_CONFLICT", "MODEL_NOT_FOUND", "MODEL_UNAVAILABLE", "INITIALIZATION_FAILED", "SWITCH_REJECTED"}:
+                code_str = result.failure_reason
+
+            err_event = RuntimeEvent(
+                event_id=f"evt_{uuid4().hex[:12]}",
+                event_type=EventType.ERROR,
+                event_seq=self._event_bus.next_sequence(),
+                timestamp=datetime.now(timezone.utc),
+                session_id=conn.session_id,
+                correlation_id=cmd.command_id,
+                payload=ErrorEventPayload(
+                    code=code_str,
+                    message=result.diagnostic_message or f"Switch failed to model '{payload.model_id}'",
+                    recoverable=True,
+                    details={
+                        "target_model_id": payload.model_id,
+                        "previous_model_id": result.previous_model_id,
+                        "status": code_str,
+                        "failure_reason": result.failure_reason,
+                        "duration_ms": result.duration_ms,
+                    },
+                ).model_dump(),
+            )
+            await conn.enqueue_message(serialize_outbound_event(err_event))
+
+    async def _handle_model_health(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: ModelHealthPayload,
+    ) -> None:
+        """Query model health information for active model or target model."""
+        msm = self._orchestrator.model_session_manager
+        active_ctx = msm.get_active_context()
+        target_id = payload.model_id
+
+        if target_id is None or (active_ctx and active_ctx.model_id == target_id):
+            if active_ctx is None:
+                resp_payload = {
+                    "model_id": None,
+                    "status": "UNKNOWN",
+                    "is_healthy": False,
+                    "latency_ms": None,
+                    "diagnostic_message": "No model runtime currently active",
+                }
+            else:
+                health = await msm.get_runtime_health()
+                if health is None:
+                    resp_payload = {
+                        "model_id": active_ctx.model_id,
+                        "status": "UNKNOWN",
+                        "is_healthy": False,
+                        "latency_ms": None,
+                        "diagnostic_message": "Health probe unavailable",
+                    }
+                else:
+                    if health.is_healthy:
+                        status_str = "HEALTHY"
+                    elif health.status == ModelRuntimeStatus.FAILED:
+                        status_str = "FAILED"
+                    elif health.status in {ModelRuntimeStatus.STOPPED, ModelRuntimeStatus.UNINITIALIZED}:
+                        status_str = "UNAVAILABLE"
+                    else:
+                        status_str = "DEGRADED"
+
+                    resp_payload = {
+                        "model_id": active_ctx.model_id,
+                        "status": status_str,
+                        "is_healthy": health.is_healthy,
+                        "latency_ms": health.latency_ms,
+                        "diagnostic_message": health.diagnostic_message,
+                    }
+        else:
+            desc = await msm._registry.get_model(target_id)
+            if desc is None:
+                resp_payload = {
+                    "model_id": target_id,
+                    "status": "UNAVAILABLE",
+                    "is_healthy": False,
+                    "latency_ms": None,
+                    "diagnostic_message": f"Model '{target_id}' not found in registry",
+                }
+            else:
+                prov = self._orchestrator.model_manager.get_provider(desc.provider)
+                if prov and prov.is_available:
+                    resp_payload = {
+                        "model_id": target_id,
+                        "status": "UNKNOWN",
+                        "is_healthy": False,
+                        "latency_ms": None,
+                        "diagnostic_message": f"Model registered via {desc.provider.value}; inactive (health unknown until activation)",
+                    }
+                else:
+                    resp_payload = {
+                        "model_id": target_id,
+                        "status": "UNAVAILABLE",
+                        "is_healthy": False,
+                        "latency_ms": None,
+                        "diagnostic_message": f"Provider {desc.provider.value} is unavailable or offline",
+                    }
+
+        resp_event = RuntimeEvent(
+            event_id=f"evt_{uuid4().hex[:12]}",
+            event_type=EventType.MODEL_HEALTH_RESPONSE,
+            event_seq=self._event_bus.next_sequence(),
+            timestamp=datetime.now(timezone.utc),
+            session_id=conn.session_id,
+            correlation_id=cmd.command_id,
+            payload=resp_payload,
+        )
+        await conn.enqueue_message(serialize_outbound_event(resp_event))
 
     async def _on_bus_event(self, event: RuntimeEvent) -> None:
         """Forward an event from EventBus to the relevant connected client."""
-        # Check if event is broadcast or session-specific
+        # Check if event is broadcast, system, model_session, or model lifecycle event
         async with self._lock:
-            if event.session_id in {"system", "broadcast"}:
+            if (
+                event.session_id in {"system", "broadcast", "model_session"}
+                or event.event_type.value.startswith("MODEL_")
+            ):
                 targets = list(self._connections.values())
             else:
                 conn_id = self._session_to_conn.get(event.session_id)

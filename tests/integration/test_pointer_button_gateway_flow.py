@@ -31,6 +31,8 @@ def test_websocket_click_and_button_command_flow():
                 "command_type": "CLICK_POINTER",
                 "session_id": sid,
                 "payload": {
+                    "x": 100,
+                    "y": 100,
                     "button": "left",
                     "count": 1,
                     "dwell_ms": 10.0,

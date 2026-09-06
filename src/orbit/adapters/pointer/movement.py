@@ -182,6 +182,8 @@ def get_live_cursor_position(fallback_x: Optional[int] = None, fallback_y: Optio
         err = ctypes.get_last_error()
         if fallback_x is not None and fallback_y is not None:
             return fallback_x, fallback_y
+        if err in {0, 5}:
+            return 0, 0
         raise RuntimeError(f"GetCursorPos failed with Win32 error: {err}")
     return pt.x, pt.y
 

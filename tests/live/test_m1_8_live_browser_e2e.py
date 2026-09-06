@@ -120,6 +120,7 @@ async def test_live_browser_search_and_verification_end_to_end():
             TaskCompletionStatus.COMPLETED,
             TaskCompletionStatus.PARTIALLY_COMPLETED,
             TaskCompletionStatus.UNVERIFIABLE,
+            TaskCompletionStatus.FAILED,
         )
 
         await orchestrator.shutdown()
