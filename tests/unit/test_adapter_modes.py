@@ -114,15 +114,15 @@ async def test_no_silent_fallback_on_production_failure():
     assert tkv_adapter.adapter_mode == AdapterMode.PRODUCTION
     assert tkv_adapter.lifecycle_state == CapabilityLifecycleState.READY
 
-    # Workspace remains deferred -> should fail honestly
+    # Workspace is active in M1.5 -> initializes to READY
     wsp_adapter = registry.resolve(CapabilityType.WORKSPACE)
     assert isinstance(wsp_adapter, ProductionWorkspaceAdapter)
     assert wsp_adapter.adapter_mode == AdapterMode.PRODUCTION
-    assert wsp_adapter.lifecycle_state == CapabilityLifecycleState.FAILED
+    assert wsp_adapter.lifecycle_state == CapabilityLifecycleState.READY
 
     # Health must report honest status, never fake HEALTHY for failed capability
     assert health_reports[CapabilityType.OBSERVATION].status in {CapabilityHealthStatus.HEALTHY, CapabilityHealthStatus.DEGRADED}
     assert health_reports[CapabilityType.POINTER].status in {CapabilityHealthStatus.HEALTHY, CapabilityHealthStatus.DEGRADED}
     assert health_reports[CapabilityType.KEYBOARD].status in {CapabilityHealthStatus.HEALTHY, CapabilityHealthStatus.DEGRADED}
     assert health_reports[CapabilityType.HUMAN_TAKEOVER].status in {CapabilityHealthStatus.HEALTHY, CapabilityHealthStatus.DEGRADED}
-    assert health_reports[CapabilityType.WORKSPACE].status == CapabilityHealthStatus.FAILED
+    assert health_reports[CapabilityType.WORKSPACE].status in {CapabilityHealthStatus.HEALTHY, CapabilityHealthStatus.DEGRADED}

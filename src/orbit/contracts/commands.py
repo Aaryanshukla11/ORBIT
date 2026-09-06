@@ -100,6 +100,7 @@ class MovePointerPayload(BaseModel):
     y: int = Field(..., description="Target physical Y coordinate")
     tolerance_px: int = Field(default=1, ge=0, description="Destination verification tolerance")
     duration_ms: float = Field(default=0.0, ge=0.0, description="Optional movement duration")
+    expected_generation: Optional[int] = Field(default=None, description="Optional desktop generation ID for consistency verification")
 
 
 class ClickPointerPayload(BaseModel):
@@ -108,6 +109,7 @@ class ClickPointerPayload(BaseModel):
     button: str = Field(default="left", description="Mouse button: left, right, middle")
     count: int = Field(default=1, ge=1, description="Number of consecutive clicks")
     dwell_ms: float = Field(default=50.0, ge=1.0, description="Click dwell delay in milliseconds")
+    expected_generation: Optional[int] = Field(default=None, description="Optional desktop generation ID for consistency verification")
 
 
 class PointerButtonPayload(BaseModel):

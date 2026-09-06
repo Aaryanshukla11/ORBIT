@@ -101,7 +101,10 @@ def test_takeover_state_manager_quiet_period():
     assert mgr.current_state == TakeoverState.TAKEOVER_ACTIVE
 
     # Wait for quiet period timer to fire
-    time.sleep(0.1)
+    for _ in range(25):
+        if mgr.current_state == TakeoverState.RELEASE_PENDING:
+            break
+        time.sleep(0.02)
     assert mgr.current_state == TakeoverState.RELEASE_PENDING
 
 

@@ -224,6 +224,20 @@ class WorkspaceCapability(Protocol):
         """Query subsystem health."""
         ...
 
+    def get_desktop_generation(self) -> int:
+        """Query authoritative active desktop generation ID."""
+        ...
+
+    def validate_coordinate(
+        self,
+        x: int,
+        y: int,
+        expected_generation: Optional[int] = None,
+    ) -> Any:
+        """Validate target coordinate against active workspace geometry and generation parity."""
+        ...
+
+
 
 @runtime_checkable
 class EmergencySafetyCoordinator(Protocol):

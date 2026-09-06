@@ -41,6 +41,7 @@ async def test_orchestrator_fails_honestly_when_capability_unavailable(event_bus
     task = await orch.submit_task(
         session_id="test_fail_sess",
         prompt="Perform click action",
+        context={"is_synthetic_development": True},
     )
 
     # Wait for task completion/failure
@@ -77,6 +78,7 @@ async def test_orchestrator_executes_successfully_with_ready_mocks(event_bus: Ev
     task = await orch.submit_task(
         session_id="test_success_sess",
         prompt="Run automated test task",
+        context={"is_synthetic_development": True},
     )
 
     for _ in range(50):

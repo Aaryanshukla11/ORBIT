@@ -37,6 +37,8 @@ class MockObservationAdapter(BaseCapabilityAdapter, ObservationCapability):
         self._health_status = health_status
         self._capture_count = 0
         self._last_frame: Optional[FrameData] = None
+        self._mock_snapshot: Optional[Any] = None
+        self._mock_snapshots: List[Any] = []
 
     @property
     def capture_count(self) -> int:
@@ -45,6 +47,56 @@ class MockObservationAdapter(BaseCapabilityAdapter, ObservationCapability):
     @property
     def last_frame(self) -> Optional[FrameData]:
         return self._last_frame
+
+    @property
+    def mock_snapshot(self) -> Optional[Any]:
+        return self._mock_snapshot
+
+    @mock_snapshot.setter
+    def mock_snapshot(self, snapshot: Optional[Any]) -> None:
+        self._mock_snapshot = snapshot
+
+    def queue_mock_snapshot(self, snapshot: Any) -> None:
+        """Queue a snapshot to be returned sequentially by capture_snapshot."""
+        self._mock_snapshots.append(snapshot)
+
+    async def capture_snapshot(self, target_hwnd: Optional[int] = None) -> Any:
+        self._capture_count += 1
+        if self._mock_snapshots:
+            return self._mock_snapshots.pop(0)
+
+        if self._mock_snapshot is not None:
+            if hasattr(self._mock_snapshot, "model_copy"):
+                from uuid import uuid4
+                return self._mock_snapshot.model_copy(
+                    update={
+                        "snapshot_id": f"{self._mock_snapshot.snapshot_id}_{uuid4().hex[:6]}",
+                        "timestamp_ns": time.monotonic_ns(),
+                    }
+                )
+            return self._mock_snapshot
+
+        from datetime import datetime, timezone
+        from uuid import uuid4
+        from orbit.adapters.observation.snapshot import (
+            CoordinateSpace,
+            FreshnessState,
+            ObservationConfidence,
+            ObservationSnapshot,
+        )
+        return ObservationSnapshot(
+            snapshot_id=f"snap_mock_{uuid4().hex[:8]}",
+            generation_id=0,
+            timestamp_ns=time.monotonic_ns(),
+            timestamp_utc=datetime.now(timezone.utc),
+            capture_duration_ms=5.0,
+            desktop_geometry=BoundingBox(left=0, top=0, width=self._resolution.width, height=self._resolution.height),
+            coordinate_space=CoordinateSpace.VIRTUAL_DESKTOP,
+            confidence=ObservationConfidence.CONFIRMED,
+            freshness_state=FreshnessState.FRESH,
+            is_stale=False,
+        )
+
 
     async def capture_screen(self, display_index: int = 0) -> FrameData:
         self._capture_count += 1

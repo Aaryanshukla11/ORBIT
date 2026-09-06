@@ -31,7 +31,7 @@ def test_m0_end_to_end_smoke():
                 "session_id": "smoke_test_session",
                 "payload": {
                     "prompt": "Synthetically execute test interaction",
-                    "context": {"env": "smoke_test"},
+                    "context": {"env": "smoke_test", "is_synthetic_development": True},
                 },
             }
             ws.send_text(json.dumps(submit_cmd))

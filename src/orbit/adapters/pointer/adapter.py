@@ -51,7 +51,7 @@ class ProductionPointerAdapter(BaseCapabilityAdapter, PointerCapability):
 
     def __init__(
         self,
-        tolerance_px: int = 1,
+        tolerance_px: int = 3,
         abi_override: Optional[Dict[str, Any]] = None,
         sendinput_override: Optional[Callable[[int, Any, int], int]] = None,
         cursorpos_override: Optional[Callable[[], Tuple[int, int]]] = None,

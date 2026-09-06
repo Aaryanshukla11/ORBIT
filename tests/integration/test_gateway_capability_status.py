@@ -60,10 +60,10 @@ def test_gateway_status_exposes_production_capability_health_honestly():
         assert caps["HUMAN_TAKEOVER"]["lifecycle_state"] == "READY"
         assert caps["HUMAN_TAKEOVER"]["status"] in {"HEALTHY", "DEGRADED"}
 
-        # Workspace remains deferred and fails honestly
+        # Workspace is active in M1.5 production mode
         assert caps["WORKSPACE"]["adapter_mode"] == "PRODUCTION"
-        assert caps["WORKSPACE"]["lifecycle_state"] == "FAILED"
-        assert caps["WORKSPACE"]["status"] == "FAILED"
+        assert caps["WORKSPACE"]["lifecycle_state"] == "READY"
+        assert caps["WORKSPACE"]["status"] in {"HEALTHY", "DEGRADED"}
 
         # Safety coordinator is active
         assert caps["SAFETY"]["adapter_mode"] == "PRODUCTION"

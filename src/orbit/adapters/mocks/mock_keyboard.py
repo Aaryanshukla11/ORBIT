@@ -36,12 +36,27 @@ class MockKeyboardAdapter(BaseCapabilityAdapter, KeyboardCapability):
     def shortcut_history(self) -> List[str]:
         return list(self._shortcut_history)
 
-    async def type_text(self, text: str, delay_ms: float = 2.0, target_hwnd: Optional[int] = None) -> bool:
+    async def type_text(
+        self,
+        text: str,
+        delay_ms: float = 2.0,
+        target_hwnd: Optional[int] = None,
+        cancellation_token: Optional[Any] = None,
+    ) -> bool:
+        if cancellation_token is not None and getattr(cancellation_token, "is_cancelled", False):
+            return False
         self._typed_history.append(text)
         self._details["typed_count"] = len(self._typed_history)
         return True
 
-    async def press_shortcut(self, combination: str, target_hwnd: Optional[int] = None) -> bool:
+    async def press_shortcut(
+        self,
+        combination: str,
+        target_hwnd: Optional[int] = None,
+        cancellation_token: Optional[Any] = None,
+    ) -> bool:
+        if cancellation_token is not None and getattr(cancellation_token, "is_cancelled", False):
+            return False
         self._shortcut_history.append(combination)
         return True
 

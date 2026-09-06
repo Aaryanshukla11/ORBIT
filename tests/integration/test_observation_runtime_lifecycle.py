@@ -50,6 +50,7 @@ async def test_orchestrator_with_production_observation_lifecycle():
     task = await orchestrator.submit_task(
         session_id="sess_prod_obs_01",
         prompt="Inspect desktop and perform action",
+        context={"is_synthetic_development": True},
     )
     assert task.task_id is not None
 

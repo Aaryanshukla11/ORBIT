@@ -24,6 +24,7 @@ async def test_orchestrator_task_execution_flow(
     task = await orchestrator.submit_task(
         session_id="sess_exec_01",
         prompt="Click search bar and type query",
+        context={"is_synthetic_development": True},
     )
     assert task.task_id is not None
 

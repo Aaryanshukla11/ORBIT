@@ -47,7 +47,15 @@ class MockPointerAdapter(BaseCapabilityAdapter, PointerCapability):
     def button_states(self) -> Dict[str, bool]:
         return dict(self._button_states)
 
-    async def move_to(self, x: int, y: int, duration_ms: float = 0.0) -> bool:
+    async def move_to(
+        self,
+        x: int,
+        y: int,
+        duration_ms: float = 0.0,
+        cancellation_token: Optional[Any] = None,
+    ) -> bool:
+        if cancellation_token is not None and getattr(cancellation_token, "is_cancelled", False):
+            return False
         self._position = ScreenPoint(x=x, y=y)
         self._move_history.append(self._position)
         self._details["position"] = self._position.model_dump()
@@ -60,13 +68,17 @@ class MockPointerAdapter(BaseCapabilityAdapter, PointerCapability):
         button: str = "left",
         count: int = 1,
         dwell_ms: float = 50.0,
+        cancellation_token: Optional[Any] = None,
     ) -> bool:
+        if cancellation_token is not None and getattr(cancellation_token, "is_cancelled", False):
+            return False
         if x is not None and y is not None:
-            await self.move_to(x, y)
+            await self.move_to(x, y, cancellation_token=cancellation_token)
         target_x = x if x is not None else self._position.x
         target_y = y if y is not None else self._position.y
         self._click_history.append({"x": target_x, "y": target_y, "button": button, "count": count})
         return True
+
 
 
 

@@ -474,6 +474,10 @@ def query_virtual_desktop_metrics() -> VirtualDesktopMetrics:
         )
 
     user32 = ctypes.windll.user32
+    try:
+        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except Exception:
+        pass
     SM_XVIRTUALSCREEN = 76
     SM_YVIRTUALSCREEN = 77
     SM_CXVIRTUALSCREEN = 78
@@ -523,29 +527,55 @@ DESKTOP_WRITEOBJECTS = 0x0080
 DESKTOP_ACCESS_MASK = 0x01FF  # Full desktop rights for interactive workstation session
 
 
-def ensure_thread_input_desktop() -> bool:
-    """Attach the calling worker thread to the active user interactive input desktop.
+from contextlib import contextmanager
+from typing import Generator
 
-    Windows Architectural Rationale:
-    When native Win32 calls (such as GetCursorPos or SendInput) are executed on background
-    worker threads (e.g. via asyncio.to_thread or ThreadPoolExecutor), Windows does not
-    automatically associate the newly spawned thread with the active interactive desktop
-    ('WinSta0\\Default'). Consequently, calls to user32.GetCursorPos and user32.SendInput fail
-    with Win32 error 5 (ERROR_ACCESS_DENIED).
 
-    This helper opens the input desktop, attaches the current thread via SetThreadDesktop,
-    and immediately closes the desktop handle with CloseDesktop to guarantee zero handle leaks.
+@contextmanager
+def attached_to_input_desktop() -> Generator[bool, None, None]:
+    """Temporarily attach calling thread to interactive input desktop and restore upon exit.
+
+    Preserves the thread's original desktop so that modern UWP window enumeration
+    continues to function cleanly across all thread pool worker invocations.
     """
+    if sys.platform != "win32":
+        yield False
+        return
+
+    u32 = ctypes.windll.user32
+    k32 = ctypes.windll.kernel32
+    h_orig = u32.GetThreadDesktop(k32.GetCurrentThreadId())
+    h_input = u32.OpenInputDesktop(0, False, DESKTOP_ACCESS_MASK)
+    attached = False
+    if h_input:
+        attached = bool(u32.SetThreadDesktop(h_input))
+
+    try:
+        yield attached
+    finally:
+        if attached and h_orig:
+            try:
+                u32.SetThreadDesktop(h_orig)
+            except Exception:
+                pass
+        if h_input:
+            try:
+                u32.CloseDesktop(h_input)
+            except Exception:
+                pass
+
+
+def ensure_thread_input_desktop() -> bool:
+    """Verify that the interactive desktop is accessible to the worker thread."""
     if sys.platform != "win32":
         return False
     try:
         u32 = ctypes.windll.user32
         h_desktop = u32.OpenInputDesktop(0, False, DESKTOP_ACCESS_MASK)
         if h_desktop:
-            res = u32.SetThreadDesktop(h_desktop)
             u32.CloseDesktop(h_desktop)
-            return bool(res)
+            return True
     except Exception:
         pass
-    return False
+    return sys.platform == "win32"
 

@@ -50,6 +50,7 @@ class ObservedWindow(BaseModel):
     is_foreground: bool = Field(default=False, description="Whether window currently has foreground focus")
     is_visible: bool = Field(default=True, description="Whether window is visible on desktop")
     dpi_scaling: float = Field(default=1.0, description="DPI scale factor e.g. 1.0, 1.25, 1.5, 2.0")
+    client_bounds: Optional[BoundingBox] = Field(default=None, description="Client area physical bounds")
 
 
 class ObservedElement(BaseModel):

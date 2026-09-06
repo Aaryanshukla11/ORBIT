@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+from ctypes import wintypes
 import io
 import logging
 import sys
@@ -134,6 +135,11 @@ class ProductionObservationAdapter(BaseCapabilityAdapter, ObservationCapability)
                 pass
             self._com_initialized = False
 
+    def sync_generation(self, generation_id: int) -> None:
+        """Synchronize active desktop generation ID from workspace adapter."""
+        if self._freshness_tracker is not None:
+            self._freshness_tracker._current_generation = generation_id
+
     async def capture_screen(self, display_index: int = 0) -> FrameData:
         """Capture the live virtual desktop or display area via Win32 GDI capture engine."""
         if not self.is_ready:
@@ -188,7 +194,12 @@ class ProductionObservationAdapter(BaseCapabilityAdapter, ObservationCapability)
 
             # Execute capture pipeline in worker thread
             def _do_snapshot() -> Any:
-                from app_types import ConfidenceLevel
+                if sys.platform == "win32":
+                    try:
+                        ctypes.windll.ole32.CoInitializeEx(None, 0)
+                    except Exception:
+                        pass
+                from app_types import ConfidenceLevel 
                 bounds = self._coord_mapper.get_virtual_desktop_bounds()
                 fg_win = self._window_tracker.get_foreground_window_observation()
                 active_hwnd = target_hwnd or (fg_win.hwnd if fg_win else 0)
@@ -197,14 +208,64 @@ class ProductionObservationAdapter(BaseCapabilityAdapter, ObservationCapability)
                 else:
                     active_win = fg_win
 
-                # Window observations
-                windows = tuple(self._window_tracker.enumerate_visible_windows())
+                # Check if active_hwnd belongs to the current process to prevent COM/MSAA cross-thread deadlock
+                import os
+                is_local_process_window = False
+                if active_hwnd and sys.platform == "win32":
+                    pid = wintypes.DWORD(0)
+                    ctypes.windll.user32.GetWindowThreadProcessId(active_hwnd, ctypes.byref(pid))
+                    if pid.value == os.getpid():
+                        is_local_process_window = True
 
-                # Accessibility observations
-                elements, prov_results = self._acc_coordinator.collect_accessibility_observations(
-                    hwnd=active_hwnd if active_hwnd else 0,
-                    generation_id=self._freshness_tracker.current_generation,
-                )
+                # Window observations with comprehensive thread desktop and input desktop enumeration
+                raw_windows = list(self._window_tracker.enumerate_visible_windows())
+                if sys.platform == "win32":
+                    ctypes.windll.user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+                    ctypes.windll.user32.GetWindowRect.restype = wintypes.BOOL
+                    ctypes.windll.user32.IsWindowVisible.argtypes = [wintypes.HWND]
+                    ctypes.windll.user32.IsWindowVisible.restype = wintypes.BOOL
+                    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+                    ctypes.windll.user32.EnumDesktopWindows.argtypes = [wintypes.HANDLE, WNDENUMPROC, wintypes.LPARAM]
+                    ctypes.windll.user32.EnumDesktopWindows.restype = wintypes.BOOL
+                    known_hwnds = {w.hwnd for w in raw_windows}
+
+                    def _desk_enum_cb(h, _):
+                        if h not in known_hwnds and ctypes.windll.user32.IsWindowVisible(h):
+                            r = wintypes.RECT()
+                            if ctypes.windll.user32.GetWindowRect(h, ctypes.byref(r)):
+                                if (r.right - r.left) > 0 and (r.bottom - r.top) > 0:
+                                    obs_w = self._window_tracker.get_window_observation(h, z_order_rank=len(raw_windows))
+                                    raw_windows.append(obs_w)
+                                    known_hwnds.add(h)
+                        return True
+
+                    cb = WNDENUMPROC(_desk_enum_cb)
+                    # 1. Enumerate calling thread desktop
+                    hdesk_thread = ctypes.windll.user32.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
+                    if hdesk_thread:
+                        ctypes.windll.user32.EnumDesktopWindows(hdesk_thread, cb, 0)
+
+                    # 2. Enumerate interactive input desktop
+                    hdesk_input = ctypes.windll.user32.OpenInputDesktop(0, False, 0x01FF)
+                    if hdesk_input:
+                        try:
+                            ctypes.windll.user32.EnumDesktopWindows(hdesk_input, cb, 0)
+                        finally:
+                            ctypes.windll.user32.CloseDesktop(hdesk_input)
+                windows = tuple(raw_windows)
+
+                # Accessibility observations: only query when an explicit target_hwnd is specified and valid
+                acc_hwnd = target_hwnd if (target_hwnd and not is_local_process_window) else 0
+                elements, prov_results = ((), ())
+                if acc_hwnd:
+                    try:
+                        elements, prov_results = self._acc_coordinator.collect_accessibility_observations(
+                            hwnd=acc_hwnd,
+                            generation_id=self._freshness_tracker.current_generation,
+                        )
+                    except Exception as acc_ex:
+                        self.health_tracker.record_failure("ACC_COORDINATOR", str(acc_ex))
+                        elements, prov_results = ((), ())
 
                 # Record individual provider health results
                 for pres in prov_results:

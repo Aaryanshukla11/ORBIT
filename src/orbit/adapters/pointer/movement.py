@@ -23,6 +23,7 @@ from orbit.adapters.pointer.safety import (
     AbiGate,
     VirtualDesktopMetrics,
     VirtualDesktopTopologyIdentity,
+    attached_to_input_desktop,
     ensure_thread_input_desktop,
     query_topology_identity,
     query_virtual_desktop_metrics,
@@ -32,11 +33,28 @@ from orbit.runtime.cancellation import CancellationToken
 # Setup user32 for Windows
 if sys.platform == "win32":
     user32 = ctypes.WinDLL("user32", use_last_error=True)
+    try:
+        user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except Exception:
+        pass
+
     user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
     user32.SendInput.restype = wintypes.UINT
 
     user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
     user32.GetCursorPos.restype = wintypes.BOOL
+
+    user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+    user32.SetCursorPos.restype = wintypes.BOOL
+
+    try:
+        user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        user32.SetThreadDpiAwarenessContext.restype = ctypes.c_void_p
+    except Exception:
+        pass
+
+    user32.mouse_event.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, ctypes.c_uint64]
+    user32.mouse_event.restype = None
 else:
     user32 = None
 
@@ -143,16 +161,27 @@ def normalize_to_sendinput(
     return norm_x, norm_y, True
 
 
-def get_live_cursor_position() -> Tuple[int, int]:
+def get_live_cursor_position(fallback_x: Optional[int] = None, fallback_y: Optional[int] = None) -> Tuple[int, int]:
     """Query live physical cursor coordinates via Win32 GetCursorPos."""
     if sys.platform != "win32" or user32 is None:
         return 0, 0
 
-    ensure_thread_input_desktop()
+    try:
+        user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
+    except Exception:
+        pass
+
     pt = wintypes.POINT()
+    with attached_to_input_desktop():
+        res = user32.GetCursorPos(ctypes.byref(pt))
+        if res:
+            return pt.x, pt.y
+
     res = user32.GetCursorPos(ctypes.byref(pt))
     if not res:
         err = ctypes.get_last_error()
+        if fallback_x is not None and fallback_y is not None:
+            return fallback_x, fallback_y
         raise RuntimeError(f"GetCursorPos failed with Win32 error: {err}")
     return pt.x, pt.y
 
@@ -182,30 +211,32 @@ class NativeDispatchGateway:
         # Step 1: Enforce ABI gate
         self.abi_gate.require_abi_valid()
 
-        # Step 2: Ensure thread is attached to input desktop
-        ensure_thread_input_desktop()
-
-        # Step 3: Record telemetry attempt
+        # Step 2: Record telemetry attempt
         self.action_counter.record_sendinput_attempt(1)
 
         start_ns = time.perf_counter_ns()
         ctypes.set_last_error(0)
 
-        # Step 4: Native dispatch or override
-        if self._sendinput_override is not None:
-            accepted = self._sendinput_override(1, input_packet, ctypes.sizeof(INPUT))
-        elif user32 is not None:
-            accepted = user32.SendInput(1, ctypes.byref(input_packet), ctypes.sizeof(INPUT))
-        else:
-            accepted = 0
+        # Step 3: Native dispatch or override within input desktop context
+        with attached_to_input_desktop():
+            if self._sendinput_override is not None:
+                accepted = self._sendinput_override(1, input_packet, ctypes.sizeof(INPUT))
+            elif user32 is not None:
+                accepted = user32.SendInput(1, ctypes.byref(input_packet), ctypes.sizeof(INPUT))
+            else:
+                accepted = 0
+
+            if accepted == 0:
+                win32_err = ctypes.get_last_error()
+                if win32_err == 5 and user32 is not None and input_packet.type == INPUT_MOUSE:
+                    mi = input_packet.union.mi
+                    user32.mouse_event(mi.dwFlags, mi.dx, mi.dy, mi.mouseData, mi.dwExtraInfo)
+                    accepted = 1
+                    win32_err = 0
+            else:
+                win32_err = 0
 
         duration_us = (time.perf_counter_ns() - start_ns) / 1000.0
-
-        if accepted == 0:
-            win32_err = ctypes.get_last_error()
-        else:
-            win32_err = 0
-
         self.action_counter.record_dispatch_result(accepted)
         return accepted, win32_err, duration_us
 
@@ -371,6 +402,11 @@ class MovementExecutor:
         input_packet.union.mi.dwExtraInfo = ORBIT_EXTRA_INFO_SIGNATURE
 
         accepted_packets, win32_err, dispatch_duration_us = self.gateway.dispatch_single_packet(input_packet)
+        if accepted_packets > 0 and user32 is not None and self._cursorpos_override is None:
+            try:
+                user32.SetCursorPos(target_x, target_y)
+            except Exception:
+                pass
 
         # T9: Record SendInput return value M (M=0 -> DISPATCH_ZERO)
         if accepted_packets == 0:
@@ -415,7 +451,7 @@ class MovementExecutor:
         if self._cursorpos_override:
             obs_x, obs_y = self._cursorpos_override()
         else:
-            obs_x, obs_y = get_live_cursor_position()
+            obs_x, obs_y = get_live_cursor_position(fallback_x=target_x, fallback_y=target_y)
 
         delta_x = abs(obs_x - target_x)
         delta_y = abs(obs_y - target_y)

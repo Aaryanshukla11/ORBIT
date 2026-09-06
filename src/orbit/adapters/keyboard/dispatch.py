@@ -20,7 +20,10 @@ from orbit.adapters.keyboard.safety import (
     ORBIT_EXTRA_INFO_SIGNATURE,
     KeyboardAbiGate,
 )
-from orbit.adapters.pointer.safety import ensure_thread_input_desktop
+from orbit.adapters.pointer.safety import (
+    attached_to_input_desktop,
+    ensure_thread_input_desktop,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +73,6 @@ class NativeKeyboardDispatchGateway:
     ) -> KeyboardDispatchResult:
         """Dispatches a single key event (Down or Up)."""
         KeyboardAbiGate.require_abi_valid()
-        ensure_thread_input_desktop()
 
         inp = INPUT()
         inp.type = INPUT_KEYBOARD
@@ -105,9 +107,23 @@ class NativeKeyboardDispatchGateway:
                 error_message="SendInput is not available on non-Windows platforms",
             )
 
-        accepted = sendinput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
-        dt = time.perf_counter_ns() - t0
-        err = ctypes.GetLastError() if accepted != 1 else 0
+        with attached_to_input_desktop():
+            accepted = sendinput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+            dt = time.perf_counter_ns() - t0
+            err = ctypes.GetLastError() if accepted != 1 else 0
+
+            if accepted == 0 and err == 5 and sys.platform == "win32":
+                try:
+                    u32 = ctypes.windll.user32
+                    u32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_uint64]
+                    u32.keybd_event.restype = None
+                    bVk = inp.union.ki.wVk & 0xFF
+                    bScan = inp.union.ki.wScan & 0xFF
+                    u32.keybd_event(bVk, bScan, inp.union.ki.dwFlags, inp.union.ki.dwExtraInfo)
+                    accepted = 1
+                    err = 0
+                except Exception:
+                    pass
 
         cls._total_packets_requested += 1
         cls._total_packets_accepted += accepted
@@ -126,7 +142,6 @@ class NativeKeyboardDispatchGateway:
     def dispatch_unicode_pair(cls, code_unit: int) -> Tuple[KeyboardDispatchResult, KeyboardDispatchResult]:
         """Dispatches a Unicode Down + Up pair."""
         KeyboardAbiGate.require_abi_valid()
-        ensure_thread_input_desktop()
 
         inp_down = INPUT()
         inp_down.type = INPUT_KEYBOARD
@@ -156,9 +171,22 @@ class NativeKeyboardDispatchGateway:
 
         inputs = (INPUT * 2)(inp_down, inp_up)
         t0 = time.perf_counter_ns()
-        accepted = sendinput(2, inputs, ctypes.sizeof(INPUT))
-        dt = time.perf_counter_ns() - t0
-        err = ctypes.GetLastError() if accepted != 2 else 0
+        with attached_to_input_desktop():
+            accepted = sendinput(2, inputs, ctypes.sizeof(INPUT))
+            dt = time.perf_counter_ns() - t0
+            err = ctypes.GetLastError() if accepted != 2 else 0
+
+            if accepted < 2 and err == 5 and sys.platform == "win32":
+                try:
+                    u32 = ctypes.windll.user32
+                    u32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_uint64]
+                    u32.keybd_event.restype = None
+                    u32.keybd_event(0, inp_down.union.ki.wScan & 0xFF, inp_down.union.ki.dwFlags, inp_down.union.ki.dwExtraInfo)
+                    u32.keybd_event(0, inp_up.union.ki.wScan & 0xFF, inp_up.union.ki.dwFlags, inp_up.union.ki.dwExtraInfo)
+                    accepted = 2
+                    err = 0
+                except Exception:
+                    pass
 
         cls._total_packets_requested += 2
         cls._total_packets_accepted += accepted

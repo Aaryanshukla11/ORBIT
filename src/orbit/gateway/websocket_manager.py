@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+import inspect
 import logging
 from typing import Any, Dict, Optional, Union
 from uuid import uuid4
@@ -37,7 +38,9 @@ from orbit.contracts.capabilities import (
     CapabilityType,
     KeyboardCapability,
     PointerCapability,
+    WorkspaceCapability,
 )
+from orbit.contracts.runtime import SystemState
 
 from orbit.contracts.events import (
     ErrorEventPayload,
@@ -56,6 +59,21 @@ from orbit.infrastructure.event_bus import EventBus
 from orbit.runtime.orchestrator import OrbitOrchestrator
 
 logger = logging.getLogger(__name__)
+
+
+class CommandSafetyError(RuntimeError):
+    """Raised when an inbound gateway command violates safety boundaries or workspace geometry."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.details = details or {}
 
 
 class WebSocketConnection:
@@ -222,8 +240,8 @@ class WebSocketManager:
         # Dispatch command to orchestrator
         try:
             await self._dispatch_command(conn, base_cmd, payload)
-        except Exception as ex:
-            logger.exception("Error executing command %s: %s", base_cmd.command_type, ex)
+        except CommandSafetyError as cse:
+            logger.warning("Safety boundary rejected command %s: [%s] %s", base_cmd.command_type, cse.code, cse.message)
             err_event = RuntimeEvent(
                 event_id=f"evt_{uuid4().hex[:12]}",
                 event_type=EventType.ERROR,
@@ -232,7 +250,29 @@ class WebSocketManager:
                 session_id=conn.session_id,
                 correlation_id=base_cmd.command_id,
                 payload=ErrorEventPayload(
-                    code="COMMAND_EXECUTION_ERROR",
+                    code=cse.code,
+                    message=cse.message,
+                    recoverable=False,
+                    details=cse.details,
+                ).model_dump(),
+            )
+            await conn.enqueue_message(serialize_outbound_event(err_event))
+        except Exception as ex:
+            logger.exception("Error executing command %s: %s", base_cmd.command_type, ex)
+            err_code = "COMMAND_EXECUTION_ERROR"
+            if "REJECTED_OUT_OF_BOUNDS" in str(ex) or "OUT_OF_BOUNDS" in str(ex):
+                err_code = "OUT_OF_BOUNDS"
+            elif "HUMAN_TAKEOVER_ACTIVE" in str(ex):
+                err_code = "HUMAN_TAKEOVER_ACTIVE"
+            err_event = RuntimeEvent(
+                event_id=f"evt_{uuid4().hex[:12]}",
+                event_type=EventType.ERROR,
+                event_seq=self._event_bus.next_sequence(),
+                timestamp=datetime.now(timezone.utc),
+                session_id=conn.session_id,
+                correlation_id=base_cmd.command_id,
+                payload=ErrorEventPayload(
+                    code=err_code,
                     message=str(ex),
                     recoverable=True,
                 ).model_dump(),
@@ -243,8 +283,92 @@ class WebSocketManager:
         """Handle binary inbound messages if needed."""
         pass
 
+    async def _validate_pointer_action(
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        expected_generation: Optional[int] = None,
+    ) -> None:
+        """Validate human takeover status, desktop generation, and workspace coordinate geometry.
+
+        Zero OS pointer events are dispatched if any validation check fails.
+        """
+        # 1. Human Takeover Check
+        if self._orchestrator.system_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
+            raise CommandSafetyError(
+                code="HUMAN_TAKEOVER_ACTIVE",
+                message="Pointer command blocked: Human takeover is currently active",
+            )
+        if hasattr(self._orchestrator, "is_human_takeover_active"):
+            res = self._orchestrator.is_human_takeover_active()
+            if inspect.isawaitable(res):
+                is_active = await res
+            else:
+                is_active = bool(res)
+            if is_active:
+                raise CommandSafetyError(
+                    code="HUMAN_TAKEOVER_ACTIVE",
+                    message="Pointer command blocked: Human takeover is currently active",
+                )
+
+        # 2. Workspace Coordinate Validation
+        wsp = self._orchestrator.workspace
+        if wsp is None and self._orchestrator.registry and self._orchestrator.registry.has(CapabilityType.WORKSPACE):
+            wsp = self._orchestrator.registry.resolve_typed(CapabilityType.WORKSPACE, WorkspaceCapability)
+
+        if wsp is not None and hasattr(wsp, "validate_coordinate"):
+            target_x = x
+            target_y = y
+            if target_x is None or target_y is None:
+                if self._orchestrator.registry.is_ready(CapabilityType.POINTER):
+                    ptr = self._orchestrator.registry.resolve_typed(CapabilityType.POINTER, PointerCapability)
+                    cur_pos = await ptr.get_cursor_position()
+                    target_x = cur_pos.x
+                    target_y = cur_pos.y
+
+            if target_x is not None and target_y is not None:
+                val_res = wsp.validate_coordinate(int(target_x), int(target_y), expected_generation=expected_generation)
+                if not val_res.is_valid:
+                    status_code = getattr(val_res.status, "value", str(val_res.status))
+                    tag = f"REJECTED_{status_code}" if not status_code.startswith("REJECTED_") else status_code
+                    err_msg = (
+                        f"Workspace coordinate validation blocked pointer dispatch to ({target_x}, {target_y}): "
+                        f"[{tag}] {val_res.error_message}"
+                    )
+                    logger.error(err_msg)
+                    raise CommandSafetyError(
+                        code=status_code,
+                        message=err_msg,
+                        details={
+                            "x": target_x,
+                            "y": target_y,
+                            "status": status_code,
+                            "active_generation": getattr(val_res, "active_generation_id", None),
+                            "tested_generation": expected_generation,
+                        },
+                    )
+
+    async def _validate_keyboard_action(self) -> None:
+        """Validate human takeover preemption before dispatching direct keyboard commands."""
+        if self._orchestrator.system_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
+            raise CommandSafetyError(
+                code="HUMAN_TAKEOVER_ACTIVE",
+                message="Keyboard command blocked: Human takeover is currently active",
+            )
+        if hasattr(self._orchestrator, "is_human_takeover_active"):
+            res = self._orchestrator.is_human_takeover_active()
+            if inspect.isawaitable(res):
+                is_active = await res
+            else:
+                is_active = bool(res)
+            if is_active:
+                raise CommandSafetyError(
+                    code="HUMAN_TAKEOVER_ACTIVE",
+                    message="Keyboard command blocked: Human takeover is currently active",
+                )
+
     async def _dispatch_command(self, conn: WebSocketConnection, cmd: BaseCommand, payload: Any) -> None:
-        """Route validated command to the orchestrator."""
+        """Route validated command to the orchestrator with mandatory safety boundaries."""
         if cmd.command_type == CommandType.SUBMIT_TASK:
             submit_payload: SubmitTaskPayload = payload
             await self._orchestrator.submit_task(
@@ -265,6 +389,11 @@ class WebSocketManager:
             await self._orchestrator.recover_locked_state(recover_payload.recovery_token)
         elif cmd.command_type == CommandType.MOVE_POINTER:
             move_payload: MovePointerPayload = payload
+            await self._validate_pointer_action(
+                x=move_payload.x,
+                y=move_payload.y,
+                expected_generation=getattr(move_payload, "expected_generation", None),
+            )
             if self._orchestrator.registry.is_ready(CapabilityType.POINTER):
                 ptr = self._orchestrator.registry.resolve_typed(CapabilityType.POINTER, PointerCapability)
                 await ptr.move_to(move_payload.x, move_payload.y)
@@ -284,9 +413,20 @@ class WebSocketManager:
                 raise RuntimeError("Pointer capability is not ready")
         elif cmd.command_type == CommandType.CLICK_POINTER:
             click_payload: ClickPointerPayload = payload
+            await self._validate_pointer_action(
+                x=click_payload.x,
+                y=click_payload.y,
+                expected_generation=getattr(click_payload, "expected_generation", None),
+            )
             if self._orchestrator.registry.is_ready(CapabilityType.POINTER):
                 ptr = self._orchestrator.registry.resolve_typed(CapabilityType.POINTER, PointerCapability)
-                await ptr.click(x=click_payload.x, y=click_payload.y, button=click_payload.button, count=click_payload.count, dwell_ms=click_payload.dwell_ms)
+                await ptr.click(
+                    x=click_payload.x,
+                    y=click_payload.y,
+                    button=click_payload.button,
+                    count=click_payload.count,
+                    dwell_ms=click_payload.dwell_ms,
+                )
                 cur_pos = await ptr.get_cursor_position()
                 await self._event_bus.publish(
                     RuntimeEvent(
@@ -309,6 +449,7 @@ class WebSocketManager:
                 raise RuntimeError("Pointer capability is not ready")
         elif cmd.command_type == CommandType.POINTER_BUTTON_DOWN:
             btn_down_payload: PointerButtonPayload = payload
+            await self._validate_pointer_action()
             if self._orchestrator.registry.is_ready(CapabilityType.POINTER):
                 ptr = self._orchestrator.registry.resolve_typed(CapabilityType.POINTER, PointerCapability)
                 await ptr.press_down(button=btn_down_payload.button)
@@ -327,6 +468,7 @@ class WebSocketManager:
                 raise RuntimeError("Pointer capability is not ready")
         elif cmd.command_type == CommandType.POINTER_BUTTON_UP:
             btn_up_payload: PointerButtonPayload = payload
+            await self._validate_pointer_action()
             if self._orchestrator.registry.is_ready(CapabilityType.POINTER):
                 ptr = self._orchestrator.registry.resolve_typed(CapabilityType.POINTER, PointerCapability)
                 await ptr.release_up(button=btn_up_payload.button)
@@ -383,6 +525,7 @@ class WebSocketManager:
                 raise RuntimeError("Pointer capability is not ready")
         elif cmd.command_type == CommandType.TYPE_TEXT:
             type_payload: TypeTextPayload = payload
+            await self._validate_keyboard_action()
             if self._orchestrator.registry.is_ready(CapabilityType.KEYBOARD):
                 kbd = self._orchestrator.registry.resolve_typed(CapabilityType.KEYBOARD, KeyboardCapability)
                 success = await kbd.type_text(
@@ -405,6 +548,7 @@ class WebSocketManager:
                 raise RuntimeError("Keyboard capability is not ready")
         elif cmd.command_type == CommandType.PRESS_SHORTCUT:
             shortcut_payload: PressShortcutPayload = payload
+            await self._validate_keyboard_action()
             if self._orchestrator.registry.is_ready(CapabilityType.KEYBOARD):
                 kbd = self._orchestrator.registry.resolve_typed(CapabilityType.KEYBOARD, KeyboardCapability)
                 success = await kbd.press_shortcut(
@@ -426,6 +570,7 @@ class WebSocketManager:
                 raise RuntimeError("Keyboard capability is not ready")
         elif cmd.command_type == CommandType.KEYBOARD_KEY_DOWN:
             key_down_payload: KeyboardKeyPayload = payload
+            await self._validate_keyboard_action()
             if self._orchestrator.registry.is_ready(CapabilityType.KEYBOARD):
                 kbd = self._orchestrator.registry.resolve_typed(CapabilityType.KEYBOARD, KeyboardCapability)
                 success = await kbd.press_key(key_code=key_down_payload.key_code)
@@ -444,6 +589,7 @@ class WebSocketManager:
                 raise RuntimeError("Keyboard capability is not ready")
         elif cmd.command_type == CommandType.KEYBOARD_KEY_UP:
             key_up_payload: KeyboardKeyPayload = payload
+            await self._validate_keyboard_action()
             if self._orchestrator.registry.is_ready(CapabilityType.KEYBOARD):
                 kbd = self._orchestrator.registry.resolve_typed(CapabilityType.KEYBOARD, KeyboardCapability)
                 success = await kbd.release_key(key_code=key_up_payload.key_code)
