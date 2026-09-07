@@ -398,9 +398,9 @@ class OllamaProvider(ModelProvider):
         """Instruct Ollama to preload model weights into VRAM."""
         client = await self._get_client()
         try:
-            # An empty generate request with keep_alive triggers loading
-            payload = {"model": provider_model_name, "prompt": "", "keep_alive": "5m"}
-            response = await client.post("/api/generate", json=payload, timeout=self._read_timeout)
+            # An empty generate request with stream: False triggers loading without streaming overhead
+            payload = {"model": provider_model_name, "prompt": "", "stream": False, "keep_alive": "5m"}
+            response = await client.post("/api/generate", json=payload, timeout=15.0)
             return response.status_code == 200
         except Exception as ex:
             logger.warning("Failed to preload model %s on Ollama: %s", provider_model_name, ex)
@@ -410,8 +410,8 @@ class OllamaProvider(ModelProvider):
         """Instruct Ollama to evict model from VRAM immediately (`keep_alive=0`)."""
         client = await self._get_client()
         try:
-            payload = {"model": provider_model_name, "keep_alive": 0}
-            response = await client.post("/api/generate", json=payload, timeout=10.0)
+            payload = {"model": provider_model_name, "stream": False, "keep_alive": 0}
+            response = await client.post("/api/generate", json=payload, timeout=5.0)
             return response.status_code == 200
         except Exception as ex:
             logger.warning("Failed to unload model %s on Ollama: %s", provider_model_name, ex)

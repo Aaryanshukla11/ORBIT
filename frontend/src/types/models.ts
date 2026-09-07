@@ -5,9 +5,9 @@
 
 export type ModelSourceType = 'local' | 'cloud';
 
-export type ModelCapability = 'Code' | 'Text' | 'Vision' | 'Reasoning';
+export type ModelCapability = 'Code' | 'Text' | 'Vision' | 'Reasoning' | 'Chat';
 
-export type ModelStatus = 'ACTIVE' | 'INSTALLED' | 'AVAILABLE' | 'SWITCHING' | 'CONFIGURED' | 'NOT_CONFIGURED';
+export type ModelStatus = 'ACTIVE' | 'INSTALLED' | 'AVAILABLE' | 'UNAVAILABLE' | 'SWITCHING' | 'CONFIGURED' | 'NOT_CONFIGURED';
 
 export interface ModelItem {
   id: string;
@@ -24,14 +24,31 @@ export interface ModelItem {
   description?: string;
 }
 
+export type CloudProviderStatus =
+  | 'AUTHENTICATED'
+  | 'AUTH_FAILED'
+  | 'AUTHENTICATING'
+  | 'CONFIGURED_UNVERIFIED'
+  | 'UNAVAILABLE'
+  | 'UNREACHABLE'
+  | 'NOT_CONFIGURED'
+  | 'CONFIGURED'
+  | 'READY'
+  | 'DISCONNECTED'
+  | 'NEEDS_KEY'
+  | 'ERROR';
+
 export interface CloudProviderItem {
   id: string;
   name: string;
-  providerCode: 'openai' | 'anthropic' | 'google' | 'deepseek' | 'custom';
-  status: 'CONFIGURED' | 'READY' | 'DISCONNECTED' | 'NEEDS_KEY';
+  providerCode: 'openai' | 'anthropic' | 'google' | 'deepseek' | 'custom' | string;
+  status: CloudProviderStatus;
   models: string[];
   activeModelId?: string;
   hasKey: boolean;
+  authStatus?: CloudProviderStatus;
+  diagnosticMessage?: string;
+  modelsCount?: number;
   maskedEndpoint?: string;
 }
 

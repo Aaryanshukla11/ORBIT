@@ -96,6 +96,7 @@ declare global {
       getSystemDisplays?: () => Promise<any[]>;
       getSystemInfo?: () => Promise<any>;
       getInstalledApps?: () => Promise<any[]>;
+      launchApp?: (cmd: string) => Promise<{ success: boolean; error?: string }>;
       onDisplayChanged?: (callback: () => void) => () => void;
     };
   }

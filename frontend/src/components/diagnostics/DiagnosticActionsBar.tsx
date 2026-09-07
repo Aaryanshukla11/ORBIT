@@ -7,9 +7,10 @@ import {
   SettingsIcon,
   ShieldIcon,
 } from '../icons/Icons';
+import { TabId } from '../navigation/HorizontalNav';
 
 interface DiagnosticActionsBarProps {
-  onNavigateTab?: (tab: string) => void;
+  onNavigateTab?: (tab: TabId) => void;
 }
 
 export const DiagnosticActionsBar: React.FC<DiagnosticActionsBarProps> = ({ onNavigateTab }) => {

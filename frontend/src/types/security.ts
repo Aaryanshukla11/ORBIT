@@ -31,6 +31,8 @@ export interface ApplicationPolicyItem {
   permissions: AppGranularPermissions;
   lastAccessed?: string;
   installed?: boolean;
+  iconDataUrl?: string;
+  iconType?: string;
 }
 
 export interface SecurityAuditEvent {

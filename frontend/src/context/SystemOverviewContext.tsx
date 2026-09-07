@@ -217,7 +217,7 @@ export const SystemOverviewProvider: React.FC<{ children: ReactNode }> = ({ chil
         title: 'Recent Task Failed',
         description: recentFailure.failure_reason || `Task '${recentFailure.goal.slice(0, 40)}...' failed to complete.`,
         actionLabel: 'View Diagnostics',
-        actionTab: 'activity',
+        actionTab: 'tasks',
         origin: 'PERSISTED',
       });
     }

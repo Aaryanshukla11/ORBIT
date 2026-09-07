@@ -50,10 +50,14 @@ class CloudProviderKind(str, Enum):
 class CloudAuthStatus(str, Enum):
     """Authentication and connectivity state of a cloud model provider."""
 
-    AUTHENTICATED = "AUTHENTICATED"      # Valid credentials configured and verified
-    NOT_CONFIGURED = "NOT_CONFIGURED"    # No API key or credentials provided
-    UNREACHABLE = "UNREACHABLE"          # Remote endpoint could not be reached
-    ERROR = "ERROR"                      # Authentication rejected or API error
+    NOT_CONFIGURED = "NOT_CONFIGURED"                # No API key or credentials provided
+    CONFIGURED_UNVERIFIED = "CONFIGURED_UNVERIFIED"   # Key present in memory, not yet validated
+    AUTHENTICATING = "AUTHENTICATING"                # Active validation probe in progress
+    AUTHENTICATED = "AUTHENTICATED"                  # Valid credentials configured and verified
+    AUTH_FAILED = "AUTH_FAILED"                      # Authentication rejected by provider (HTTP 401/403)
+    UNREACHABLE = "UNREACHABLE"                      # Remote endpoint unreachable or timeout
+    UNAVAILABLE = "UNAVAILABLE"                      # Provider unavailable / server error
+    ERROR = "ERROR"                                  # General error or exception
 
 
 class ModelFileFormat(str, Enum):

@@ -1,11 +1,14 @@
 import React from 'react';
 import { DiagnosticSummaryHeader } from './DiagnosticSummaryHeader';
+import { AttentionRequiredCard } from './AttentionRequiredCard';
 import { SubsystemHealthList } from './SubsystemHealthList';
+import { SystemConnectionsCard } from './SystemConnectionsCard';
 import { RecentIssuesSection } from './RecentIssuesSection';
 import { DiagnosticActionsBar } from './DiagnosticActionsBar';
+import { TabId } from '../navigation/HorizontalNav';
 
 interface DiagnosticsViewProps {
-  onNavigateTab?: (tab: string) => void;
+  onNavigateTab?: (tab: TabId) => void;
 }
 
 export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({ onNavigateTab }) => {
@@ -15,13 +18,19 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({ onNavigateTab 
         {/* 1. Overall Diagnostic Health Header */}
         <DiagnosticSummaryHeader />
 
-        {/* 2. Subsystem Health Breakdown (8 Live Subsystems) */}
+        {/* 2. Attention Required / Active System Alert Banner */}
+        <AttentionRequiredCard onNavigateTab={onNavigateTab} />
+
+        {/* 3. Subsystem Health Breakdown (8 Live Subsystems) */}
         <SubsystemHealthList />
 
-        {/* 3. Active Issues & Structured Failures */}
+        {/* 4. Live System Connections & Socket Bridge States */}
+        <SystemConnectionsCard />
+
+        {/* 5. Active Issues & Structured Failures */}
         <RecentIssuesSection />
 
-        {/* 4. Diagnostic Actions & Copy Report */}
+        {/* 6. Diagnostic Actions & Copy Report */}
         <DiagnosticActionsBar onNavigateTab={onNavigateTab} />
       </div>
     </div>

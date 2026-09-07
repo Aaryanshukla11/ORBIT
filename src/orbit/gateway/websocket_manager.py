@@ -21,6 +21,7 @@ from orbit.contracts.commands import (
     KeyboardKeyPayload,
     ModelActivatePayload,
     ModelActivePayload,
+    ModelConfigureProviderPayload,
     ModelDiscoverPayload,
     ModelHealthPayload,
     ModelListPayload,
@@ -353,7 +354,7 @@ class WebSocketManager:
                     target_y = cur_pos.y
 
             if target_x is not None and target_y is not None:
-                val_res = wsp.validate_coordinate(int(target_x), int(target_y), expected_generation=expected_generation)
+                val_res = wsp.validate_coordinate(target_x, target_y, expected_generation=expected_generation)
                 if not val_res.is_valid:
                     status_code = getattr(val_res.status, "value", str(val_res.status))
                     tag = f"REJECTED_{status_code}" if not status_code.startswith("REJECTED_") else status_code
@@ -717,6 +718,8 @@ class WebSocketManager:
             await self._handle_model_switch(conn, cmd, payload)
         elif cmd.command_type == CommandType.MODEL_HEALTH:
             await self._handle_model_health(conn, cmd, payload)
+        elif cmd.command_type == CommandType.MODEL_CONFIGURE_PROVIDER:
+            await self._handle_model_configure_provider(conn, cmd, payload)
         elif cmd.command_type == CommandType.TASK_HISTORY_LIST:
             await self._handle_task_history_list(conn, cmd, payload)
         elif cmd.command_type == CommandType.TASK_HISTORY_DETAIL:
@@ -1099,6 +1102,9 @@ class WebSocketManager:
                 )
             )
 
+        active_ctx = self._orchestrator.model_session_manager.get_active_context()
+        active_id = active_ctx.model_id if active_ctx else None
+
         resp_event = RuntimeEvent(
             event_id=f"evt_{uuid4().hex[:12]}",
             event_type=EventType.MODEL_DISCOVER_RESPONSE,
@@ -1108,14 +1114,37 @@ class WebSocketManager:
             correlation_id=cmd.command_id,
             payload={
                 "discovered_count": len(inv_report.models),
+                "active_model_id": active_id,
                 "models": [
                     {
                         "model_id": m.model_id,
                         "display_name": m.display_name or m.provider_model_name,
                         "provider": m.provider.value if hasattr(m.provider, "value") else str(m.provider),
+                        "runtime_kind": "LOCAL_OLLAMA" if "OLLAMA" in str(m.provider).upper() else ("LOCAL_LM_STUDIO" if "LM_STUDIO" in str(m.provider).upper() else ("LOCAL_FILE" if "LOCAL" in str(m.provider).upper() else "REMOTE_OPENAI_COMPATIBLE")),
                         "status": m.status.value if hasattr(m.status, "value") else str(m.status),
+                        "availability": m.status.value if hasattr(m.status, "value") else str(m.status),
+                        "installed": getattr(m, "installed", True),
+                        "configured": getattr(m, "configured", True),
+                        "capabilities": [c.value if hasattr(c, "value") else str(c) for c in m.capabilities],
+                        "context_window": m.context_window,
+                        "parameter_size": m.parameter_size,
+                        "family": m.family,
                     }
                     for m in inv_report.models
+                ],
+                "cloud_providers": [
+                    {
+                        "id": cs.cloud_kind.value.lower(),
+                        "name": cs.cloud_kind.name.replace("_", " ").title(),
+                        "providerCode": cs.cloud_kind.value.lower(),
+                        "status": cs.auth_status.value if hasattr(cs.auth_status, "value") else str(cs.auth_status),
+                        "authStatus": cs.auth_status.value if hasattr(cs.auth_status, "value") else str(cs.auth_status),
+                        "hasKey": cs.is_configured,
+                        "diagnosticMessage": cs.diagnostic_message,
+                        "modelsCount": cs.models_count,
+                        "maskedEndpoint": cs.endpoint.replace("https://", "").replace("http://", "") if cs.endpoint else "",
+                    }
+                    for cs in inv_report.cloud_providers
                 ],
                 "scanned_runtimes": payload.include_runtimes,
                 "scanned_cloud": payload.include_cloud,
@@ -1167,6 +1196,7 @@ class WebSocketManager:
                 correlation_id=cmd.command_id,
                 payload={
                     "model_id": result.model_id,
+                    "active_model_id": result.model_id,
                     "status": result.status.value if hasattr(result.status, "value") else str(result.status),
                     "generation": result.generation,
                     "duration_ms": result.duration_ms,
@@ -1224,7 +1254,7 @@ class WebSocketManager:
                     pass
 
         result = await msm.switch_model(
-            new_model_id=str(payload.model_id or payload.target_model_id or ""),
+            new_model_id=payload.model_id or payload.target_model_id or "",
             policy=policy_enum,
             timeout_seconds=payload.timeout_seconds,
             preload_weights=payload.preload_weights,
@@ -1362,6 +1392,37 @@ class WebSocketManager:
             payload=resp_payload,
         )
         await conn.enqueue_message(serialize_outbound_event(resp_event))
+
+    async def _handle_model_configure_provider(
+        self,
+        conn: WebSocketConnection,
+        cmd: BaseCommand,
+        payload: ModelConfigureProviderPayload,
+    ) -> None:
+        """Update provider credentials and re-discover models."""
+        mm = self._orchestrator.model_manager
+        success = await mm.configure_cloud_provider(
+            provider_id=payload.provider_id,
+            api_key=payload.api_key,
+            endpoint=payload.endpoint,
+        )
+        # Register in session manager factory as well
+        msm = getattr(self._orchestrator, "model_session_manager", None)
+        if msm and hasattr(msm, "_factory"):
+            p_lower = payload.provider_id.lower()
+            for cp in mm.inventory.cloud_providers:
+                if cp.cloud_kind.value.lower() == p_lower or cp.cloud_kind.name.lower() == p_lower or payload.provider_id.lower() in cp.cloud_kind.value.lower():
+                    msm._factory.register_provider(cp)
+                    break
+
+        logger.info("Configured cloud provider '%s' (success=%s)", payload.provider_id, success)
+
+        # Trigger discover response to update client catalog
+        await self._handle_model_discover(
+            conn,
+            cmd,
+            ModelDiscoverPayload(include_runtimes=True, include_cloud=True, include_files=True),
+        )
 
     async def _on_bus_event(self, event: RuntimeEvent) -> None:
         """Forward an event from EventBus to the relevant connected client."""

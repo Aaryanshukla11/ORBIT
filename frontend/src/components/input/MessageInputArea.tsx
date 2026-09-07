@@ -3,12 +3,13 @@ import {
   ExpandScanIcon,
   SendArrowIcon,
   BotAutoIcon,
+  ChatTabIcon,
   GlobeWebIcon,
   PaperclipIcon,
   MicIcon,
   ChevronDownIcon,
 } from '../icons/Icons';
-import { useOrbit } from '../../context/OrbitContext';
+import { useTaskConsole } from '../../context/TaskConsoleContext';
 
 interface MessageInputAreaProps {
   onSendMessage?: (text: string) => void;
@@ -16,10 +17,11 @@ interface MessageInputAreaProps {
 
 export const MessageInputArea: React.FC<MessageInputAreaProps> = ({ onSendMessage }) => {
   const [text, setText] = useState('');
-  const [autoMode, setAutoMode] = useState(true);
   const [webEnabled, setWebEnabled] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { submitTask, connectionState } = useOrbit();
+  const { inputMode, setInputMode, sendUserMessage, isProcessing } = useTaskConsole();
+
+  const isAssistant = inputMode === 'task';
 
   // Auto-resize textarea
   useEffect(() => {
@@ -42,7 +44,7 @@ export const MessageInputArea: React.FC<MessageInputAreaProps> = ({ onSendMessag
     if (onSendMessage) {
       onSendMessage(text);
     } else {
-      submitTask(text);
+      sendUserMessage(text, inputMode);
     }
 
     setText('');
@@ -61,7 +63,11 @@ export const MessageInputArea: React.FC<MessageInputAreaProps> = ({ onSendMessag
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask ORBIT anything..."
+            placeholder={
+              isAssistant
+                ? 'Ask ORBIT to automate your desktop (e.g. Open Notepad, calculate)...'
+                : 'Chat with ORBIT AI (conversations, coding, questions)...'
+            }
             rows={1}
             style={styles.textarea}
           />
@@ -82,6 +88,7 @@ export const MessageInputArea: React.FC<MessageInputAreaProps> = ({ onSendMessag
                 opacity: text.trim() ? 1 : 0.9,
               }}
               onClick={handleSend}
+              disabled={isProcessing}
               title="Send Message (Enter)"
             >
               <SendArrowIcon size={15} color="#ffffff" />
@@ -92,16 +99,32 @@ export const MessageInputArea: React.FC<MessageInputAreaProps> = ({ onSendMessag
         {/* Bottom Pill Buttons Row */}
         <div style={styles.bottomPillRow}>
           <div style={styles.leftPillsGroup}>
-            {/* Auto Mode Pill */}
+            {/* Mode Switch Pill */}
             <button
               type="button"
-              style={styles.pillBtn}
-              onClick={() => setAutoMode(!autoMode)}
-              title="Toggle Automation Mode"
+              style={{
+                ...styles.pillBtn,
+                backgroundColor: isAssistant ? 'rgba(37, 99, 235, 0.08)' : 'rgba(16, 185, 129, 0.08)',
+                borderColor: isAssistant ? 'rgba(37, 99, 235, 0.25)' : 'rgba(16, 185, 129, 0.25)',
+              }}
+              onClick={() => setInputMode(isAssistant ? 'chat' : 'task')}
+              title={`Active Mode: ${isAssistant ? 'Assistant (Click to switch to Chatbot)' : 'Chatbot (Click to switch to Assistant)'}`}
             >
-              <BotAutoIcon size={15} color="#475569" />
-              <span style={styles.pillText}>Auto</span>
-              <ChevronDownIcon size={12} color="#94a3b8" />
+              {isAssistant ? (
+                <BotAutoIcon size={14} color="var(--accent-primary)" />
+              ) : (
+                <ChatTabIcon size={14} color="var(--accent-green)" />
+              )}
+              <span
+                style={{
+                  ...styles.pillText,
+                  color: isAssistant ? 'var(--accent-primary)' : 'var(--accent-green)',
+                  fontWeight: 700,
+                }}
+              >
+                {isAssistant ? 'Assistant' : 'Chatbot'}
+              </span>
+              <ChevronDownIcon size={11} color="var(--text-muted)" />
             </button>
 
             {/* Web Access Pill */}

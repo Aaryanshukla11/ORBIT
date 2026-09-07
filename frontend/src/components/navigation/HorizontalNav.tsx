@@ -1,9 +1,6 @@
 import React from 'react';
 import {
-  HomeIcon,
   ChatTabIcon,
-  ModelsIcon,
-  PulseHeartIcon,
   SystemIcon,
   SecurityIcon,
   TasksTabIcon,
@@ -12,35 +9,31 @@ import {
   SettingsTabIcon,
 } from '../icons/Icons';
 
-export type TabId = 'overview' | 'chat' | 'models' | 'health' | 'system' | 'security' | 'tasks' | 'activity' | 'apps' | 'settings';
+import { useTaskConsole } from '../../context/TaskConsoleContext';
+
+export type TabId = 'chat' | 'system' | 'security' | 'tasks' | 'apps' | 'settings';
 
 interface HorizontalNavProps {
   activeTab: TabId;
   onSelectTab: (tab: TabId) => void;
 }
 
-interface NavItem {
-  id: TabId;
-  label: string;
-  icon: React.FC<any>;
-}
-
-const NAV_ITEMS: NavItem[] = [
-  { id: 'overview', label: 'Overview', icon: HomeIcon },
-  { id: 'chat', label: 'Chat', icon: ChatTabIcon },
-  { id: 'models', label: 'Models', icon: ModelsIcon },
-  { id: 'health', label: 'Health', icon: PulseHeartIcon },
-  { id: 'system', label: 'System', icon: SystemIcon },
-  { id: 'security', label: 'Security', icon: SecurityIcon },
-  { id: 'activity', label: 'Activity', icon: ActivityTabIcon },
-  { id: 'apps', label: 'Apps', icon: AppsTabIcon },
-  { id: 'settings', label: 'Settings', icon: SettingsTabIcon },
-];
-
 export const HorizontalNav: React.FC<HorizontalNavProps> = ({ activeTab, onSelectTab }) => {
+  const { inputMode } = useTaskConsole();
+  const chatLabel = inputMode === 'task' ? 'Assistant' : 'Chatbot';
+
+  const navItems = [
+    { id: 'chat' as TabId, label: chatLabel, icon: ChatTabIcon },
+    { id: 'system' as TabId, label: 'System', icon: SystemIcon },
+    { id: 'security' as TabId, label: 'Security', icon: SecurityIcon },
+    { id: 'tasks' as TabId, label: 'Tasks & Activity', icon: TasksTabIcon },
+    { id: 'apps' as TabId, label: 'Apps', icon: AppsTabIcon },
+    { id: 'settings' as TabId, label: 'Settings', icon: SettingsTabIcon },
+  ];
+
   return (
     <nav style={styles.navContainer}>
-      {NAV_ITEMS.map((item) => {
+      {navItems.map((item) => {
         const Icon = item.icon;
         const isActive = activeTab === item.id;
 

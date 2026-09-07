@@ -1,12 +1,8 @@
 import React from 'react';
-import { ShieldIcon, ChevronRightIcon } from '../icons/Icons';
+import { ShieldIcon } from '../icons/Icons';
 import { useSystemOverview } from '../../context/SystemOverviewContext';
 
-interface SafetyStatusCardProps {
-  onNavigateToSecurity?: () => void;
-}
-
-export const SafetyStatusCard: React.FC<SafetyStatusCardProps> = ({ onNavigateToSecurity }) => {
+export const SafetyStatusCard: React.FC = () => {
   const { overview } = useSystemOverview();
 
   return (
@@ -14,18 +10,9 @@ export const SafetyStatusCard: React.FC<SafetyStatusCardProps> = ({ onNavigateTo
       <div style={styles.headerRow}>
         <div style={styles.labelGroup}>
           <ShieldIcon size={14} color="var(--accent-primary)" />
-          <span style={styles.sectionLabel}>SAFETY & PERMISSIONS</span>
+          <span style={styles.sectionLabel}>SAFETY & PERMISSIONS GUARDRAILS</span>
         </div>
-        {onNavigateToSecurity && (
-          <button
-            type="button"
-            style={styles.linkBtn}
-            onClick={onNavigateToSecurity}
-          >
-            <span>Safety Controls</span>
-            <ChevronRightIcon size={12} color="var(--accent-primary)" />
-          </button>
-        )}
+        <span style={styles.activePill}>ACTIVE ENFORCEMENT</span>
       </div>
 
       <div style={styles.safetyGrid}>
@@ -88,17 +75,14 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     letterSpacing: '0.05em',
   },
-  linkBtn: {
-    background: 'none',
-    border: 'none',
-    padding: 0,
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '3px',
-    fontSize: '10.5px',
-    fontWeight: 600,
+  activePill: {
+    fontSize: '9px',
+    fontWeight: 700,
     color: 'var(--accent-primary)',
-    cursor: 'pointer',
+    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+    padding: '2px 6px',
+    borderRadius: '4px',
+    letterSpacing: '0.03em',
   },
   safetyGrid: {
     display: 'flex',

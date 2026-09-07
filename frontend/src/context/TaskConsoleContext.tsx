@@ -16,7 +16,8 @@ interface TaskConsoleContextType {
   pauseActiveTask: (taskId?: string) => boolean;
   resumeActiveTask: (taskId?: string) => boolean;
   authorizeAction: (taskId: string, actionId: string, approved: boolean, reason?: string) => boolean;
-  clearMessages: () => void;
+  clearMessages: (mode?: InputMode) => void;
+  startNewConversation: (mode?: InputMode) => void;
   isProcessing: boolean;
 }
 
@@ -24,23 +25,32 @@ const TaskConsoleContext = createContext<TaskConsoleContextType | undefined>(und
 
 export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { connectionState, addTelemetryLog } = useOrbit();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [assistantMessages, setAssistantMessages] = useState<ChatMessage[]>([]);
+  const [chatbotMessages, setChatbotMessages] = useState<ChatMessage[]>([]);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [activePlan, setActivePlan] = useState<ExecutionPlan | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>('task');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
+  // Active messages stream dynamically derived from inputMode
+  const messages = inputMode === 'task' ? assistantMessages : chatbotMessages;
+
   const getTimestamp = () => new Date().toTimeString().split(' ')[0];
 
-  const addMessage = useCallback((msg: Omit<ChatMessage, 'id' | 'timestamp'>) => {
+  const addMessage = useCallback((msg: Omit<ChatMessage, 'id' | 'timestamp'>, targetMode?: InputMode) => {
+    const mode = targetMode || inputMode;
     const newMessage: ChatMessage = {
       ...msg,
       id: 'msg_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now().toString(36),
       timestamp: getTimestamp(),
     };
-    setMessages((prev) => [...prev, newMessage]);
+    if (mode === 'task') {
+      setAssistantMessages((prev) => [...prev, newMessage]);
+    } else {
+      setChatbotMessages((prev) => [...prev, newMessage]);
+    }
     return newMessage;
-  }, []);
+  }, [inputMode]);
 
   // Sync with WebSocket Gateway Events
   useEffect(() => {
@@ -76,14 +86,16 @@ export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ childre
           setIsProcessing(false);
         }
 
-        // Add task event message to stream
-        addMessage({
-          type: 'task_event',
-          content: `Task ${taskId.substring(0, 8)} transitioned to state: ${status}`,
-          taskId: taskId,
-          taskStatus: status,
-          errorDetail: error,
-        });
+        // Add task event message to stream only in Assistant mode
+        if (inputMode === 'task') {
+          addMessage({
+            type: 'task_event',
+            content: `Task ${taskId.substring(0, 8)} transitioned to state: ${status}`,
+            taskId: taskId,
+            taskStatus: status,
+            errorDetail: error,
+          });
+        }
       }
 
       // 2. PLAN_UPDATED
@@ -155,12 +167,24 @@ export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ childre
           setIsProcessing(false);
         }
       }
+
+      // 7. MODEL_GENERATE_RESPONSE
+      if (event_type === 'MODEL_GENERATE_RESPONSE') {
+        setIsProcessing(false);
+        if (payload?.text) {
+          addMessage({
+            type: 'assistant',
+            content: payload.text,
+            taskId: payload.task_id,
+          });
+        }
+      }
     });
 
     return () => {
       unsubEvents();
     };
-  }, [addMessage, isProcessing]);
+  }, [addMessage, isProcessing, inputMode]);
 
   // Command Senders
   const sendUserMessage = useCallback((content: string, mode?: InputMode): boolean => {
@@ -174,8 +198,9 @@ export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ childre
       metadata: { mode: currentMode },
     });
 
+    setIsProcessing(true);
+
     if (currentMode === 'task') {
-      setIsProcessing(true);
       const sent = orbitWS.sendCommand('SUBMIT_TASK', {
         prompt: content,
         context: {},
@@ -196,7 +221,15 @@ export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ childre
         prompt: content,
         context: { conversational: true },
       });
-      return sent;
+      if (!sent) {
+        setIsProcessing(false);
+        addMessage({
+          type: 'error',
+          content: 'Failed to send message: WebSocket is currently disconnected.',
+        });
+        return false;
+      }
+      return true;
     }
   }, [inputMode, addMessage]);
 
@@ -244,8 +277,8 @@ export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ childre
     approved: boolean, 
     reason?: string
   ): boolean => {
-    // Update local message state
-    setMessages((prev) => 
+    // Update local message state in assistant stream
+    setAssistantMessages((prev) => 
       prev.map((m) => {
         if (m.actionAuth && m.actionAuth.action_id === actionId) {
           return {
@@ -266,7 +299,7 @@ export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ childre
       content: approved 
         ? `Authorized Tier 3 Action ${actionId.substring(0, 8)}.`
         : `Rejected Tier 3 Action ${actionId.substring(0, 8)}.`,
-    });
+    }, 'task');
 
     return orbitWS.sendCommand('AUTHORIZE_ACTION', {
       task_id: taskId,
@@ -276,12 +309,22 @@ export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ childre
     });
   }, [addMessage]);
 
-  const clearMessages = useCallback(() => {
-    setMessages([]);
-    setActiveTask(null);
-    setActivePlan(null);
-    setIsProcessing(false);
-  }, []);
+  const startNewConversation = useCallback((targetMode?: InputMode) => {
+    const mode = targetMode || inputMode;
+    if (mode === 'task') {
+      setAssistantMessages([]);
+      setActiveTask(null);
+      setActivePlan(null);
+      setIsProcessing(false);
+    } else {
+      setChatbotMessages([]);
+      setIsProcessing(false);
+    }
+  }, [inputMode]);
+
+  const clearMessages = useCallback((targetMode?: InputMode) => {
+    startNewConversation(targetMode);
+  }, [startNewConversation]);
 
   return (
     <TaskConsoleContext.Provider
@@ -297,6 +340,7 @@ export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ childre
         resumeActiveTask,
         authorizeAction,
         clearMessages,
+        startNewConversation,
         isProcessing,
       }}
     >

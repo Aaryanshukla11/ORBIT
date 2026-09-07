@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { OrbitGradientLogo, PinIcon, MinimizeIcon, CloseIcon } from '../icons/Icons';
+import { useTaskConsole } from '../../context/TaskConsoleContext';
 
-export const Header: React.FC = () => {
+export interface HeaderProps {
+  onNavigateToChat?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onNavigateToChat }) => {
   const [isPinned, setIsPinned] = useState(false);
+  const { inputMode, startNewConversation } = useTaskConsole();
 
   useEffect(() => {
     if ((window as any).orbitDesktop?.isPinned) {
@@ -27,16 +33,36 @@ export const Header: React.FC = () => {
     (window as any).orbitDesktop?.close?.();
   };
 
+  const handleNewConversation = () => {
+    startNewConversation();
+    onNavigateToChat?.();
+  };
+
   return (
     <header style={styles.header} className="drag-region">
-      {/* Brand Group */}
-      <div style={styles.brandGroup}>
+      {/* Brand Group - Click to Start New Conversation */}
+      <div 
+        style={styles.brandGroup}
+        className="no-drag"
+        onClick={handleNewConversation}
+        title={inputMode === 'task' ? 'Start new Assistant conversation' : 'Start new Chatbot conversation'}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleNewConversation();
+          }
+        }}
+      >
         <div style={styles.logoWrap}>
           <OrbitGradientLogo size={36} />
         </div>
         <div style={styles.titleWrap}>
           <div style={styles.title}>O R B I T</div>
-          <div style={styles.subtitle}>Your Autonomous Desktop Partner</div>
+          <div style={styles.subtitle}>
+            {inputMode === 'task' ? 'Autonomous Desktop Assistant' : 'Conversational AI Chatbot'}
+          </div>
         </div>
       </div>
 
@@ -86,11 +112,18 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
+    cursor: 'pointer',
+    padding: '3px 8px',
+    marginLeft: '-8px',
+    borderRadius: 'var(--radius-md)',
+    transition: 'background-color var(--transition-fast), transform var(--transition-fast)',
+    outline: 'none',
   },
   logoWrap: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    transition: 'transform var(--transition-fast)',
   },
   titleWrap: {
     display: 'flex',

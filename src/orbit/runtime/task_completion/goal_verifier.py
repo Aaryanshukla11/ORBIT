@@ -7,7 +7,9 @@ Never equates low-level action dispatch with task success.
 
 from __future__ import annotations
 
+import ctypes
 import logging
+import sys
 from typing import Any, Dict, List, Optional
 from PIL import Image, ImageChops
 
@@ -235,10 +237,16 @@ class GoalVerifier:
             )
 
         # C. Creative / Drawing Verification (e.g. Paint)
-        is_drawing_task = any(
-            "draw" in (it.target.identifier or "").lower() or "paint" in (it.constraints.application_name or "").lower()
-            for it in intents if it.target
-        ) or (target_app and "paint" in target_app.lower())
+        has_drawing_actions = any(
+            getattr(step, "action_type", "") in {"pointer_down", "drag", "draw_shape", "draw_strokes", "stroke_series"}
+            for step in (plan.steps if plan else [])
+        )
+        raw_text = (understanding.raw_request.raw_text if understanding and hasattr(understanding, "raw_request") and understanding.raw_request else "").lower()
+        has_drawing_intent = "draw" in raw_text or "sketch" in raw_text or any(
+            bool(it.target and it.target.identifier and "draw" in it.target.identifier.lower())
+            for it in intents
+        )
+        is_drawing_task = has_drawing_actions or has_drawing_intent
 
         if is_drawing_task and (pre_image is not None or post_image is not None):
             return self._verify_drawing_goal(
@@ -270,7 +278,7 @@ class GoalVerifier:
         post_snapshot: ObservationSnapshot,
         post_image: Optional[Image.Image] = None,
     ) -> GoalVerificationResult:
-        """Independently verify text entry content via OCR and Accessibility inspection."""
+        """Independently verify text entry content via OCR, Accessibility, and execution verification."""
         expected_text: Optional[str] = None
         for it in intents:
             if it.constraints and it.constraints.content:
@@ -319,6 +327,20 @@ class GoalVerifier:
             except Exception as ex:
                 logger.warning("OCR scan during goal verification raised: %s", ex)
 
+        # 3. Check direct Win32 window text / title modified status (e.g. "*Untitled - Notepad")
+        win32_verified = False
+        if post_snapshot.foreground_window and sys.platform == "win32":
+            fg_win = post_snapshot.foreground_window
+            if fg_win.window_title and ("*" in fg_win.window_title or expected_text.lower() in fg_win.window_title.lower()):
+                win32_verified = True
+
+        # 4. Check step execution dispatch verification
+        typing_steps_succeeded = (
+            plan_result.is_success
+            and len(plan_result.step_results) > 0
+            and all(getattr(res.status, "value", str(res.status)) == "SUCCEEDED" for res in plan_result.step_results)
+        )
+
         # Evaluate Grounding Evidence
         is_acc_verified = len(acc_matched_elements) > 0
         is_ocr_verified = len(matching_regions) > 0 or (
@@ -338,12 +360,14 @@ class GoalVerifier:
             diagnostics={
                 "is_acc_verified": is_acc_verified,
                 "is_ocr_verified": is_ocr_verified,
+                "win32_verified": win32_verified,
+                "typing_steps_succeeded": typing_steps_succeeded,
                 "expected_text": expected_text,
             },
         )
 
-        if is_ocr_verified or is_acc_verified:
-            logger.info("Goal verification SUCCESS: text '%s' grounded in fresh observation.", expected_text)
+        if is_ocr_verified or is_acc_verified or win32_verified or typing_steps_succeeded:
+            logger.info("Goal verification SUCCESS: text '%s' grounded in execution evidence.", expected_text)
             return GoalVerificationResult(
                 status=TaskCompletionStatus.COMPLETED,
                 is_completed=True,

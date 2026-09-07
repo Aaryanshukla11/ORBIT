@@ -41,13 +41,30 @@ class TargetFocusValidator:
 
     @staticmethod
     def is_foreground(expected_hwnd: int) -> bool:
-        """Fast check verifying that the current foreground window matches expected HWND."""
+        """Fast check verifying that the current foreground window matches expected HWND or its hierarchy."""
         if expected_hwnd == 0:
             return True
         if sys.platform != "win32":
             return True
         current_fg = ctypes.windll.user32.GetForegroundWindow()
-        return current_fg == expected_hwnd
+        if current_fg == expected_hwnd:
+            return True
+        # Check root ancestor (GA_ROOT = 2, GA_ROOTOWNER = 3)
+        if hasattr(ctypes.windll.user32, "GetAncestor"):
+            if ctypes.windll.user32.GetAncestor(current_fg, 2) == expected_hwnd:
+                return True
+            if ctypes.windll.user32.GetAncestor(current_fg, 3) == expected_hwnd:
+                return True
+            if ctypes.windll.user32.GetAncestor(expected_hwnd, 2) == current_fg:
+                return True
+        # Check process ID match
+        pid_fg = wintypes.DWORD(0)
+        pid_exp = wintypes.DWORD(0)
+        ctypes.windll.user32.GetWindowThreadProcessId(current_fg, ctypes.byref(pid_fg))
+        ctypes.windll.user32.GetWindowThreadProcessId(expected_hwnd, ctypes.byref(pid_exp))
+        if pid_fg.value > 0 and pid_fg.value == pid_exp.value:
+            return True
+        return False
 
     def capture_target_context(self, hwnd: Optional[int] = None) -> TargetContext:
         """Captures target context for the given HWND."""

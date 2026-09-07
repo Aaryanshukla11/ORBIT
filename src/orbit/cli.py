@@ -17,6 +17,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
     parser.add_argument("--log-level", default="info", help="Log level (default: info)")
     parser.add_argument("--mode", default=None, choices=["MOCK", "PRODUCTION"], help="Adapter execution mode (MOCK or PRODUCTION)")
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload on code changes")
     args = parser.parse_args()
 
     # Enforce loopback safety check
@@ -30,8 +31,11 @@ def main() -> None:
     cfg.port = args.port
     cfg.log_level = args.log_level
 
-    app = create_app(config=cfg)
-    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
+    if args.reload:
+        uvicorn.run("orbit.gateway.app:create_app", host=args.host, port=args.port, log_level=args.log_level, factory=True, reload=True)
+    else:
+        app = create_app(config=cfg)
+        uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
 
 
 if __name__ == "__main__":

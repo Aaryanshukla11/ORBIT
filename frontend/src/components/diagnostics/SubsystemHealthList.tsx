@@ -112,6 +112,19 @@ export const SubsystemHealthList: React.FC = () => {
       },
       last_checked: new Date().toISOString(),
     });
+  } else if (!electronDiagnostics && !allSubsystems.some((s) => s.subsystem_id === 'desktop_shell')) {
+    allSubsystems.push({
+      subsystem_id: 'desktop_shell',
+      name: 'Electron Desktop Companion',
+      status: 'UNAVAILABLE' as DiagnosticStatus,
+      summary: 'Electron companion unavailable (running outside native desktop host)',
+      latency_ms: 0.0,
+      details: {
+        native_bridge_active: false,
+        platform_runtime: 'Standard Web Browser',
+      },
+      last_checked: new Date().toISOString(),
+    });
   }
 
   return (

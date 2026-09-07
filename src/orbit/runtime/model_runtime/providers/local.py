@@ -84,11 +84,18 @@ class OllamaRuntimeAdapter(BaseModelRuntime):
             # 2. Check if model is installed in Ollama
             target_name = self._descriptor.provider_model_name
             installed_models = await self._provider.discover_models()
-            is_installed = any(
-                m.provider_model_name == target_name or m.model_id == self.model_id
-                for m in installed_models
-            )
-            if not is_installed:
+            matched_model = None
+            for m in installed_models:
+                if (
+                    m.provider_model_name.lower() == target_name.lower()
+                    or m.model_id.lower() == self.model_id.lower()
+                    or m.provider_model_name.lower() == self.model_id.split(":", 1)[-1].lower()
+                    or m.model_id.split(":", 1)[-1].lower() == target_name.split(":", 1)[-1].lower()
+                ):
+                    matched_model = m
+                    break
+
+            if matched_model is None:
                 self._status = ModelRuntimeStatus.UNAVAILABLE
                 duration_ms = (time.perf_counter() - start_time) * 1000.0
                 return RuntimeInitializationResult(
@@ -98,6 +105,10 @@ class OllamaRuntimeAdapter(BaseModelRuntime):
                     duration_ms=duration_ms,
                     error_message=f"Model '{target_name}' is not installed in local Ollama instance",
                 )
+
+            # Preserve exact matched provider model name for Ollama runtime calls
+            target_name = matched_model.provider_model_name
+            self._descriptor.provider_model_name = target_name
 
             # 3. Optional weight preloading
             if preload_weights:

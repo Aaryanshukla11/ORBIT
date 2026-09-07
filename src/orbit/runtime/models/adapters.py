@@ -134,7 +134,7 @@ class CloudRuntimeAdapter(ModelRuntimeAdapter):
         auth_status = getattr(self._provider, "auth_status", CloudAuthStatus.AUTHENTICATED)
         if auth_status == CloudAuthStatus.NOT_CONFIGURED:
             return AdapterCapabilityStatus.NOT_CONFIGURED
-        if auth_status in (CloudAuthStatus.UNREACHABLE, CloudAuthStatus.ERROR):
+        if auth_status in (CloudAuthStatus.UNREACHABLE, CloudAuthStatus.ERROR, CloudAuthStatus.AUTH_FAILED, CloudAuthStatus.UNAVAILABLE, CloudAuthStatus.CONFIGURED_UNVERIFIED):
             return AdapterCapabilityStatus.UNAVAILABLE
 
         if self._descriptor.last_health:

@@ -48,6 +48,7 @@ class CommandType(str, Enum):
     DIAGNOSTICS_RUN = "DIAGNOSTICS_RUN"
     UPDATE_SECURITY_POLICY = "UPDATE_SECURITY_POLICY"
     UPDATE_APP_POLICY = "UPDATE_APP_POLICY"
+    MODEL_CONFIGURE_PROVIDER = "MODEL_CONFIGURE_PROVIDER"
 
 
 
@@ -260,6 +261,14 @@ class UpdateAppPolicyPayload(BaseModel):
     app_id: str
     access_level: Optional[str] = Field(default=None, description="ALLOW, ASK, or DENY")
     permissions: Optional[Dict[str, Any]] = None
+
+
+class ModelConfigureProviderPayload(BaseModel):
+    """Inbound payload to update credentials for a cloud AI provider."""
+    provider_id: str = Field(..., description="Target provider identifier e.g. 'openai', 'anthropic', 'gemini'")
+    api_key: str = Field(..., min_length=1, description="API key token for remote provider")
+    endpoint: Optional[str] = Field(default=None, description="Optional custom endpoint base URL")
+
 
 
 

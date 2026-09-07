@@ -38,9 +38,110 @@ class ModelRegistry:
                 self._models[desc.model_id] = desc
 
     async def get_model(self, model_id: str) -> Optional[ModelDescriptor]:
-        """Fetch descriptor for a specific model ID (e.g. 'ollama:qwen2.5:latest')."""
+        """Fetch descriptor for a specific model ID with flexible case, prefix matching, and on-demand synthesis."""
         async with self._lock:
-            return self._models.get(model_id)
+            # 1. Exact match
+            if model_id in self._models:
+                return self._models[model_id]
+
+            # 2. Case-insensitive key match
+            mid_lower = model_id.lower()
+            for k, v in self._models.items():
+                if k.lower() == mid_lower:
+                    return v
+
+            # 3. Match stripping provider prefix or matching provider_model_name
+            clean_id = model_id.split(":", 1)[-1].lower()
+            last_part = model_id.split(":")[-1].lower()
+            for k, v in self._models.items():
+                k_clean = k.split(":", 1)[-1].lower()
+                k_last = k.split(":")[-1].lower()
+                if k_clean == clean_id or k_last == last_part or k_clean == last_part or k_last == clean_id:
+                    return v
+                if v.provider_model_name.lower() in (mid_lower, clean_id, last_part):
+                    return v
+
+            # 4. Check if this is a Cloud Model (OpenAI, Anthropic, Gemini, DeepSeek, etc.)
+            is_cloud = (
+                mid_lower.startswith(("cloud:", "openai:", "anthropic:", "gemini:", "google:", "deepseek:", "custom:"))
+                or clean_id.startswith(("gpt-", "o1-", "o1", "o3-", "claude-", "gemini-", "deepseek-", "text-embedding-"))
+                or last_part.startswith(("gpt-", "o1-", "o1", "o3-", "claude-", "gemini-", "deepseek-", "text-embedding-"))
+            )
+
+            if is_cloud:
+                try:
+                    from orbit.runtime.model_providers.cloud import CURATED_CLOUD_CATALOGS
+                    from orbit.runtime.models.models import CloudProviderKind, ModelSourceType
+
+                    p_kind = ModelProviderKind.CLOUD_OPENAI
+                    c_kind = CloudProviderKind.OPENAI
+                    if "anthropic" in mid_lower or "claude" in mid_lower:
+                        p_kind = ModelProviderKind.CLOUD_ANTHROPIC
+                        c_kind = CloudProviderKind.ANTHROPIC
+                    elif "gemini" in mid_lower or "google" in mid_lower:
+                        p_kind = ModelProviderKind.CLOUD_GEMINI
+                        c_kind = CloudProviderKind.GEMINI
+                    elif "deepseek" in mid_lower:
+                        p_kind = ModelProviderKind.CLOUD
+                        c_kind = CloudProviderKind.CUSTOM_OPENAI_COMPATIBLE
+
+                    catalog = CURATED_CLOUD_CATALOGS.get(c_kind, [])
+                    matched_item = None
+                    for item in catalog:
+                        i_id = item["id"].lower()
+                        if i_id == clean_id or i_id == last_part or i_id in mid_lower:
+                            matched_item = item
+                            break
+
+                    display_name = matched_item["name"] if matched_item else clean_id.replace("-", " ").title()
+                    raw_name = matched_item["id"] if matched_item else last_part
+                    caps = matched_item.get("capabilities") if matched_item else {ModelCapability.TEXT_GENERATION, ModelCapability.CHAT, ModelCapability.CODE}
+                    ctx = matched_item.get("context_window", 128000) if matched_item else 128000
+                    fam = matched_item.get("family", "cloud") if matched_item else "cloud"
+
+                    synth_id = f"cloud:{c_kind.value.lower()}:{raw_name}"
+                    synth_desc = ModelDescriptor(
+                        model_id=synth_id,
+                        provider=p_kind,
+                        provider_model_name=raw_name,
+                        display_name=display_name,
+                        source_type=ModelSourceType.CLOUD_PROVIDER,
+                        status=ModelStatus.AVAILABLE,
+                        capabilities=caps,
+                        context_window=ctx,
+                        family=fam,
+                        local_or_remote="remote",
+                    )
+                    self._models[synth_id] = synth_desc
+                    self._models[model_id] = synth_desc
+                    return synth_desc
+                except Exception:
+                    pass
+
+            # 5. Local Ollama synthesis ONLY if it's explicitly local / not a cloud model
+            if not is_cloud:
+                from orbit.runtime.models.models import ModelSourceType
+                from orbit.runtime.models.capabilities import infer_capabilities
+
+                raw_name = model_id.split(":", 1)[-1] if "ollama" in mid_lower else model_id
+                synth_id = f"ollama:{raw_name}"
+                synth_desc = ModelDescriptor(
+                    model_id=synth_id,
+                    provider=ModelProviderKind.OLLAMA,
+                    provider_model_name=raw_name,
+                    display_name=raw_name,
+                    source_type=ModelSourceType.LOCAL_RUNTIME,
+                    status=ModelStatus.AVAILABLE,
+                    capabilities=infer_capabilities(raw_name),
+                    context_window=32768,
+                    family="Ollama",
+                    local_or_remote="local",
+                )
+                self._models[synth_id] = synth_desc
+                self._models[model_id] = synth_desc
+                return synth_desc
+
+            return None
 
     async def get_model_by_provider(
         self,

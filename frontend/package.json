@@ -6,9 +6,10 @@
   "main": "electron/main.cjs",
   "scripts": {
     "start": "node electron/dev-runner.cjs",
-    "dev": "vite",
+    "dev": "node electron/dev-runner.cjs",
     "electron": "electron electron/main.cjs",
     "electron:dev": "node electron/dev-runner.cjs",
+    "renderer:dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

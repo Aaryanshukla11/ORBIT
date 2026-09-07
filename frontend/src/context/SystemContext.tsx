@@ -93,12 +93,12 @@ const SystemContext = createContext<SystemContextType | undefined>(undefined);
 
 export const SystemProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { connectionState } = useOrbit();
-  const [displays, setDisplays] = useState<DisplayItem[]>(DEFAULT_DISPLAYS);
+  const [displays, setDisplays] = useState<DisplayItem[]>([]);
   const [systemInfo, setSystemInfo] = useState<SystemInfo | null>(null);
   const [workspaceContext, setWorkspaceContext] = useState<WorkspaceContext>(DEFAULT_WORKSPACE);
   const [capabilities, setCapabilities] = useState<CapabilityItem[]>(DEFAULT_CAPABILITIES);
   const [observedWindows, setObservedWindows] = useState<ObservedWindowItem[]>([]);
-  const [selectedDisplayId, setSelectedDisplayId] = useState<number | null>(1);
+  const [selectedDisplayId, setSelectedDisplayId] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
   const fetchSystemData = useCallback(async () => {

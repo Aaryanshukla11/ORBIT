@@ -5,9 +5,10 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 import logging
+import os
 import sys
 import time
-from typing import TYPE_CHECKING, List, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, List, Optional, Protocol, Tuple, runtime_checkable
 from uuid import uuid4
 
 from orbit.adapters.observation.snapshot import (
@@ -164,6 +165,26 @@ class EvidenceBasedTargetLocator:
                 diagnostic_message=f"Failed to calculate safe point for explicit region: {ex}",
             )
 
+    @staticmethod
+    def _get_proc_name_by_hwnd(hwnd: int) -> Tuple[int, str]:
+        """Extract process ID and image name for an HWND on Win32."""
+        if sys.platform != "win32" or not hwnd:
+            return (0, "")
+        pid = wintypes.DWORD(0)
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value == 0:
+            return (0, "")
+        h_proc = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
+        if not h_proc:
+            return (pid.value, "")
+        buf = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(1024)
+        name = ""
+        if ctypes.windll.kernel32.QueryFullProcessImageNameW(h_proc, 0, buf, ctypes.byref(size)):
+            name = os.path.basename(buf.value)
+        ctypes.windll.kernel32.CloseHandle(h_proc)
+        return (pid.value, name)
+
     def _resolve_window(
         self,
         snapshot: ObservationSnapshot,
@@ -178,6 +199,7 @@ class EvidenceBasedTargetLocator:
             all_windows.append(snapshot.foreground_window)
 
         title_query = intent.window_title or intent.name
+        tq_clean = (title_query or "").strip().lower()
         logger.info("Resolving window '%s': %d snapshot windows: %s", title_query, len(all_windows), [(w.hwnd, w.window_title, w.process_name) for w in all_windows[:6]])
 
         for win in all_windows:
@@ -194,12 +216,10 @@ class EvidenceBasedTargetLocator:
                     continue
 
             # Check Window Title or Process Name
-            title_query = intent.window_title or intent.name
-            if title_query:
-                tq = title_query.lower()
-                title_match = bool(win.window_title and tq in win.window_title.lower())
-                proc_match = bool(win.process_name and tq in win.process_name.lower())
-                if tq in ("browser", "web browser", "internet"):
+            if tq_clean:
+                title_match = bool(win.window_title and tq_clean in win.window_title.lower())
+                proc_match = bool(win.process_name and (tq_clean in win.process_name.lower() or win.process_name.lower().startswith(tq_clean)))
+                if tq_clean in ("browser", "web browser", "internet"):
                     known_browsers = ("chrome", "msedge", "edge", "brave", "firefox", "opera")
                     if any(b in (win.process_name or "").lower() or b in (win.window_title or "").lower() for b in known_browsers):
                         proc_match = True
@@ -209,13 +229,13 @@ class EvidenceBasedTargetLocator:
             candidates.append(win)
 
         if len(candidates) == 0:
-            title_query = intent.window_title or intent.name
-            if title_query and sys.platform == "win32":
-                tq_clean = title_query.strip().lower()
+            if tq_clean and sys.platform == "win32":
                 known_app_launchers = {
                     "notepad": "notepad.exe",
                     "paint": "mspaint.exe",
+                    "mspaint": "mspaint.exe",
                     "calculator": "calc.exe",
+                    "calc": "calc.exe",
                     "cmd": "cmd.exe",
                     "terminal": "wt.exe",
                     "explorer": "explorer.exe",
@@ -225,53 +245,63 @@ class EvidenceBasedTargetLocator:
                     try:
                         import subprocess
                         subprocess.Popen([exe_name], shell=False)
-                        time.sleep(0.8)
+                        
+                        # Deterministic polling loop (up to 3.0s) for launched application window
+                        t_poll_start = time.perf_counter()
                         WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-                        ctypes.windll.user32.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
-                        ctypes.windll.user32.EnumWindows.restype = wintypes.BOOL
                         GetWindowTextLength = ctypes.windll.user32.GetWindowTextLengthW
                         GetWindowText = ctypes.windll.user32.GetWindowTextW
                         IsWindowVisible = ctypes.windll.user32.IsWindowVisible
                         GetWindowRect = ctypes.windll.user32.GetWindowRect
 
-                        found_hwnds = []
-                        def _enum_cb(hwnd, lparam):
-                            if IsWindowVisible(hwnd):
-                                length = GetWindowTextLength(hwnd)
-                                if length > 0:
-                                    buff = ctypes.create_unicode_buffer(length + 1)
-                                    GetWindowText(hwnd, buff, length + 1)
-                                    w_title = buff.value
-                                    if tq_clean in w_title.lower() or tq_clean in exe_name.lower():
-                                        r = wintypes.RECT()
-                                        if GetWindowRect(hwnd, ctypes.byref(r)):
-                                            if (r.right - r.left) > 50 and (r.bottom - r.top) > 50:
-                                                found_hwnds.append((hwnd, w_title, r))
-                            return True
+                        found_wins: List[ObservedWindow] = []
+                        while (time.perf_counter() - t_poll_start) < 3.0:
+                            found_wins.clear()
+                            def _enum_cb(hwnd, lparam):
+                                if IsWindowVisible(hwnd):
+                                    r = wintypes.RECT()
+                                    if GetWindowRect(hwnd, ctypes.byref(r)):
+                                        w = r.right - r.left
+                                        h = r.bottom - r.top
+                                        if w > 50 and h > 50:
+                                            length = GetWindowTextLength(hwnd)
+                                            buff = ctypes.create_unicode_buffer(length + 1)
+                                            GetWindowText(hwnd, buff, length + 1)
+                                            w_title = buff.value
+                                            pid, proc_name = self._get_proc_name_by_hwnd(hwnd)
+                                            
+                                            title_match = bool(w_title and tq_clean in w_title.lower())
+                                            proc_match = bool(proc_name and (tq_clean in proc_name.lower() or exe_name.lower() in proc_name.lower()))
+                                            
+                                            if title_match or proc_match:
+                                                from orbit.models.common import BoundingBox
+                                                found_wins.append(
+                                                    ObservedWindow(
+                                                        hwnd=hwnd,
+                                                        process_id=pid or 0,
+                                                        window_title=w_title,
+                                                        process_name=proc_name or exe_name,
+                                                        is_visible=True,
+                                                        is_foreground=(ctypes.windll.user32.GetForegroundWindow() == hwnd),
+                                                        extended_bounds=BoundingBox(
+                                                            left=r.left,
+                                                            top=r.top,
+                                                            width=w,
+                                                            height=h,
+                                                        ),
+                                                    )
+                                                )
+                                return True
 
-                        cb = WNDENUMPROC(_enum_cb)
-                        ctypes.windll.user32.EnumWindows(cb, 0)
-                        if found_hwnds:
-                            h, wt, r = found_hwnds[0]
-                            ctypes.windll.user32.SetForegroundWindow(h)
-                            from orbit.models.common import BoundingBox
-                            pid = wintypes.DWORD(0)
-                            ctypes.windll.user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
-                            new_win = ObservedWindow(
-                                hwnd=h,
-                                process_id=pid.value or 0,
-                                window_title=wt,
-                                process_name=exe_name,
-                                is_visible=True,
-                                is_foreground=True,
-                                extended_bounds=BoundingBox(
-                                    left=r.left,
-                                    top=r.top,
-                                    width=r.right - r.left,
-                                    height=r.bottom - r.top,
-                                ),
-                            )
-                            candidates.append(new_win)
+                            cb = WNDENUMPROC(_enum_cb)
+                            ctypes.windll.user32.EnumWindows(cb, 0)
+                            if found_wins:
+                                candidates.extend(found_wins)
+                                break
+                            time.sleep(0.1)
+
+                        if not candidates:
+                            logger.warning("Application '%s' was launched via '%s' but no visible window appeared within timeout", title_query, exe_name)
                     except Exception as launch_err:
                         logger.warning("Failed to launch application '%s': %s", title_query, launch_err)
 
@@ -289,24 +319,24 @@ class EvidenceBasedTargetLocator:
             )
 
         if len(candidates) > 1:
-            # If multiple match, prefer foreground window if it is one of the candidates
-            fg_matches = [w for w in candidates if w.is_foreground]
-            if len(fg_matches) == 1:
-                matched_win = fg_matches[0]
-            else:
-                title_query = intent.window_title or intent.name
-                exact_title_matches = [
-                    w for w in candidates
-                    if title_query and w.window_title and w.window_title.strip().lower() == title_query.strip().lower()
-                ]
-                if len(exact_title_matches) == 1:
-                    matched_win = exact_title_matches[0]
-                else:
-                    # Disambiguate by selecting the topmost window in z-order
-                    z_sorted = sorted(candidates, key=lambda w: getattr(w, "z_order_rank", 9999))
-                    matched_win = z_sorted[0]
+            def score_win(w: ObservedWindow) -> tuple:
+                has_title = 1 if bool(w.window_title and w.window_title.strip()) else 0
+                title_matches = 1 if (tq_clean and w.window_title and tq_clean in w.window_title.lower()) else 0
+                is_fg = 1 if w.is_foreground else 0
+                area = (w.extended_bounds.width or 0) * (w.extended_bounds.height or 0) if w.extended_bounds else 0
+                z_rank = getattr(w, "z_order_rank", 9999)
+                return (has_title, title_matches, is_fg, area, -z_rank)
+
+            matched_win = max(candidates, key=score_win)
         else:
             matched_win = candidates[0]
+
+        if sys.platform == "win32" and matched_win.hwnd:
+            try:
+                ctypes.windll.user32.ShowWindow(matched_win.hwnd, 9)
+                ctypes.windll.user32.SetForegroundWindow(matched_win.hwnd)
+            except Exception:
+                pass
 
         try:
             tbox = TargetBoundingBox.from_bounding_box(matched_win.extended_bounds)

@@ -51,9 +51,9 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
         provider: Optional[CloudModelProvider] = None,
     ) -> None:
         super().__init__(descriptor)
-        self._api_key = api_key
-        self._base_url = (base_url or descriptor.endpoint or "https://api.openai.com/v1").rstrip("/")
         self._provider = provider
+        self._api_key = api_key or (provider._api_key if provider else None)
+        self._base_url = (base_url or (provider.endpoint if provider else None) or descriptor.endpoint or "https://api.openai.com/v1").rstrip("/")
         self._runtime_kind = ModelRuntimeKind.REMOTE
         self._client: Optional[httpx.AsyncClient] = None
 
@@ -66,14 +66,15 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
         return self._base_url
 
     async def _get_client(self) -> httpx.AsyncClient:
+        key = self._api_key or (self._provider._api_key if self._provider else None)
         if self._client is None or self._client.is_closed:
             headers = {"Content-Type": "application/json"}
-            if self._api_key:
-                headers["Authorization"] = f"Bearer {self._api_key}"
+            if key:
+                headers["Authorization"] = f"Bearer {key}"
             self._client = httpx.AsyncClient(
                 base_url=self._base_url,
                 headers=headers,
-                timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=5.0),
+                timeout=httpx.Timeout(connect=8.0, read=60.0, write=10.0, pool=5.0),
             )
         return self._client
 
@@ -86,18 +87,23 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
         start_time = time.perf_counter()
         self._status = ModelRuntimeStatus.INITIALIZING
 
-        # 1. If wrapped by CloudModelProvider, check provider auth status
+        # 1. If wrapped by CloudModelProvider or requires key, check auth status
+        has_auth = False
         if self._provider:
-            if self._provider.auth_status == CloudAuthStatus.NOT_CONFIGURED:
-                self._status = ModelRuntimeStatus.UNAVAILABLE
-                duration_ms = (time.perf_counter() - start_time) * 1000.0
-                return RuntimeInitializationResult(
-                    is_success=False,
-                    model_id=self.model_id,
-                    status=self._status,
-                    duration_ms=duration_ms,
-                    error_message=f"Cloud credentials not configured for provider {self._descriptor.provider.value}",
-                )
+            has_auth = self._provider.is_configured
+        elif self._api_key and len(self._api_key.strip()) > 0:
+            has_auth = True
+
+        if not has_auth:
+            self._status = ModelRuntimeStatus.UNAVAILABLE
+            duration_ms = (time.perf_counter() - start_time) * 1000.0
+            return RuntimeInitializationResult(
+                is_success=False,
+                model_id=self.model_id,
+                status=self._status,
+                duration_ms=duration_ms,
+                error_message=f"Cloud credentials not configured for provider {self._descriptor.provider.value}",
+            )
 
         # 2. Check if API key or local endpoint is reachable
         try:

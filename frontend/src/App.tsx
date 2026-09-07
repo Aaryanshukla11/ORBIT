@@ -8,17 +8,13 @@ import { ActivityHistoryProvider } from './context/ActivityHistoryContext';
 import { SystemOverviewProvider } from './context/SystemOverviewContext';
 import { DiagnosticsProvider } from './context/DiagnosticsContext';
 import { Header } from './components/layout/Header';
-import { StatusArea } from './components/status/StatusArea';
+import { ModeSwitch } from './components/layout/ModeSwitch';
 import { HorizontalNav, TabId } from './components/navigation/HorizontalNav';
-import { SystemOverviewView } from './components/overview/SystemOverviewView';
 import { ConversationView } from './components/chat/ConversationView';
 import { MessageInputArea } from './components/input/MessageInputArea';
-import { ModelManagerView } from './components/models/ModelManagerView';
-import { DiagnosticsView } from './components/diagnostics/DiagnosticsView';
 import { SystemDisplaysView } from './components/system/SystemDisplaysView';
 import { SecuritySafetyView } from './components/security/SecuritySafetyView';
 import { TasksView } from './components/tasks/TasksView';
-import { ActivityView } from './components/activity/ActivityView';
 import { AppsView } from './components/apps/AppsView';
 import { SettingsView } from './components/settings/SettingsView';
 
@@ -27,8 +23,6 @@ export const App: React.FC = () => {
 
   const renderActiveView = () => {
     switch (activeTab) {
-      case 'overview':
-        return <SystemOverviewView onNavigateTab={(tab) => setActiveTab(tab)} />;
       case 'chat':
         return (
           <>
@@ -36,24 +30,23 @@ export const App: React.FC = () => {
             <MessageInputArea />
           </>
         );
-      case 'models':
-        return <ModelManagerView onBack={() => setActiveTab('chat')} />;
-      case 'health':
-        return <DiagnosticsView onNavigateTab={(tab) => setActiveTab(tab as TabId)} />;
       case 'system':
-        return <SystemDisplaysView />;
+        return <SystemDisplaysView onNavigateTab={(tab) => setActiveTab(tab as TabId)} />;
       case 'security':
         return <SecuritySafetyView />;
       case 'tasks':
         return <TasksView />;
-      case 'activity':
-        return <ActivityView />;
       case 'apps':
         return <AppsView />;
       case 'settings':
         return <SettingsView />;
       default:
-        return <ConversationView />;
+        return (
+          <>
+            <ConversationView />
+            <MessageInputArea />
+          </>
+        );
     }
   };
 
@@ -68,13 +61,12 @@ export const App: React.FC = () => {
                   <DiagnosticsProvider>
                     <div style={styles.appContainer}>
                       {/* 1. Header (Brand + Window Controls) */}
-                      <Header />
+                      <Header onNavigateToChat={() => setActiveTab('chat')} />
 
-                      {/* 2. Status Area (Online -> Health / Diagnostics, Model -> Model Manager) */}
-                      <StatusArea
-                        onOpenSystem={() => setActiveTab('health')}
-                        onOpenModelManager={() => setActiveTab('models')}
-                      />
+                      {/* 2. Mode Switch (Chatbot vs Assistant) */}
+                      <div style={styles.modeSwitchBar}>
+                        <ModeSwitch />
+                      </div>
 
                       {/* 3. Horizontal Navigation Tabs (Overview | Chat | Models | Health | System | Security | Activity | Apps | Settings) */}
                       <HorizontalNav activeTab={activeTab} onSelectTab={setActiveTab} />
@@ -104,6 +96,13 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: 'var(--bg-app)',
     overflow: 'hidden',
     position: 'relative',
+  },
+  modeSwitchBar: {
+    padding: '0 18px 8px 18px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    userSelect: 'none',
   },
   mainContent: {
     flex: 1,

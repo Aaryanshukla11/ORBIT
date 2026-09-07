@@ -107,7 +107,7 @@ async function start() {
     console.log('[ORBIT Desktop] Starting Vite development server...');
     viteProcess = spawn(
       process.platform === 'win32' ? 'npx.cmd' : 'npx',
-      ['vite', '--host', '127.0.0.1', '--port', String(VITE_PORT), '--strictPort'],
+      ['vite', '--host', '127.0.0.1', '--port', String(VITE_PORT), '--strictPort', '--no-open'],
       {
         cwd: path.resolve(__dirname, '..'),
         stdio: 'inherit',

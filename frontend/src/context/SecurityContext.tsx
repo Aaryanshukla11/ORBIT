@@ -108,6 +108,299 @@ const DEFAULT_CAPABILITY_POLICIES: SystemCapabilityPolicy[] = [
 ];
 
 const DEFAULT_APP_POLICIES: ApplicationPolicyItem[] = [
+  // --- System & OS Core ---
+  {
+    id: 'explorer',
+    name: 'File Explorer',
+    publisher: 'Microsoft Windows',
+    processName: 'explorer.exe',
+    category: 'System & OS',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Active in OS',
+    installed: true,
+  },
+  {
+    id: 'taskmgr',
+    name: 'Task Manager',
+    publisher: 'Microsoft Windows',
+    processName: 'Taskmgr.exe',
+    category: 'System & OS',
+    accessLevel: 'ASK',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ASK',
+      mouseInteraction: 'ASK',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'System Utility',
+    installed: true,
+  },
+  {
+    id: 'terminal',
+    name: 'Windows Terminal',
+    publisher: 'Microsoft Corporation',
+    processName: 'wt.exe',
+    category: 'System & OS',
+    accessLevel: 'ASK',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ASK',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Active Runtime',
+    installed: true,
+  },
+  {
+    id: 'powershell',
+    name: 'Windows PowerShell',
+    publisher: 'Microsoft Windows',
+    processName: 'powershell.exe',
+    category: 'System & OS',
+    accessLevel: 'ASK',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ASK',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'System Core',
+    installed: true,
+  },
+  {
+    id: 'cmd',
+    name: 'Command Prompt',
+    publisher: 'Microsoft Windows',
+    processName: 'cmd.exe',
+    category: 'System & OS',
+    accessLevel: 'ASK',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ASK',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'System Core',
+    installed: true,
+  },
+  {
+    id: 'regedit',
+    name: 'Registry Editor',
+    publisher: 'Microsoft Windows',
+    processName: 'regedit.exe',
+    category: 'System & OS',
+    accessLevel: 'DENY',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'DENY',
+      mouseInteraction: 'DENY',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Protected System Tool',
+    installed: true,
+  },
+  {
+    id: 'control',
+    name: 'Control Panel',
+    publisher: 'Microsoft Windows',
+    processName: 'control.exe',
+    category: 'System & OS',
+    accessLevel: 'ASK',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ASK',
+      mouseInteraction: 'ASK',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'System Utility',
+    installed: true,
+  },
+  {
+    id: 'services',
+    name: 'Services Manager',
+    publisher: 'Microsoft Windows',
+    processName: 'mmc.exe',
+    category: 'System & OS',
+    accessLevel: 'DENY',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'DENY',
+      mouseInteraction: 'DENY',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Protected MMC Snap-in',
+    installed: true,
+  },
+  {
+    id: 'devmgmt',
+    name: 'Device Manager',
+    publisher: 'Microsoft Windows',
+    processName: 'mmc.exe',
+    category: 'System & OS',
+    accessLevel: 'ASK',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ASK',
+      mouseInteraction: 'ASK',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'System Utility',
+    installed: true,
+  },
+  // --- Utilities ---
+  {
+    id: 'notepad',
+    name: 'Notepad',
+    publisher: 'Microsoft Windows',
+    processName: 'notepad.exe',
+    category: 'Utilities',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'System Utility',
+    installed: true,
+  },
+  {
+    id: 'paint',
+    name: 'Paint',
+    publisher: 'Microsoft Windows',
+    processName: 'mspaint.exe',
+    category: 'Utilities',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'System Utility',
+    installed: true,
+  },
+  {
+    id: 'calculator',
+    name: 'Windows Calculator',
+    publisher: 'Microsoft Windows',
+    processName: 'CalculatorApp.exe',
+    category: 'Utilities',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'System Utility',
+    installed: true,
+  },
+  {
+    id: 'snippingtool',
+    name: 'Snipping Tool',
+    publisher: 'Microsoft Windows',
+    processName: 'SnippingTool.exe',
+    category: 'Utilities',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Screen Utility',
+    installed: true,
+  },
+  // --- Web Browsers ---
+  {
+    id: 'edge',
+    name: 'Microsoft Edge',
+    publisher: 'Microsoft Corporation',
+    processName: 'msedge.exe',
+    category: 'Browsers',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Active Browser',
+    installed: true,
+  },
+  {
+    id: 'chrome',
+    name: 'Google Chrome',
+    publisher: 'Google LLC',
+    processName: 'chrome.exe',
+    category: 'Browsers',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed Browser',
+    installed: true,
+  },
+  {
+    id: 'brave',
+    name: 'Brave Browser',
+    publisher: 'Brave Software Inc.',
+    processName: 'brave.exe',
+    category: 'Browsers',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed Browser',
+    installed: true,
+  },
+  {
+    id: 'firefox',
+    name: 'Mozilla Firefox',
+    publisher: 'Mozilla Corporation',
+    processName: 'firefox.exe',
+    category: 'Browsers',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed Browser',
+    installed: true,
+  },
+  // --- Development & Engineering ---
   {
     id: 'vscode',
     name: 'Visual Studio Code',
@@ -122,15 +415,15 @@ const DEFAULT_APP_POLICIES: ApplicationPolicyItem[] = [
       textReading: 'ALLOW',
       screenObservation: 'ALLOW',
     },
-    lastAccessed: 'Just now',
+    lastAccessed: 'Active Workspace',
     installed: true,
   },
   {
-    id: 'edge',
-    name: 'Microsoft Edge',
-    publisher: 'Microsoft Corporation',
-    processName: 'msedge.exe',
-    category: 'Browser',
+    id: 'git',
+    name: 'Git for Windows',
+    publisher: 'Git Development Community',
+    processName: 'git.exe',
+    category: 'Development',
     accessLevel: 'ALLOW',
     permissions: {
       windowFocus: 'ALLOW',
@@ -139,41 +432,7 @@ const DEFAULT_APP_POLICIES: ApplicationPolicyItem[] = [
       textReading: 'ALLOW',
       screenObservation: 'ALLOW',
     },
-    lastAccessed: '2 mins ago',
-    installed: true,
-  },
-  {
-    id: 'terminal',
-    name: 'Windows Terminal',
-    publisher: 'Microsoft Corporation',
-    processName: 'wt.exe',
-    category: 'System',
-    accessLevel: 'ASK',
-    permissions: {
-      windowFocus: 'ALLOW',
-      keyboardInput: 'ASK',
-      mouseInteraction: 'ALLOW',
-      textReading: 'ALLOW',
-      screenObservation: 'ALLOW',
-    },
-    lastAccessed: '14 mins ago',
-    installed: true,
-  },
-  {
-    id: 'chrome',
-    name: 'Google Chrome',
-    publisher: 'Google LLC',
-    processName: 'chrome.exe',
-    category: 'Browser',
-    accessLevel: 'ALLOW',
-    permissions: {
-      windowFocus: 'ALLOW',
-      keyboardInput: 'ALLOW',
-      mouseInteraction: 'ALLOW',
-      textReading: 'ALLOW',
-      screenObservation: 'ALLOW',
-    },
-    lastAccessed: '1 hour ago',
+    lastAccessed: 'Installed CLI',
     installed: true,
   },
   {
@@ -181,7 +440,7 @@ const DEFAULT_APP_POLICIES: ApplicationPolicyItem[] = [
     name: 'Docker Desktop',
     publisher: 'Docker Inc.',
     processName: 'Docker Desktop.exe',
-    category: 'Virtualization',
+    category: 'Development',
     accessLevel: 'ASK',
     permissions: {
       windowFocus: 'ALLOW',
@@ -190,9 +449,27 @@ const DEFAULT_APP_POLICIES: ApplicationPolicyItem[] = [
       textReading: 'ALLOW',
       screenObservation: 'ALLOW',
     },
-    lastAccessed: 'Yesterday',
+    lastAccessed: 'Virtualization Engine',
     installed: true,
   },
+  {
+    id: 'android_studio',
+    name: 'Android Studio',
+    publisher: 'Google LLC',
+    processName: 'studio64.exe',
+    category: 'Development',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'IDE Suite',
+    installed: true,
+  },
+  // --- AI & Inference ---
   {
     id: 'ollama',
     name: 'Ollama Local Runtime',
@@ -211,11 +488,11 @@ const DEFAULT_APP_POLICIES: ApplicationPolicyItem[] = [
     installed: true,
   },
   {
-    id: 'notepad',
-    name: 'Notepad',
-    publisher: 'Microsoft Windows',
-    processName: 'notepad.exe',
-    category: 'Utilities',
+    id: 'orbit_gateway',
+    name: 'ORBIT Python Gateway',
+    publisher: 'ORBIT Core Engine',
+    processName: 'python.exe',
+    category: 'AI & Inference',
     accessLevel: 'ALLOW',
     permissions: {
       windowFocus: 'ALLOW',
@@ -224,7 +501,129 @@ const DEFAULT_APP_POLICIES: ApplicationPolicyItem[] = [
       textReading: 'ALLOW',
       screenObservation: 'ALLOW',
     },
-    lastAccessed: '2 days ago',
+    lastAccessed: 'Active Backend',
+    installed: true,
+  },
+  // --- Communication & Collaboration ---
+  {
+    id: 'slack',
+    name: 'Slack',
+    publisher: 'Slack Technologies',
+    processName: 'slack.exe',
+    category: 'Communication',
+    accessLevel: 'ASK',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ASK',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed App',
+    installed: true,
+  },
+  {
+    id: 'discord',
+    name: 'Discord',
+    publisher: 'Discord Inc.',
+    processName: 'Discord.exe',
+    category: 'Communication',
+    accessLevel: 'ASK',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ASK',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed App',
+    installed: true,
+  },
+  {
+    id: 'teams',
+    name: 'Microsoft Teams',
+    publisher: 'Microsoft Corporation',
+    processName: 'ms-teams.exe',
+    category: 'Communication',
+    accessLevel: 'ASK',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ASK',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed App',
+    installed: true,
+  },
+  // --- Productivity ---
+  {
+    id: 'word',
+    name: 'Microsoft Word',
+    publisher: 'Microsoft Corporation',
+    processName: 'WINWORD.EXE',
+    category: 'Productivity',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed Software',
+    installed: true,
+  },
+  {
+    id: 'excel',
+    name: 'Microsoft Excel',
+    publisher: 'Microsoft Corporation',
+    processName: 'EXCEL.EXE',
+    category: 'Productivity',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed Software',
+    installed: true,
+  },
+  // --- Media & Design ---
+  {
+    id: 'blender',
+    name: 'Blender 3D Suite',
+    publisher: 'Blender Foundation',
+    processName: 'blender.exe',
+    category: 'Media & Design',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed Suite',
+    installed: true,
+  },
+  {
+    id: 'spotify',
+    name: 'Spotify Music',
+    publisher: 'Spotify AB',
+    processName: 'Spotify.exe',
+    category: 'Media & Design',
+    accessLevel: 'ALLOW',
+    permissions: {
+      windowFocus: 'ALLOW',
+      keyboardInput: 'ALLOW',
+      mouseInteraction: 'ALLOW',
+      textReading: 'ALLOW',
+      screenObservation: 'ALLOW',
+    },
+    lastAccessed: 'Installed App',
     installed: true,
   },
 ];
@@ -287,39 +686,66 @@ export const SecurityProvider: React.FC<{ children: ReactNode }> = ({ children }
     activeTakeoverPreempting: false,
   });
 
-  // Load real installed applications from Electron if available
+  // Load real installed applications and running Windows processes from Electron
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.orbitDesktop?.getInstalledApps) {
-      window.orbitDesktop.getInstalledApps().then((apps) => {
-        if (apps && Array.isArray(apps) && apps.length > 0) {
-          setAppPolicies((prev) => {
-            const merged = [...prev];
-            apps.forEach((app) => {
-              const existing = merged.find((m) => m.id === app.id || m.processName === app.processName);
-              if (!existing) {
-                merged.push({
-                  id: app.id,
-                  name: app.name,
-                  publisher: app.publisher || 'Installed Software',
-                  processName: app.processName,
-                  category: app.category || 'Application',
-                  accessLevel: 'ASK',
-                  permissions: {
-                    windowFocus: 'ALLOW',
-                    keyboardInput: 'ASK',
-                    mouseInteraction: 'ASK',
-                    textReading: 'ALLOW',
-                    screenObservation: 'ALLOW',
-                  },
-                  installed: true,
-                });
-              }
+    const fetchRealApps = async () => {
+      if (typeof window !== 'undefined' && window.orbitDesktop?.getInstalledApps) {
+        try {
+          const apps = await window.orbitDesktop.getInstalledApps();
+          if (apps && Array.isArray(apps) && apps.length > 0) {
+            setAppPolicies((prev) => {
+              const merged = [...prev];
+              apps.forEach((app) => {
+                const existingIndex = merged.findIndex(
+                  (m) => m.id === app.id || m.processName.toLowerCase() === (app.processName || '').toLowerCase()
+                );
+                if (existingIndex >= 0) {
+                  // Update existing item status
+                  merged[existingIndex] = {
+                    ...merged[existingIndex],
+                    name: app.name || merged[existingIndex].name,
+                    publisher: app.publisher || merged[existingIndex].publisher,
+                    category: app.category || merged[existingIndex].category,
+                    iconDataUrl: app.iconDataUrl || merged[existingIndex].iconDataUrl,
+                    iconType: app.iconType || merged[existingIndex].iconType,
+                    lastAccessed: app.isRunning ? 'Active Process' : merged[existingIndex].lastAccessed,
+                    installed: true,
+                  };
+                } else {
+                  // Add discovered software
+                  merged.push({
+                    id: app.id,
+                    name: app.name,
+                    publisher: app.publisher || 'Installed Software',
+                    processName: app.processName,
+                    category: app.category || 'Utilities',
+                    iconDataUrl: app.iconDataUrl,
+                    iconType: app.iconType,
+                    accessLevel: app.category === 'System & OS' || app.category === 'Browsers' || app.category === 'Development' ? 'ALLOW' : 'ASK',
+                    permissions: {
+                      windowFocus: 'ALLOW',
+                      keyboardInput: 'ASK',
+                      mouseInteraction: 'ALLOW',
+                      textReading: 'ALLOW',
+                      screenObservation: 'ALLOW',
+                    },
+                    lastAccessed: app.isRunning ? 'Active Process' : 'Discovered Software',
+                    installed: true,
+                  });
+                }
+              });
+              return merged;
             });
-            return merged;
-          });
+          }
+        } catch (err) {
+          console.warn('[SecurityContext] App discovery notice:', err);
         }
-      });
-    }
+      }
+    };
+
+    fetchRealApps();
+    const interval = setInterval(fetchRealApps, 6000);
+    return () => clearInterval(interval);
   }, []);
 
   // Listen to Gateway Events

@@ -1,5 +1,6 @@
 import React from 'react';
 import { SecurityHeader } from './SecurityHeader';
+import { SafetyStatusCard } from './SafetyStatusCard';
 import { GlobalCapabilityPolicies } from './GlobalCapabilityPolicies';
 import { AppAccessControlList } from './AppAccessControlList';
 import { HumanTakeoverCard } from './HumanTakeoverCard';
@@ -15,6 +16,9 @@ export const SecuritySafetyView: React.FC = () => {
 
       {/* 2. Scrollable Content Body */}
       <div style={styles.scrollArea}>
+        {/* Safety & Permissions Guardrails Summary */}
+        <SafetyStatusCard />
+
         {/* Global Capability Policies */}
         <GlobalCapabilityPolicies />
 

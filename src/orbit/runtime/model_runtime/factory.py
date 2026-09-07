@@ -65,11 +65,17 @@ class ModelRuntimeFactory:
             ModelProviderKind.CLOUD_GEMINI,
         }:
             p = self._providers.get(provider_kind) or self._providers.get(ModelProviderKind.CLOUD)
+            if not p:
+                for cand in self._providers.values():
+                    if isinstance(cand, CloudModelProvider):
+                        if cand.provider_kind == provider_kind or (getattr(cand, "cloud_kind", None) and cand.cloud_kind.value.lower() in descriptor.model_id.lower()):
+                            p = cand
+                            break
             cloud_p = p if isinstance(p, CloudModelProvider) else None
             return OpenAICompatibleRuntimeAdapter(
                 descriptor=descriptor,
-                api_key=api_key,
-                base_url=base_url,
+                api_key=api_key or (cloud_p._api_key if cloud_p else None),
+                base_url=base_url or (cloud_p.endpoint if cloud_p else None),
                 provider=cloud_p,
             )
 

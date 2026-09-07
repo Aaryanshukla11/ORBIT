@@ -52,14 +52,22 @@ export const ConfigureProviderModal: React.FC<ConfigureProviderModalProps> = ({ 
           <div style={styles.securityNotice}>
             <ShieldIcon size={14} color="var(--accent-primary)" />
             <span style={styles.securityText}>
-              Credentials are encrypted into the local Windows Secure Vault. Plaintext keys are never transmitted or exposed in the UI.
+              Credentials are held in secure session memory by the local ORBIT gateway. Plaintext keys are never logged or exposed in UI telemetry.
             </span>
           </div>
 
           <div style={styles.fieldGroup}>
             <label style={styles.label}>
               {provider.name} API Key
-              {provider.hasKey && <span style={styles.configuredBadge}>Key Configured</span>}
+              {provider.status === 'AUTHENTICATED' ? (
+                <span style={styles.configuredBadge}>Authenticated</span>
+              ) : provider.status === 'AUTH_FAILED' ? (
+                <span style={{ ...styles.configuredBadge, backgroundColor: 'rgba(239, 68, 68, 0.12)', color: 'var(--accent-red)' }}>
+                  Auth Failed
+                </span>
+              ) : provider.hasKey ? (
+                <span style={styles.configuredBadge}>Key Saved</span>
+              ) : null}
             </label>
             <div style={styles.inputWrapper}>
               <input
@@ -111,7 +119,7 @@ export const ConfigureProviderModal: React.FC<ConfigureProviderModalProps> = ({ 
               {savedSuccess ? (
                 <>
                   <CheckCircleIcon size={13} color="#ffffff" />
-                  Saved Encrypted
+                  Submitted
                 </>
               ) : (
                 'Save & Verify'

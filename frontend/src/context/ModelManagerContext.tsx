@@ -21,6 +21,20 @@ interface ModelManagerContextType {
 
 const DEFAULT_LOCAL_MODELS: ModelItem[] = [
   {
+    id: 'ollama:qwen2.5:latest',
+    name: 'Qwen2.5 7.6B',
+    provider: 'Ollama / Local',
+    type: 'local',
+    family: 'Qwen2.5',
+    size: '4.7 GB',
+    contextWindow: 32768,
+    capabilities: ['Chat', 'Text', 'Code'],
+    installed: true,
+    status: 'ACTIVE',
+    hardwareReq: '8GB VRAM / 16GB RAM',
+    description: 'High-performance general reasoning, chat, and executive copilot.',
+  },
+  {
     id: 'ollama:qwen2.5-coder:7b',
     name: 'Qwen2.5-Coder 7B',
     provider: 'Ollama / Local',
@@ -30,26 +44,12 @@ const DEFAULT_LOCAL_MODELS: ModelItem[] = [
     contextWindow: 32768,
     capabilities: ['Code', 'Text', 'Reasoning'],
     installed: true,
-    status: 'ACTIVE',
+    status: 'INSTALLED',
     hardwareReq: '8GB VRAM / 16GB RAM',
     description: 'High-performance coding agent with native instruction following.',
   },
   {
-    id: 'ollama:qwen2.5-coder:1.5b',
-    name: 'Qwen2.5-Coder 1.5B',
-    provider: 'Ollama / Local',
-    type: 'local',
-    family: 'Qwen2.5',
-    size: '1.2 GB',
-    contextWindow: 32768,
-    capabilities: ['Code', 'Text'],
-    installed: true,
-    status: 'INSTALLED',
-    hardwareReq: '4GB RAM (CPU/iGPU)',
-    description: 'Ultra-lightweight fast local code model.',
-  },
-  {
-    id: 'ollama:qwen2.5-coder:14b',
+    id: 'ollama:qwen2.5-coder:14B',
     name: 'Qwen2.5-Coder 14B',
     provider: 'Ollama / Local',
     type: 'local',
@@ -76,48 +76,57 @@ const DEFAULT_LOCAL_MODELS: ModelItem[] = [
     hardwareReq: '12GB VRAM',
     description: 'Multimodal vision perception for desktop OCR and screen grounding.',
   },
-  {
-    id: 'ollama:deepseek-coder-v2:lite',
-    name: 'DeepSeek-Coder-V2-Lite',
-    provider: 'Ollama / Local',
-    type: 'local',
-    family: 'DeepSeek',
-    size: '8.9 GB',
-    contextWindow: 64000,
-    capabilities: ['Code', 'Text', 'Reasoning'],
-    installed: true,
-    status: 'INSTALLED',
-    hardwareReq: '12GB VRAM / 24GB RAM',
-    description: 'Mixture-of-Experts coder with extensive multilingual syntax mastery.',
-  },
 ];
+
+export const normalizeModelId = (id?: string | null): string => {
+  if (!id) return '';
+  let cleaned = id.trim().toLowerCase();
+  // Strip known provider prefixes like "ollama:", "openai:", "anthropic:", "google:", "gemini:", "deepseek:", "cloud:", "local:"
+  cleaned = cleaned.replace(/^(?:ollama|openai|anthropic|google|gemini|deepseek|cloud|local):(?:\w+:)?/, '');
+  return cleaned;
+};
+
+export const isSameModel = (a?: string | null, b?: string | null): boolean => {
+  if (!a || !b) return false;
+  const aRaw = a.trim().toLowerCase();
+  const bRaw = b.trim().toLowerCase();
+  if (aRaw === bRaw) return true;
+
+  const normA = normalizeModelId(a);
+  const normB = normalizeModelId(b);
+  if (normA && normB && normA === normB) return true;
+
+  // If one has explicit ":latest" and the other doesn't
+  const stripLatest = (s: string) => (s.endsWith(':latest') ? s.slice(0, -7) : s);
+  if (normA && normB && stripLatest(normA) === stripLatest(normB)) return true;
+
+  return false;
+};
 
 const DEFAULT_CLOUD_PROVIDERS: CloudProviderItem[] = [
   {
     id: 'openai',
     name: 'OpenAI',
     providerCode: 'openai',
-    status: 'CONFIGURED',
+    status: 'NOT_CONFIGURED',
     models: ['gpt-4o', 'gpt-4o-mini', 'o1-preview', 'o1-mini'],
-    activeModelId: 'gpt-4o',
-    hasKey: true,
+    hasKey: false,
     maskedEndpoint: 'api.openai.com/v1',
   },
   {
     id: 'anthropic',
     name: 'Anthropic',
     providerCode: 'anthropic',
-    status: 'CONFIGURED',
+    status: 'NOT_CONFIGURED',
     models: ['claude-3-5-sonnet', 'claude-3-5-haiku', 'claude-3-opus'],
-    activeModelId: 'claude-3-5-sonnet',
-    hasKey: true,
+    hasKey: false,
     maskedEndpoint: 'api.anthropic.com/v1',
   },
   {
     id: 'google',
     name: 'Google Gemini',
     providerCode: 'google',
-    status: 'READY',
+    status: 'NOT_CONFIGURED',
     models: ['gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
     hasKey: false,
     maskedEndpoint: 'generativelanguage.googleapis.com',
@@ -126,7 +135,7 @@ const DEFAULT_CLOUD_PROVIDERS: CloudProviderItem[] = [
     id: 'deepseek',
     name: 'DeepSeek Cloud',
     providerCode: 'deepseek',
-    status: 'READY',
+    status: 'NOT_CONFIGURED',
     models: ['deepseek-chat', 'deepseek-reasoner'],
     hasKey: false,
     maskedEndpoint: 'api.deepseek.com/v1',
@@ -139,7 +148,7 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
   const { connectionState } = useOrbit();
   const [models, setModels] = useState<ModelItem[]>(DEFAULT_LOCAL_MODELS);
   const [cloudProviders, setCloudProviders] = useState<CloudProviderItem[]>(DEFAULT_CLOUD_PROVIDERS);
-  const [activeModelId, setActiveModelId] = useState<string>('ollama:qwen2.5-coder:7b');
+  const [activeModelId, setActiveModelId] = useState<string>('ollama:qwen2.5:latest');
   const [switchingModelId, setSwitchingModelId] = useState<string | null>(null);
   const [switchingError, setSwitchingError] = useState<string | null>(null);
   const [sourceTab, setSourceTab] = useState<ModelSourceType>('local');
@@ -165,7 +174,7 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
 
       // Active Model Response
       if (event_type === 'MODEL_ACTIVE_RESPONSE' || event_type === 'MODEL_ACTIVE_UPDATED') {
-        const mId = payload?.active_model?.model_id || payload?.model?.model_id;
+        const mId = payload?.active_model?.model_id || payload?.model?.model_id || payload?.active_model_id;
         if (mId) {
           setActiveModelId(mId);
           setSwitchingModelId(null);
@@ -174,7 +183,7 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
           setModels((prev) =>
             prev.map((m) => ({
               ...m,
-              status: m.id === mId ? 'ACTIVE' : m.status === 'ACTIVE' ? 'INSTALLED' : m.status,
+              status: isSameModel(m.id, mId) ? 'ACTIVE' : m.status === 'ACTIVE' ? 'INSTALLED' : m.status,
             }))
           );
         }
@@ -202,7 +211,7 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
           setModels((prev) =>
             prev.map((m) => ({
               ...m,
-              status: m.id === targetId ? 'ACTIVE' : m.status === 'ACTIVE' ? 'INSTALLED' : m.status,
+              status: isSameModel(m.id, targetId) ? 'ACTIVE' : m.status === 'ACTIVE' ? 'INSTALLED' : m.status,
             }))
           );
         }
@@ -211,7 +220,7 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
       // Switch Failed
       if (event_type === 'MODEL_SWITCH_FAILED' || event_type === 'MODEL_RUNTIME_FAILED') {
         setSwitchingModelId(null);
-        setSwitchingError(payload?.failure_reason || payload?.message || 'Model activation failed');
+        setSwitchingError(payload?.diagnostic_message || payload?.failure_reason || payload?.message || 'Model activation failed');
         setSystemStatus((prev) => ({ ...prev, runtimeState: 'DEGRADED' }));
       }
 
@@ -231,34 +240,63 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
         event_type === 'MODEL_LIST_RESPONSE'
       ) {
         if (payload?.models && Array.isArray(payload.models)) {
-          // Merge discovered models
-          setModels((prev) => {
-            const incoming: ModelItem[] = payload.models.map((m: any) => ({
-              id: m.model_id || m.id,
-              name: m.display_name || m.name || m.model_id,
-              provider: m.provider || 'Local',
-              type: m.runtime_kind === 'LOCAL_OLLAMA' || (m.provider && m.provider.toLowerCase().includes('ollama')) ? 'local' : 'cloud',
+          const actId = payload.active_model_id || activeModelId;
+          const incoming: ModelItem[] = payload.models.map((m: any) => {
+            const mId = m.model_id || m.id;
+            const isLocal = m.runtime_kind === 'LOCAL_OLLAMA' || (m.provider && m.provider.toLowerCase().includes('ollama')) || (m.type === 'local');
+            return {
+              id: mId,
+              name: m.display_name || m.name || mId,
+              provider: m.provider || (isLocal ? 'Ollama / Local' : 'Cloud Provider'),
+              type: isLocal ? 'local' : 'cloud',
               family: m.family || 'LLM',
               size: m.parameter_size || m.size || 'N/A',
               contextWindow: m.context_window || 32768,
-              capabilities: m.capabilities || ['Text', 'Code'],
+              capabilities: (m.capabilities && m.capabilities.length > 0) ? m.capabilities : ['Text', 'Code'],
               installed: m.installed ?? true,
-              status: ((m.model_id || m.id) === (payload.active_model_id || activeModelId) ? 'ACTIVE' : 'INSTALLED') as any,
-              hardwareReq: m.hardware_req || 'Local Hardware',
-              description: m.description || `${m.display_name || m.model_id} model managed by ORBIT.`,
-            }));
-            if (payload.active_model_id) {
-              setActiveModelId(payload.active_model_id);
-            }
-            return incoming.length > 0 ? incoming : prev;
+              status: (isSameModel(mId, actId) ? 'ACTIVE' : (m.status || 'INSTALLED')) as any,
+              hardwareReq: m.hardware_req || (m.parameter_size?.includes('14') ? '16GB VRAM' : (m.parameter_size?.includes('7') ? '8GB VRAM' : 'Local Hardware')),
+              description: m.description || `${m.display_name || mId} model running on ${m.provider || 'local host'}.`,
+            };
           });
+          if (incoming.length > 0) {
+            setModels(incoming);
+          }
+          if (payload.active_model_id) {
+            setActiveModelId(payload.active_model_id);
+          }
+        }
+
+        if (payload?.cloud_providers && Array.isArray(payload.cloud_providers)) {
+          setCloudProviders((prev) =>
+            prev.map((cp) => {
+              const matched = payload.cloud_providers.find(
+                (p: any) =>
+                  p.id?.toLowerCase() === cp.id?.toLowerCase() ||
+                  p.providerCode?.toLowerCase() === cp.providerCode?.toLowerCase()
+              );
+              if (matched) {
+                return {
+                  ...cp,
+                  status: matched.status || matched.authStatus || cp.status,
+                  authStatus: matched.authStatus || matched.status,
+                  hasKey: matched.hasKey ?? cp.hasKey,
+                  diagnosticMessage: matched.diagnosticMessage || matched.diagnostic_message,
+                  modelsCount: matched.modelsCount ?? matched.models_count,
+                  maskedEndpoint: matched.maskedEndpoint || cp.maskedEndpoint,
+                };
+              }
+              return cp;
+            })
+          );
         }
       }
     });
 
-    // Auto-discover and query active model on connect
+    // Auto-discover, list, and query active model on connect
     if (connectionState === 'CONNECTED') {
       orbitWS.sendCommand('MODEL_DISCOVER', { include_runtimes: true, include_cloud: true, include_files: true });
+      orbitWS.sendCommand('MODEL_LIST', { include_all: true });
       orbitWS.sendCommand('MODEL_ACTIVE', {});
     }
 
@@ -269,7 +307,7 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   const switchModel = useCallback((modelId: string): boolean => {
     if (switchingModelId) return false;
-    if (modelId === activeModelId) return true;
+    if (isSameModel(modelId, activeModelId)) return true;
 
     setSwitchingModelId(modelId);
     setSwitchingError(null);
@@ -302,25 +340,34 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
   const saveProviderKey = useCallback((providerId: string, apiKey: string): boolean => {
     if (!apiKey.trim()) return false;
 
+    // Transition to AUTHENTICATING status while backend validates credentials
     setCloudProviders((prev) =>
       prev.map((p) => {
-        if (p.id === providerId) {
+        if (p.id.toLowerCase() === providerId.toLowerCase() || p.providerCode?.toLowerCase() === providerId.toLowerCase()) {
           return {
             ...p,
-            status: 'CONFIGURED',
+            status: 'AUTHENTICATING',
+            authStatus: 'AUTHENTICATING',
             hasKey: true,
+            diagnosticMessage: 'Validating credentials with provider...',
           };
         }
         return p;
       })
     );
 
-    // Notify backend
-    orbitWS.sendCommand('MODEL_DISCOVER', { provider: providerId });
+    // Send configuration command to backend for live validation
+    orbitWS.sendCommand('MODEL_CONFIGURE_PROVIDER', {
+      provider_id: providerId,
+      api_key: apiKey.trim(),
+    });
     return true;
   }, []);
 
-  const activeModel = models.find((m) => m.id === activeModelId) || models[0] || null;
+  const activeModel =
+    models.find((m) => isSameModel(m.id, activeModelId)) ||
+    models[0] ||
+    null;
 
   return (
     <ModelManagerContext.Provider

@@ -28,7 +28,7 @@ export const SystemConnectionsCard: React.FC = () => {
           <ServerIcon size={14} color="var(--accent-primary)" />
           <span style={styles.sectionLabel}>SYSTEM CONNECTIONS</span>
         </div>
-        <span style={styles.originBadge}>LIVE</span>
+        <span style={styles.originBadge}>LIVE TELEMETRY</span>
       </div>
 
       <div style={styles.connectionsList}>

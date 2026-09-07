@@ -225,6 +225,31 @@ class ModelManager:
         """Register a cloud AI model provider."""
         self._inventory.register_cloud_provider(provider)
 
+    async def configure_cloud_provider(self, provider_id: str, api_key: str, endpoint: Optional[str] = None) -> bool:
+        """Update credentials for a cloud provider and re-discover models."""
+        p_lower = provider_id.lower()
+        matched_cp = None
+        for cp in self._inventory.cloud_providers:
+            if cp.cloud_kind.value.lower() == p_lower or cp.cloud_kind.name.lower() == p_lower or provider_id.lower() in cp.cloud_kind.value.lower():
+                matched_cp = cp
+                break
+
+        if matched_cp is None:
+            try:
+                from orbit.runtime.models.models import CloudProviderKind
+                kind = CloudProviderKind[provider_id.upper()]
+            except KeyError:
+                from orbit.runtime.models.models import CloudProviderKind
+                kind = CloudProviderKind.CUSTOM_OPENAI_COMPATIBLE
+            matched_cp = CloudModelProvider(cloud_kind=kind, api_key=api_key, endpoint=endpoint)
+            self.register_cloud_provider(matched_cp)
+        else:
+            matched_cp.update_credentials(api_key, endpoint)
+
+        # Refresh inventory for cloud
+        await self.refresh_inventory(include_runtimes=False, include_cloud=True, include_files=False)
+        return True
+
     def get_provider(self, provider_kind: ModelProviderKind) -> Optional[ModelProvider]:
         """Get registered local runtime provider by kind."""
         return self._discovery_engine.get_provider(provider_kind)

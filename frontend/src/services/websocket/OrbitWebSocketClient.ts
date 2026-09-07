@@ -144,6 +144,13 @@ export class OrbitWebSocketClient {
         const rawData = typeof messageEvent.data === 'string' ? messageEvent.data : new TextDecoder().decode(messageEvent.data);
         const eventEnvelope = JSON.parse(rawData) as EventEnvelope;
 
+        // Synchronize active session ID from gateway
+        if (eventEnvelope.session_id && eventEnvelope.session_id !== 'system' && eventEnvelope.session_id !== 'broadcast') {
+          this.sessionId = eventEnvelope.session_id;
+        } else if (eventEnvelope.payload?.session_id) {
+          this.sessionId = eventEnvelope.payload.session_id;
+        }
+
         // Dispatch to all-event listeners
         this.allEventListeners.forEach(cb => {
           try { cb(eventEnvelope); } catch (e) { console.error('[OrbitWS] Event listener error:', e); }

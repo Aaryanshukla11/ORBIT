@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { GreenCheckCircleIcon, ActiveRadioCircleIcon, PendingCircleIcon, ChevronDownIcon, ChevronRightIcon } from '../icons/Icons';
+import { ExecutionPlan, ErrorDetail } from '../../types/task';
 
 export interface StepItem {
   id: string;
@@ -8,37 +9,75 @@ export interface StepItem {
   detail?: string;
 }
 
-const DEFAULT_STEPS: StepItem[] = [
-  { id: '1', label: 'Understanding intent', status: 'completed', detail: 'Parsed user goal: locate VS Code and summarize project structure.' },
-  { id: '2', label: 'Scanning system context', status: 'completed', detail: 'Identified 3 top-level workspace windows. Located active process Code.exe.' },
-  { id: '3', label: 'Locating Visual Studio Code', status: 'active', detail: 'Window HWND 0x00240E9A confirmed. OCR vision bounding box matched.' },
-  { id: '4', label: 'Reading project structure', status: 'pending', detail: 'Traversing AST files in workspace directory.' },
-  { id: '5', label: 'Generating summary', status: 'pending', detail: 'Synthesizing component architecture summary via local model.' },
-  { id: '6', label: 'Preparing response', status: 'pending', detail: 'Formatting final response with actionable references.' },
-];
-
 interface TaskExecutionCardProps {
   steps?: StepItem[];
+  plan?: ExecutionPlan | null;
+  error?: ErrorDetail | null;
 }
 
-export const TaskExecutionCard: React.FC<TaskExecutionCardProps> = ({ steps = DEFAULT_STEPS }) => {
-  const [expandedStepId, setExpandedStepId] = useState<string | null>('3');
+export const TaskExecutionCard: React.FC<TaskExecutionCardProps> = ({ steps, plan, error }) => {
+  const [expandedStepId, setExpandedStepId] = useState<string | null>(null);
+
+  // Derive honest steps from plan if steps are not explicitly passed
+  const resolvedSteps: StepItem[] = React.useMemo(() => {
+    if (steps && steps.length > 0) return steps;
+    if (plan && plan.steps && plan.steps.length > 0) {
+      return plan.steps.map((st, idx) => {
+        let status: 'completed' | 'active' | 'pending' = 'pending';
+        if (st.status === 'COMPLETED') status = 'completed';
+        else if (st.status === 'RUNNING' || (st.status as string) === 'EXECUTING' || st.status === 'VERIFYING') status = 'active';
+
+        const actionSummary = st.actions && st.actions.length > 0
+          ? st.actions.map((a) => a.action_type).join(', ')
+          : undefined;
+
+        return {
+          id: st.step_id || String(idx + 1),
+          label: st.description || `Step ${idx + 1}`,
+          status,
+          detail: actionSummary ? `Actions: ${actionSummary}` : undefined,
+        };
+      });
+    }
+    return [];
+  }, [steps, plan]);
 
   const toggleStep = (id: string) => {
     setExpandedStepId((prev) => (prev === id ? null : id));
   };
+
+  if (resolvedSteps.length === 0) {
+    return (
+      <div style={styles.card}>
+        <div style={styles.cardTop}>
+          <span style={styles.cardTitle}>EXECUTION PLAN</span>
+          <span style={styles.stepCount}>Formulating...</span>
+        </div>
+        <div style={styles.emptyStateNotice}>
+          Awaiting structured plan from runtime...
+        </div>
+        {error && (
+          <div style={styles.errorBox}>
+            <strong>Failure [{error.code}]:</strong> {error.message}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const completedCount = resolvedSteps.filter((s) => s.status === 'completed').length;
 
   return (
     <div style={styles.card}>
       <div style={styles.cardTop}>
         <span style={styles.cardTitle}>EXECUTION PLAN</span>
         <span style={styles.stepCount}>
-          {steps.filter((s) => s.status === 'completed').length}/{steps.length} Steps
+          {completedCount}/{resolvedSteps.length} Steps
         </span>
       </div>
 
       <div style={styles.stepList}>
-        {steps.map((step) => {
+        {resolvedSteps.map((step) => {
           const isExpanded = expandedStepId === step.id;
 
           return (
@@ -91,6 +130,12 @@ export const TaskExecutionCard: React.FC<TaskExecutionCardProps> = ({ steps = DE
           );
         })}
       </div>
+
+      {error && (
+        <div style={styles.errorBox}>
+          <strong>Failure [{error.code}]:</strong> {error.message}
+        </div>
+      )}
     </div>
   );
 };
@@ -165,6 +210,21 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px 8px 4px 26px',
     backgroundColor: 'var(--bg-app)',
     borderRadius: 'var(--radius-sm)',
+    marginTop: '4px',
+  },
+  emptyStateNotice: {
+    fontSize: '11px',
+    color: 'var(--text-muted)',
+    padding: '4px 2px',
+    fontStyle: 'italic',
+  },
+  errorBox: {
+    fontSize: '11px',
+    color: 'var(--accent-red, #ef4444)',
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    border: '1px solid rgba(239, 68, 68, 0.2)',
+    borderRadius: 'var(--radius-sm)',
+    padding: '6px 8px',
     marginTop: '4px',
   },
 };

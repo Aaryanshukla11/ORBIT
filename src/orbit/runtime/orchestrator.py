@@ -102,6 +102,11 @@ from orbit.runtime.models import (
     ModelManager,
     ModelRuntimeAdapter,
 )
+from orbit.runtime.models.models import (
+    CloudProviderKind,
+    ModelGenerateRequest,
+    ModelProviderKind,
+)
 from orbit.runtime.model_runtime import (
     ActiveModelContext,
     ModelActivationRequest,
@@ -203,16 +208,21 @@ class OrbitOrchestrator:
             task_planning_engine=self._task_planning_engine,
             perception_engine=self._perception_engine,
         )
+        cloud_provs = [
+            CloudModelProvider(cloud_kind=CloudProviderKind.OPENAI),
+            CloudModelProvider(cloud_kind=CloudProviderKind.ANTHROPIC),
+            CloudModelProvider(cloud_kind=CloudProviderKind.GEMINI),
+        ]
         self._model_manager = model_manager or ModelManager(
             providers=[OllamaProvider(), LMStudioProvider()],
-            cloud_providers=[CloudModelProvider()],
+            cloud_providers=cloud_provs,
             event_bus=self._event_bus,
         )
         if self._model_manager.event_bus is None:
             self._model_manager.set_event_bus(self._event_bus)
         self._model_session_manager = model_session_manager or ModelSessionManager(
             registry=self._model_manager.registry,
-            providers=self._model_manager.providers,
+            providers=self._model_manager.providers + cloud_provs,
             event_bus=self._event_bus,
             is_task_executing_fn=lambda: self.is_task_executing,
         )
@@ -223,6 +233,7 @@ class OrbitOrchestrator:
         self._diagnostic_service = DiagnosticService(orchestrator=self)
         self._active_cancellation_sources: Dict[str, CancellationSource] = {}
         self._active_execution_tasks: Dict[str, asyncio.Task] = {}
+        self._active_desktop_tasks: Set[str] = set()
         self._lock = asyncio.Lock()
 
     @property
@@ -462,6 +473,13 @@ class OrbitOrchestrator:
 
     def _on_physical_takeover_detected(self, evidence: Optional[Any] = None) -> None:
         """Callback triggered when physical human input is detected."""
+        # Chatbot mode and idle usage: Human takeover is NEVER active when no desktop automation task is running
+        if not self._active_desktop_tasks:
+            return
+
+        if self._system_sm.current_state in {SystemState.IDLE, SystemState.BOOTING}:
+            return
+
         reason = "Physical human input detected"
         source = "human_input"
         if evidence and hasattr(evidence, "reason"):
@@ -476,14 +494,20 @@ class OrbitOrchestrator:
         source: str = "human_input",
     ) -> None:
         """Preempt active execution fail-closed on human takeover."""
+        if not self._active_desktop_tasks:
+            # No desktop automation is active; ignore takeover trigger
+            return
+
         logger.warning("HUMAN TAKEOVER TRIGGERED (%s): %s", source, reason)
         async with self._lock:
             if self._system_sm.can_transition_to(SystemState.HUMAN_TAKEOVER_ACTIVE):
                 self._system_sm.transition_to(SystemState.HUMAN_TAKEOVER_ACTIVE)
 
-            # Cancel active execution tokens
-            for tid, src in list(self._active_cancellation_sources.items()):
-                src.cancel(f"Preempted by human takeover: {reason}")
+            # Cancel only active desktop execution tokens, leaving chatbot conversational turns unaffected
+            for tid in list(self._active_desktop_tasks):
+                src = self._active_cancellation_sources.get(tid)
+                if src:
+                    src.cancel(f"Preempted by human takeover: {reason}")
 
         # Sanitize hardware immediately via safety coordinator
         sft = self.safety
@@ -601,6 +625,10 @@ class OrbitOrchestrator:
         context: Optional[Dict[str, Any]] = None,
     ) -> Task:
         """Submit a new task for validation and background execution."""
+        # If currently locked in HUMAN_TAKEOVER_ACTIVE from prior event, auto-release for the user's new task
+        if self._system_sm.current_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
+            await self.release_takeover()
+
         task = await self._task_manager.create_task(
             session_id=session_id,
             prompt=prompt,
@@ -642,6 +670,10 @@ class OrbitOrchestrator:
         )
 
         # Launch execution in background task
+        is_conversational = bool(context and context.get("conversational"))
+        if not is_conversational:
+            self._active_desktop_tasks.add(task.task_id)
+
         cancel_source = CancellationSource()
         self._active_cancellation_sources[task.task_id] = cancel_source
 
@@ -743,9 +775,62 @@ class OrbitOrchestrator:
                 await self._handle_cancellation(task_id, cancel_token.reason)
                 return
 
-            # Check system state
+            # Conversational Chatbot Mode: Execute pure LLM inference directly without OS desktop side-effects or takeover checks
+            is_conversational = bool(task.metadata and task.metadata.get("conversational"))
+            if is_conversational:
+                await self._task_manager.update_status(task_id, TaskStatus.READY)
+                await self._emit_task_event(task_id, TaskStatus.READY)
+
+                await self._task_manager.update_status(task_id, TaskStatus.RUNNING)
+                await self._emit_task_event(task_id, TaskStatus.RUNNING)
+
+                active_ctx = self._model_session_manager.get_active_context() if hasattr(self._model_session_manager, "get_active_context") else None
+                if active_ctx:
+                    try:
+                        resp = await self._model_session_manager.generate(
+                            ModelGenerateRequest(
+                                prompt=task.prompt,
+                                system_prompt="You are ORBIT, an executive AI desktop co-pilot. Respond directly, politely, and helpfully to the user.",
+                            )
+                        )
+                        rec = await self._history_store.get_record_by_task_id(task_id)
+                        if rec:
+                            rec.status = ExecutionStatus.COMPLETED
+                            rec.completed_at = datetime.now(timezone.utc)
+                            await self._history_store.save_record(rec)
+
+                        await self._task_manager.update_status(task_id, TaskStatus.COMPLETED)
+                        await self._emit_task_event(task_id, TaskStatus.COMPLETED)
+                        await self._emit_event(
+                            EventType.MODEL_GENERATE_RESPONSE,
+                            session_id=session_id,
+                            correlation_id=task_id,
+                            payload={"text": resp.content, "task_id": task_id},
+                        )
+                        return
+                    except Exception as gen_err:
+                        logger.warning("Conversational model generation exception: %s", gen_err)
+                        err_detail = ErrorDetail(code="MODEL_ERROR", message=str(gen_err), recoverable=True)
+                        await self._task_manager.update_status(task_id, TaskStatus.FAILED, error=err_detail)
+                        await self._emit_task_event(task_id, TaskStatus.FAILED, error=err_detail)
+                        return
+                else:
+                    err_detail = ErrorDetail(code="NO_ACTIVE_MODEL", message="No AI model is currently active for chat. Please activate a model in Settings.", recoverable=True)
+                    await self._task_manager.update_status(task_id, TaskStatus.FAILED, error=err_detail)
+                    await self._emit_task_event(task_id, TaskStatus.FAILED, error=err_detail)
+                    return
+
+            # Check system state and ensure ready for execution of autonomous desktop actions
             async with self._lock:
-                if self._system_sm.current_state in {SystemState.HUMAN_TAKEOVER_ACTIVE, SystemState.UNRESOLVED_LOCKED}:
+                if self._system_sm.current_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
+                    tkv = self.takeover
+                    if tkv:
+                        try:
+                            await tkv.reset_takeover_state()
+                        except Exception:
+                            pass
+                    self._system_sm.transition_to(SystemState.IDLE)
+                elif self._system_sm.current_state == SystemState.UNRESOLVED_LOCKED:
                     raise RuntimeError(f"Cannot execute task while in state {self._system_sm.current_state}")
                 self._system_sm.transition_to(SystemState.BUSY)
 
@@ -878,6 +963,35 @@ class OrbitOrchestrator:
                 await self._emit_task_event(task_id, TaskStatus.COMPLETED)
                 return
             else:
+                # Conversational Mode: If conversational intent or Chatbot mode, query active LLM directly
+                if task.metadata.get("conversational"):
+                    active_ctx = self._model_session_manager.get_active_context() if hasattr(self._model_session_manager, "get_active_context") else None
+                    if active_ctx:
+                        try:
+                            resp = await self._model_session_manager.generate(
+                                ModelGenerateRequest(
+                                    prompt=task.prompt,
+                                    system_prompt="You are ORBIT, an executive AI desktop co-pilot. Respond directly, politely, and helpfully to the user.",
+                                )
+                            )
+                            rec = await self._history_store.get_record_by_task_id(task_id)
+                            if rec:
+                                rec.status = ExecutionStatus.COMPLETED
+                                rec.completed_at = datetime.now(timezone.utc)
+                                await self._history_store.save_record(rec)
+
+                            await self._task_manager.update_status(task_id, TaskStatus.COMPLETED)
+                            await self._emit_task_event(task_id, TaskStatus.COMPLETED)
+                            await self._emit_event(
+                                EventType.MODEL_GENERATE_RESPONSE,
+                                session_id=session_id,
+                                correlation_id=task_id,
+                                payload={"text": resp.content, "task_id": task_id},
+                            )
+                            return
+                        except Exception as gen_err:
+                            logger.warning("Conversational model turn exception: %s", gen_err)
+
                 # M1.8: Execute Natural Language Autonomous Task end-to-end via TaskCompletionEngine
                 logger.info("Executing natural language task %s: '%s'", task_id, task.prompt)
                 task_exec_res: TaskExecutionResult = await self._task_completion_engine.execute_task(
@@ -947,9 +1061,12 @@ class OrbitOrchestrator:
                     await self._task_manager.update_status(task_id, TaskStatus.COMPLETED)
                     await self._emit_task_event(task_id, TaskStatus.COMPLETED)
                 else:
+                    err_code = getattr(task_exec_res, "failure_code", "TASK_EXECUTION_FAILED") or "TASK_EXECUTION_FAILED"
+                    err_msg = getattr(task_exec_res, "failure_reason", "Task goal could not be verified or completed") or "Task goal could not be verified or completed"
+                    logger.warning("Task %s failed physical execution: [%s] %s", task_id, err_code, err_msg)
                     err_detail = ErrorDetail(
-                        code=getattr(task_exec_res, "failure_code", "TASK_EXECUTION_FAILED") or "TASK_EXECUTION_FAILED",
-                        message=getattr(task_exec_res, "failure_reason", "Task goal could not be completed") or "Task goal could not be completed",
+                        code=err_code,
+                        message=err_msg,
                         recoverable=False,
                     )
                     terminal_status = (
@@ -974,7 +1091,8 @@ class OrbitOrchestrator:
                 pass
         finally:
             async with self._lock:
-                if self._system_sm.current_state == SystemState.BUSY:
+                self._active_desktop_tasks.discard(task_id)
+                if self._system_sm.current_state == SystemState.BUSY and not self._active_desktop_tasks:
                     self._system_sm.transition_to(SystemState.IDLE)
                 self._active_cancellation_sources.pop(task_id, None)
                 self._active_execution_tasks.pop(task_id, None)

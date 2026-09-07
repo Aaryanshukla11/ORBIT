@@ -1,6 +1,6 @@
 import React from 'react';
 import { ModelItem } from '../../types/models';
-import { useModelManager } from '../../context/ModelManagerContext';
+import { useModelManager, isSameModel } from '../../context/ModelManagerContext';
 import { CheckIcon, CpuChipIcon, AlertTriangleIcon } from '../icons/Icons';
 
 export const LocalModelsList: React.FC = () => {
@@ -19,8 +19,8 @@ export const LocalModelsList: React.FC = () => {
 
       <div style={styles.list}>
         {localModels.map((model) => {
-          const isActive = model.id === activeModelId;
-          const isSwitchingThis = model.id === switchingModelId;
+          const isActive = isSameModel(model.id, activeModelId);
+          const isSwitchingThis = isSameModel(model.id, switchingModelId);
 
           return (
             <div

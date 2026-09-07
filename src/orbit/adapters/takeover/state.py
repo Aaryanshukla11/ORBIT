@@ -185,6 +185,7 @@ class TakeoverStateManager:
                 if self._state == TakeoverState.TAKEOVER_ACTIVE:
                     try:
                         self.transition_to(TakeoverState.RELEASE_PENDING, reason=f"Inactivity quiet period ({self._quiet_period_seconds}s)")
+                        self.transition_to(TakeoverState.MONITORING, reason="Inactivity quiet period ended")
                     except Exception as ex:
                         logger.warning("Quiet period transition failed: %s", ex)
 
