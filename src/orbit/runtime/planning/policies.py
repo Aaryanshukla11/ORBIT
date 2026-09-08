@@ -37,6 +37,8 @@ class PlanningRuleRegistry:
             return self._plan_write_text(intent, preceding_step_id, context_app)
         elif intent.goal == TaskGoal.CLICK_TARGET:
             return self._plan_click_target(intent, preceding_step_id, context_app)
+        elif intent.goal == TaskGoal.CALCULATE:
+            return self._plan_calculate(intent, preceding_step_id, context_app)
         elif intent.goal == TaskGoal.SAVE_DOCUMENT:
             return self._plan_save_document(intent, preceding_step_id, context_app)
         elif intent.goal == TaskGoal.CLOSE_APPLICATION:
@@ -47,6 +49,8 @@ class PlanningRuleRegistry:
             return self._plan_paste_content(intent, preceding_step_id, context_app)
         elif intent.goal == TaskGoal.SEARCH:
             return self._plan_search(intent, preceding_step_id, context_app)
+        elif intent.goal in (TaskGoal.DRAW, TaskGoal.CREATE_DOCUMENT, TaskGoal.INTERACT):
+            return self._plan_draw(intent, preceding_step_id, context_app)
         else:
             return self._plan_unsupported(intent, preceding_step_id)
 
@@ -621,6 +625,225 @@ class PlanningRuleRegistry:
         )
 
         return [step_1, step_2, step_3, step_4]
+
+    def _plan_calculate(
+        self,
+        intent: StructuredTaskIntent,
+        preceding_step_id: Optional[str],
+        context_app: Optional[str],
+    ) -> List[PlanStep]:
+        app_name = intent.constraints.application_name or context_app or "Calculator"
+        tokens: List[str] = intent.constraints.custom_parameters.get("tokens", [])
+        expected_result = intent.constraints.custom_parameters.get("expected_result", "")
+        expression = intent.constraints.content or ""
+        is_ambig = intent.is_ambiguous
+
+        steps: List[PlanStep] = []
+        last_id = preceding_step_id
+
+        # Step 1: Focus Calculator window if preceding step exists
+        if preceding_step_id:
+            step_focus_id = f"step_{uuid4().hex[:6]}"
+            step_focus = PlanStep(
+                step_id=step_focus_id,
+                action_type=PlanActionType.FOCUS_APPLICATION,
+                description=f"Bring '{app_name}' to foreground focus",
+                target=TargetReference(semantic_type="application", identifier=app_name),
+                constraints=intent.constraints,
+                preconditions=[
+                    Precondition(condition_type="window_exists", target=app_name, description=f"Window for '{app_name}' exists")
+                ],
+                postconditions=[
+                    Postcondition(condition_type="window_focused", target=app_name, description=f"Window for '{app_name}' is foreground")
+                ],
+                dependencies=[last_id] if last_id else [],
+                evidence=[f"source_goal: {intent.goal.value}", "planning_rule: FOCUS_APPLICATION_RULE"],
+                is_ambiguous=is_ambig,
+            )
+            steps.append(step_focus)
+            last_id = step_focus_id
+
+        # Step 2..N: Click each calculation token
+        for token in tokens:
+            step_click_id = f"step_{uuid4().hex[:6]}"
+            step_click = PlanStep(
+                step_id=step_click_id,
+                action_type=PlanActionType.ACTIVATE_CONTROL,
+                description=f"Click Calculator button '{token}'",
+                target=TargetReference(semantic_type="ui_control", identifier=token, role="button"),
+                constraints=intent.constraints,
+                dependencies=[last_id] if last_id else [],
+                deferred_grounding=DeferredGroundingRequirement(
+                    strategy_preferences=[
+                        TargetStrategy.ACCESSIBILITY_ELEMENT,
+                        TargetStrategy.OCR_TEXT,
+                        TargetStrategy.VISUAL_TEMPLATE,
+                    ],
+                    target_reference=TargetReference(semantic_type="ui_control", identifier=token, role="button"),
+                    grounding_notes=f"Locate and activate Calculator button '{token}'",
+                ) if not is_ambig else None,
+                evidence=[
+                    f"source_goal: {intent.goal.value}",
+                    f"planning_rule: CALCULATE_CLICK_RULE",
+                    f"button_token: '{token}'",
+                ],
+                is_ambiguous=is_ambig,
+                unresolved_reason=intent.unresolved_reason,
+            )
+            steps.append(step_click)
+            last_id = step_click_id
+
+        # Final Step: Verify calculation result
+        step_verify_id = f"step_{uuid4().hex[:6]}"
+        step_verify = PlanStep(
+            step_id=step_verify_id,
+            action_type=PlanActionType.VERIFY_TARGET_EFFECT,
+            description=f"Verify calculation '{expression}' result matches '{expected_result}'",
+            target=TargetReference(semantic_type="ui_control", identifier="CalculatorResults", role="text"),
+            constraints=intent.constraints,
+            dependencies=[last_id] if last_id else [],
+            evidence=[
+                f"source_goal: {intent.goal.value}",
+                "planning_rule: VERIFY_CALCULATION_RESULT_RULE",
+                f"expected_result: '{expected_result}'",
+            ],
+            is_ambiguous=is_ambig,
+        )
+        steps.append(step_verify)
+
+        return steps
+
+    def _plan_draw(
+        self,
+        intent: StructuredTaskIntent,
+        preceding_step_id: Optional[str],
+        context_app: Optional[str] = None,
+    ) -> List[PlanStep]:
+        app_name = (
+            (intent.constraints.application_name if intent.constraints else None)
+            or context_app
+            or "Paint"
+        )
+        subject = (
+            (intent.constraints.content if intent.constraints else None)
+            or "canvas drawing"
+        )
+        is_ambig = intent.is_ambiguous
+
+        steps: List[PlanStep] = []
+
+        # Step 1: Ensure Paint/Canvas App Open
+        step_1_id = f"step_{uuid4().hex[:6]}"
+        step_1 = PlanStep(
+            step_id=step_1_id,
+            action_type=PlanActionType.ENSURE_APPLICATION_OPEN,
+            description=f"Ensure application '{app_name}' is open and ready for drawing",
+            target=TargetReference(semantic_type="application", identifier=app_name),
+            constraints=intent.constraints,
+            preconditions=[
+                Precondition(
+                    condition_type="application_known",
+                    target=app_name,
+                    description=f"Drawing target application '{app_name}' is identified",
+                )
+            ],
+            postconditions=[
+                Postcondition(
+                    condition_type="application_running",
+                    target=app_name,
+                    description=f"Application '{app_name}' is active and foregrounded",
+                )
+            ],
+            dependencies=[preceding_step_id] if preceding_step_id else [],
+            deferred_grounding=DeferredGroundingRequirement(
+                strategy_preferences=[TargetStrategy.WINDOW_TITLE, TargetStrategy.ACCESSIBILITY_ELEMENT],
+                target_reference=TargetReference(semantic_type="application", identifier=app_name),
+                grounding_notes=f"Locate or launch application '{app_name}'",
+            ),
+            evidence=[
+                f"source_goal: {intent.goal.value}",
+                "planning_rule: DRAW_CANVAS_RULE",
+                f"application_target: '{app_name}'",
+            ],
+            is_ambiguous=is_ambig,
+        )
+        steps.append(step_1)
+
+        # Step 2: Focus Canvas
+        step_2_id = f"step_{uuid4().hex[:6]}"
+        step_2 = PlanStep(
+            step_id=step_2_id,
+            action_type=PlanActionType.LOCATE_INPUT_SURFACE,
+            description=f"Focus drawing canvas in '{app_name}'",
+            target=TargetReference(semantic_type="canvas", identifier=app_name, role="drawing_canvas"),
+            constraints=intent.constraints,
+            preconditions=[
+                Precondition(
+                    condition_type="application_running",
+                    target=app_name,
+                    description=f"Application '{app_name}' is running",
+                )
+            ],
+            postconditions=[
+                Postcondition(
+                    condition_type="canvas_focused",
+                    target="canvas",
+                    description=f"Canvas in '{app_name}' is active and ready for drawing strokes",
+                )
+            ],
+            dependencies=[step_1_id],
+            deferred_grounding=DeferredGroundingRequirement(
+                strategy_preferences=[TargetStrategy.ACCESSIBILITY_ELEMENT, TargetStrategy.WINDOW_TITLE],
+                target_reference=TargetReference(semantic_type="canvas", identifier=app_name),
+                grounding_notes=f"Focus drawing viewport in '{app_name}'",
+            ),
+            evidence=[
+                f"source_goal: {intent.goal.value}",
+                "planning_rule: FOCUS_CANVAS_RULE",
+                f"drawing_subject: '{subject}'",
+            ],
+            is_ambiguous=is_ambig,
+        )
+        steps.append(step_2)
+
+        # Step 3: Draw Canvas Strokes
+        step_3_id = f"step_{uuid4().hex[:6]}"
+        step_3 = PlanStep(
+            step_id=step_3_id,
+            action_type=PlanActionType.ACTIVATE_CONTROL,
+            description=f"Execute drawing strokes for '{subject}' on canvas",
+            target=TargetReference(semantic_type="canvas", identifier=app_name),
+            constraints=intent.constraints,
+            preconditions=[
+                Precondition(
+                    condition_type="canvas_focused",
+                    target="canvas",
+                    description="Drawing canvas is ready",
+                )
+            ],
+            postconditions=[
+                Postcondition(
+                    condition_type="canvas_modified",
+                    target="canvas",
+                    description=f"Drawing strokes for '{subject}' rendered on canvas",
+                )
+            ],
+            dependencies=[step_2_id],
+            deferred_grounding=DeferredGroundingRequirement(
+                strategy_preferences=[TargetStrategy.ACCESSIBILITY_ELEMENT, TargetStrategy.WINDOW_TITLE],
+                target_reference=TargetReference(semantic_type="canvas", identifier=app_name),
+                grounding_notes=f"Perform drawing interaction for '{subject}'",
+            ),
+            evidence=[
+                f"source_goal: {intent.goal.value}",
+                "planning_rule: EXECUTE_DRAW_STROKES_RULE",
+                f"subject: '{subject}'",
+            ],
+            is_ambiguous=is_ambig,
+        )
+        steps.append(step_3)
+
+        return steps
 
     def _plan_unsupported(
         self,

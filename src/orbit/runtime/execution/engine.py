@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+from ctypes import wintypes
 import logging
 import sys
 import time
@@ -11,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from orbit.adapters.observation.snapshot import ObservationSnapshot
 from orbit.adapters.registry import CapabilityRegistry
+from orbit.config import is_human_takeover_enabled
 from orbit.contracts.capabilities import (
     CapabilityType,
     EmergencySafetyCoordinator,
@@ -21,6 +23,7 @@ from orbit.contracts.capabilities import (
     WorkspaceCapability,
 )
 from orbit.contracts.runtime import SystemState
+
 from orbit.infrastructure.clock import Clock, SystemClock
 from orbit.infrastructure.event_bus import EventBus
 from orbit.runtime.cancellation import CancellationSource, CancellationToken
@@ -146,9 +149,8 @@ class ClosedLoopExecutionEngine:
 
     async def is_human_takeover_active(self) -> bool:
         """Check whether human takeover is active via system state or takeover adapter."""
-        if self._system_state_getter:
-            if self._system_state_getter() == SystemState.HUMAN_TAKEOVER_ACTIVE:
-                return True
+        if not is_human_takeover_enabled():
+            return False
         tkv = self.takeover
         if tkv and hasattr(tkv, "is_takeover_active"):
             res = tkv.is_takeover_active()
@@ -156,7 +158,11 @@ class ClosedLoopExecutionEngine:
             if inspect.isawaitable(res):
                 return await res
             return bool(res)
+        if self._system_state_getter:
+            if self._system_state_getter() == SystemState.HUMAN_TAKEOVER_ACTIVE:
+                return True
         return False
+
 
     async def capture_observation_snapshot(self, target_hwnd: Optional[int] = None) -> Optional[ObservationSnapshot]:
         """Safely capture a desktop observation snapshot."""
@@ -250,6 +256,10 @@ class ClosedLoopExecutionEngine:
             policy = ExecutionPolicy(
                 allow_inconclusive_as_success=(expected_outcome is None),
             )
+        elif isinstance(policy, dict):
+            policy = ExecutionPolicy(**policy)
+            if expected_outcome is None and not policy.allow_inconclusive_as_success:
+                policy = policy.model_copy(update={"allow_inconclusive_as_success": True})
         elif expected_outcome is None and not policy.allow_inconclusive_as_success:
             policy = policy.model_copy(update={"allow_inconclusive_as_success": True})
 
@@ -544,7 +554,8 @@ class ClosedLoopExecutionEngine:
                     target_hwnd = action_params.get("target_hwnd", target_intent.target_hwnd) or target.target_hwnd or (target.evidence.raw_metadata.get("hwnd") if target.evidence else None)
                     if target_hwnd and sys.platform == "win32":
                         try:
-                            ctypes.windll.user32.SetForegroundWindow(int(target_hwnd))
+                            from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                            EvidenceBasedTargetLocator._force_foreground_window(int(target_hwnd))
                         except Exception:
                             pass
                     last_dispatch_stage, _ = await self._dispatch_gate.execute_guarded(
@@ -582,6 +593,13 @@ class ClosedLoopExecutionEngine:
                             verification_result=last_verification_result,
                             resolved_target=target,
                         )
+                    target_hwnd = action_params.get("target_hwnd", target_intent.target_hwnd) or target.target_hwnd or (target.evidence.raw_metadata.get("hwnd") if target.evidence else None)
+                    if target_hwnd and sys.platform == "win32":
+                        try:
+                            from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                            EvidenceBasedTargetLocator._force_foreground_window(int(target_hwnd))
+                        except Exception:
+                            pass
                     last_dispatch_stage, _ = await self._dispatch_gate.execute_guarded(
                         "pointer_move",
                         context,
@@ -617,6 +635,12 @@ class ClosedLoopExecutionEngine:
                         )
                     text = action_params.get("text", "")
                     target_hwnd = action_params.get("target_hwnd", target_intent.target_hwnd) or target.target_hwnd or (target.evidence.raw_metadata.get("hwnd") if target.evidence else None)
+                    if target_hwnd and sys.platform == "win32":
+                        try:
+                            from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                            EvidenceBasedTargetLocator._force_foreground_window(int(target_hwnd))
+                        except Exception:
+                            pass
                     last_dispatch_stage, _ = await self._dispatch_gate.execute_guarded(
                         "type_text",
                         context,
@@ -651,7 +675,13 @@ class ClosedLoopExecutionEngine:
                             resolved_target=target,
                         )
                     comb = action_params.get("combination", "ctrl+s")
-                    target_hwnd = action_params.get("target_hwnd", target_intent.target_hwnd)
+                    target_hwnd = action_params.get("target_hwnd", target_intent.target_hwnd) or target.target_hwnd or (target.evidence.raw_metadata.get("hwnd") if target.evidence else None)
+                    if target_hwnd and sys.platform == "win32":
+                        try:
+                            from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                            EvidenceBasedTargetLocator._force_foreground_window(int(target_hwnd))
+                        except Exception:
+                            pass
                     last_dispatch_stage, _ = await self._dispatch_gate.execute_guarded(
                         "press_shortcut",
                         context,
@@ -667,6 +697,13 @@ class ClosedLoopExecutionEngine:
                     )
                 elif action_type == "observe":
                     last_dispatch_stage = DispatchStage.NOT_DISPATCHED
+                    target_hwnd = action_params.get("target_hwnd", target_intent.target_hwnd) or target.target_hwnd or (target.evidence.raw_metadata.get("hwnd") if target.evidence else None)
+                    if target_hwnd and sys.platform == "win32":
+                        try:
+                            from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                            EvidenceBasedTargetLocator._force_foreground_window(int(target_hwnd))
+                        except Exception:
+                            pass
             except PreemptionSafetyError as pse:
                 logger.warning("Action dispatch preempted by safety gate: %s", pse.message)
                 return self._create_preempted_result(
@@ -735,7 +772,8 @@ class ClosedLoopExecutionEngine:
 
             # 6. Phase: RE_OBSERVING (Boundary 7)
             sm.transition_to(ExecutionState.RE_OBSERVING, "Capturing fresh post-action observation")
-            post_snapshot = await self.capture_observation_snapshot(target_hwnd=target_intent.target_hwnd)
+            eff_hwnd = target_intent.target_hwnd or (target.target_hwnd if target else None)
+            post_snapshot = await self.capture_observation_snapshot(target_hwnd=eff_hwnd)
 
             # Post-Re-Observe Preemption Guard (Boundary 8)
             if context.is_cancelled or await context.is_takeover_active():

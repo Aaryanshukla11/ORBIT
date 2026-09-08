@@ -91,7 +91,7 @@ class TaskStateMachine:
     """Manages individual task progression lifecycle states."""
 
     _VALID_TRANSITIONS: Dict[TaskStatus, Set[TaskStatus]] = {
-        TaskStatus.CREATED: {TaskStatus.QUEUED, TaskStatus.VALIDATING, TaskStatus.READY, TaskStatus.RUNNING, TaskStatus.CANCELLED},
+        TaskStatus.CREATED: {TaskStatus.QUEUED, TaskStatus.VALIDATING, TaskStatus.READY, TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED},
         TaskStatus.QUEUED: {TaskStatus.VALIDATING, TaskStatus.READY, TaskStatus.RUNNING, TaskStatus.CANCELLED},
         TaskStatus.VALIDATING: {TaskStatus.READY, TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.CANCELLED},
         TaskStatus.READY: {TaskStatus.RUNNING, TaskStatus.CANCELLED, TaskStatus.PAUSED, TaskStatus.FAILED},

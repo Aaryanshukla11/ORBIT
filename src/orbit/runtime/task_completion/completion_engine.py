@@ -64,6 +64,7 @@ class TaskCompletionEngine:
         perception_engine: Optional[SemanticPerceptionEngine] = None,
         goal_verifier: Optional[GoalVerifier] = None,
         evidence_collector: Optional[CompletionEvidenceCollector] = None,
+        model_session_manager: Optional[Any] = None,
     ) -> None:
         self._plan_executor = plan_executor
         self._obs = observation
@@ -75,6 +76,14 @@ class TaskCompletionEngine:
             perception_engine=self._perception_engine,
             evidence_collector=self._evidence_collector,
         )
+        self._model_session_manager = model_session_manager
+
+    @property
+    def model_session_manager(self) -> Optional[Any]:
+        return self._model_session_manager
+
+    def set_model_session_manager(self, msm: Any) -> None:
+        self._model_session_manager = msm
 
     @property
     def plan_executor(self) -> PlanExecutor:
@@ -110,6 +119,9 @@ class TaskCompletionEngine:
         t_start = time.perf_counter()
         start_utc = datetime.now(timezone.utc)
         effective_task_id = task_id or f"task_{uuid4().hex[:8]}"
+
+        if policy is not None and isinstance(policy, dict):
+            policy = ExecutionPolicy(**policy)
 
         logger.info("TaskCompletionEngine starting task %s: '%s'", effective_task_id, goal)
 
@@ -192,13 +204,122 @@ class TaskCompletionEngine:
                 t_start=t_start,
             )
 
+        if context and context.get("understand_only"):
+            evidence = self._evidence_collector.build_evidence(snapshot=pre_snapshot)
+            verif_res = GoalVerificationResult(
+                status=TaskCompletionStatus.FAILED,
+                is_completed=False,
+                failure_reason="Task halted after understanding phase (understand_only=True)",
+                failure_code="UNDERSTAND_ONLY",
+                evidence=evidence,
+            )
+            return self._build_result(
+                task_id=effective_task_id,
+                session_id=session_id,
+                goal=goal,
+                understanding=understanding,
+                plan=None,
+                plan_result=None,
+                verification_result=verif_res,
+                start_utc=start_utc,
+                t_start=t_start,
+            )
+
+        # 1.5. Phase 1.5: Generative Content Resolution (Hybrid Intelligence)
+        for intent in understanding.intents:
+            if intent.constraints and intent.constraints.is_generative and not intent.constraints.content:
+                prompt_to_generate = intent.constraints.generation_prompt or goal
+                logger.info("Resolving generative content for intent %s: '%s'", intent.intent_id, prompt_to_generate)
+
+                msm = self._model_session_manager
+                if msm is not None and not msm.is_model_active():
+                    # Attempt auto-activation of first available model
+                    try:
+                        reg = getattr(msm, "_registry", None)
+                        if reg and hasattr(reg, "list_models"):
+                            avail = await reg.list_models()
+                            if avail:
+                                await msm.activate_model(avail[0].model_id)
+                    except Exception as act_err:
+                        logger.warning("Auto-activation attempt during generative task resolution: %s", act_err)
+
+                if msm is None or not msm.is_model_active():
+                    err_msg = "Task requires AI model generation, but no AI model is active or reachable in ORBIT"
+                    evidence = self._evidence_collector.build_evidence(
+                        snapshot=pre_snapshot,
+                        diagnostics={"understanding_status": understanding.status.value, "error": err_msg},
+                    )
+                    verif_res = GoalVerificationResult(
+                        status=TaskCompletionStatus.FAILED,
+                        is_completed=False,
+                        failure_reason=err_msg,
+                        failure_code="NO_ACTIVE_MODEL",
+                        evidence=evidence,
+                    )
+                    return self._build_result(
+                        task_id=effective_task_id,
+                        session_id=session_id,
+                        goal=goal,
+                        understanding=understanding,
+                        plan=None,
+                        plan_result=None,
+                        verification_result=verif_res,
+                        start_utc=start_utc,
+                        t_start=t_start,
+                    )
+
+                try:
+                    from orbit.runtime.models.models import ModelGenerateRequest
+                    gen_req = ModelGenerateRequest(
+                        prompt=prompt_to_generate,
+                        system_prompt=(
+                            "You are an AI assistant in an autonomous Windows desktop agent. "
+                            "Generate clear, concise, directly usable text according to the user request. "
+                            "Do NOT include markdown code blocks, backticks, conversational preamble, "
+                            "or meta-commentary unless explicitly requested. Provide only the text to be typed."
+                        ),
+                        temperature=0.7,
+                        max_tokens=256,
+                    )
+                    gen_resp = await msm.generate(gen_req)
+                    gen_text = (gen_resp.content or "").strip()
+                    if not gen_text:
+                        raise RuntimeError(f"Model '{gen_resp.model_id}' returned empty generation")
+                    intent.constraints.content = gen_text
+                    intent.evidence.append(f"generated content via active model '{gen_resp.model_id}': {gen_text[:60]}...")
+                    logger.info("Successfully generated %d characters for task %s via model %s", len(gen_text), effective_task_id, gen_resp.model_id)
+                except Exception as gen_err:
+                    err_msg = f"Model generation failed: {gen_err}"
+                    evidence = self._evidence_collector.build_evidence(
+                        snapshot=pre_snapshot,
+                        diagnostics={"understanding_status": understanding.status.value, "error": err_msg},
+                    )
+                    verif_res = GoalVerificationResult(
+                        status=TaskCompletionStatus.FAILED,
+                        is_completed=False,
+                        failure_reason=err_msg,
+                        failure_code="MODEL_GENERATION_FAILED",
+                        evidence=evidence,
+                    )
+                    return self._build_result(
+                        task_id=effective_task_id,
+                        session_id=session_id,
+                        goal=goal,
+                        understanding=understanding,
+                        plan=None,
+                        plan_result=None,
+                        verification_result=verif_res,
+                        start_utc=start_utc,
+                        t_start=t_start,
+                    )
+
         # 2. Phase 2: Task Planning
         plan: ExecutableTaskPlan = self._task_planning.plan_task(
             understanding=understanding,
             task_id=effective_task_id,
         )
 
-        if not plan.is_valid or plan.status.value in {"UNSUPPORTED", "INVALID", "FAILED"}:
+        if not plan.is_valid or plan.status.value in {"UNSUPPORTED", "INVALID", "FAILED", "AMBIGUOUS"}:
             err_msg = (
                 "; ".join(plan.unresolved_items)
                 if plan.unresolved_items
@@ -214,6 +335,27 @@ class TaskCompletionEngine:
                 is_completed=False,
                 failure_reason=err_msg,
                 failure_code=f"PLANNING_{plan.status.value}",
+                evidence=evidence,
+            )
+            return self._build_result(
+                task_id=effective_task_id,
+                session_id=session_id,
+                goal=goal,
+                understanding=understanding,
+                plan=plan,
+                plan_result=None,
+                verification_result=verif_res,
+                start_utc=start_utc,
+                t_start=t_start,
+            )
+
+        if context and context.get("plan_only"):
+            evidence = self._evidence_collector.build_evidence(snapshot=pre_snapshot)
+            verif_res = GoalVerificationResult(
+                status=TaskCompletionStatus.FAILED,
+                is_completed=False,
+                failure_reason="Task halted after planning phase (plan_only=True)",
+                failure_code="PLAN_ONLY",
                 evidence=evidence,
             )
             return self._build_result(

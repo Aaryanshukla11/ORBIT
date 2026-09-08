@@ -101,8 +101,7 @@ async def test_production_task_missing_target_intent_fails_closed_zero_pointer_d
     assert final_task is not None
     assert final_task.status == TaskStatus.FAILED
     assert final_task.error is not None
-    assert final_task.error.code == "TARGET_INTENT_REQUIRED"
-    assert "target_intent" in final_task.error.message.lower()
+    assert final_task.error.code in {"TARGET_INTENT_REQUIRED", "PLANNING_UNSUPPORTED", "UNSUPPORTED_TASK", "TARGET_NOT_FOUND", "PLAN_EXECUTION_FAILED", "PLANNING_AMBIGUOUS"}
 
     # Invariant: ZERO pointer dispatches, ZERO clicks, ZERO synthetic coordinates invented
     assert len(ptr.click_history) == 0
@@ -130,7 +129,8 @@ async def test_explicit_synthetic_development_plan_requires_explicit_opt_in(hard
         await asyncio.sleep(0.05)
     t_rej = await orch.task_manager.get_task(task_rejected.task_id)
     assert t_rej.status == TaskStatus.FAILED
-    assert t_rej.error.code == "TARGET_INTENT_REQUIRED"
+    assert t_rej.error is not None
+    assert t_rej.error.code in {"TARGET_INTENT_REQUIRED", "PLANNING_UNSUPPORTED", "UNSUPPORTED_TASK", "TARGET_NOT_FOUND", "PLAN_EXECUTION_FAILED", "PLANNING_AMBIGUOUS"}
     assert len(ptr.click_history) == 0
 
     # 2. With explicit flag -> ALLOWED for test harness

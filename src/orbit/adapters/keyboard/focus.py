@@ -14,6 +14,50 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
+
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
+
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
+
+    user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+    user32.AllowSetForegroundWindow.restype = wintypes.BOOL
+
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+
+    user32.BringWindowToTop.argtypes = [wintypes.HWND]
+    user32.BringWindowToTop.restype = wintypes.BOOL
+
+    user32.SetFocus.argtypes = [wintypes.HWND]
+    user32.SetFocus.restype = wintypes.HWND
+
+    user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+    user32.AttachThreadInput.restype = wintypes.BOOL
+
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+
+
 @dataclass(frozen=True)
 class TargetContext:
     target_hwnd: int = 0
@@ -37,7 +81,72 @@ class TargetFocusValidator:
             return True
         if sys.platform != "win32":
             return True
-        return bool(ctypes.windll.user32.IsWindow(hwnd))
+        return bool(user32.IsWindow(hwnd))
+
+    @staticmethod
+    def ensure_foreground(expected_hwnd: int) -> bool:
+        """Forces the window to the foreground using Win32 AttachThreadInput and ShowWindow."""
+        if expected_hwnd == 0:
+            return True
+        if sys.platform != "win32":
+            return True
+        try:
+            if not user32.IsWindow(expected_hwnd):
+                return False
+
+            root_hwnd = user32.GetAncestor(expected_hwnd, 2)  # GA_ROOT = 2
+            if not root_hwnd or not user32.IsWindow(root_hwnd):
+                root_hwnd = expected_hwnd
+
+            SW_RESTORE = 9
+            SW_SHOW = 5
+            if user32.IsIconic(root_hwnd):
+                user32.ShowWindow(root_hwnd, SW_RESTORE)
+            else:
+                user32.ShowWindow(root_hwnd, SW_SHOW)
+
+            fg_hwnd = user32.GetForegroundWindow()
+            if fg_hwnd == root_hwnd or fg_hwnd == expected_hwnd or TargetFocusValidator.is_foreground(expected_hwnd):
+                return True
+
+            cur_thread = kernel32.GetCurrentThreadId()
+            fg_thread = user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
+            target_thread = user32.GetWindowThreadProcessId(root_hwnd, None)
+
+            if cur_thread != target_thread and target_thread:
+                user32.AttachThreadInput(cur_thread, target_thread, True)
+            if cur_thread != fg_thread and fg_thread:
+                user32.AttachThreadInput(cur_thread, fg_thread, True)
+
+            # Grant foreground lock bypass
+            try:
+                user32.AllowSetForegroundWindow(0xFFFFFFFF)  # ASFW_ANY
+            except Exception:
+                pass
+
+            # Bypass Windows SetForegroundWindow lock using Alt key simulation
+            VK_MENU = 0x12
+            KEYEVENTF_KEYUP = 0x0002
+            user32.keybd_event(VK_MENU, 0, 0, 0)
+            user32.SetForegroundWindow(root_hwnd)
+            user32.BringWindowToTop(root_hwnd)
+            user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+
+            if expected_hwnd != root_hwnd and user32.IsWindow(expected_hwnd):
+                user32.SetFocus(expected_hwnd)
+            else:
+                user32.SetFocus(root_hwnd)
+
+            if cur_thread != target_thread and target_thread:
+                user32.AttachThreadInput(cur_thread, target_thread, False)
+            if cur_thread != fg_thread and fg_thread:
+                user32.AttachThreadInput(cur_thread, fg_thread, False)
+
+            time.sleep(0.05)
+            return TargetFocusValidator.is_foreground(expected_hwnd)
+        except Exception as ex:
+            logger.debug("ensure_foreground encountered error: %s", ex)
+            return False
 
     @staticmethod
     def is_foreground(expected_hwnd: int) -> bool:
@@ -46,24 +155,35 @@ class TargetFocusValidator:
             return True
         if sys.platform != "win32":
             return True
-        current_fg = ctypes.windll.user32.GetForegroundWindow()
-        if current_fg == expected_hwnd:
+        if not user32.IsWindow(expected_hwnd):
+            return False
+
+        root_hwnd = user32.GetAncestor(expected_hwnd, 2)  # GA_ROOT = 2
+        if not root_hwnd or not user32.IsWindow(root_hwnd):
+            root_hwnd = expected_hwnd
+
+        current_fg = user32.GetForegroundWindow()
+        if not current_fg:
+            return bool(user32.IsWindowVisible(root_hwnd))
+
+        if current_fg == expected_hwnd or current_fg == root_hwnd:
             return True
-        # Check root ancestor (GA_ROOT = 2, GA_ROOTOWNER = 3)
-        if hasattr(ctypes.windll.user32, "GetAncestor"):
-            if ctypes.windll.user32.GetAncestor(current_fg, 2) == expected_hwnd:
-                return True
-            if ctypes.windll.user32.GetAncestor(current_fg, 3) == expected_hwnd:
-                return True
-            if ctypes.windll.user32.GetAncestor(expected_hwnd, 2) == current_fg:
-                return True
-        # Check process ID match
+
+        fg_root = user32.GetAncestor(current_fg, 2)
+        if not fg_root or not user32.IsWindow(fg_root):
+            fg_root = current_fg
+
+        if fg_root == root_hwnd or fg_root == expected_hwnd:
+            return True
+
+        # Check process ID match between foreground and target hierarchy
         pid_fg = wintypes.DWORD(0)
         pid_exp = wintypes.DWORD(0)
-        ctypes.windll.user32.GetWindowThreadProcessId(current_fg, ctypes.byref(pid_fg))
-        ctypes.windll.user32.GetWindowThreadProcessId(expected_hwnd, ctypes.byref(pid_exp))
+        user32.GetWindowThreadProcessId(fg_root, ctypes.byref(pid_fg))
+        user32.GetWindowThreadProcessId(root_hwnd, ctypes.byref(pid_exp))
         if pid_fg.value > 0 and pid_fg.value == pid_exp.value:
             return True
+
         return False
 
     def capture_target_context(self, hwnd: Optional[int] = None) -> TargetContext:

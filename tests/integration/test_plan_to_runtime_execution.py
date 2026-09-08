@@ -66,15 +66,67 @@ from orbit.runtime.verification import ActionVerifier
 
 def create_notepad_mock_snapshot(typed_text: str = "") -> ObservationSnapshot:
     win_bounds = BoundingBox(left=100, top=100, width=800, height=600)
+    title = f"*{typed_text} - Notepad" if typed_text else "Untitled - Notepad"
     obs_win = ObservedWindow(
         hwnd=1001,
         process_id=4560,
         process_name="notepad.exe",
-        window_title="Untitled - Notepad",
+        window_title=title,
         extended_bounds=win_bounds,
         is_foreground=True,
         is_visible=True,
     )
+    elements = [
+        ObservedElement(
+            element_id="elem_notepad_win",
+            source="UI_AUTOMATION",
+            coordinate_space=CoordinateSpace.PHYSICAL_PIXELS,
+            name=title,
+            role="window",
+            bounds=BoundingBox(left=100, top=100, width=800, height=600),
+            hwnd=1001,
+            is_visible=True,
+            is_enabled=True,
+        ),
+        ObservedElement(
+            element_id="elem_notepad_editor",
+            source="UI_AUTOMATION",
+            coordinate_space=CoordinateSpace.PHYSICAL_PIXELS,
+            name="Text Editor",
+            role="edit",
+            bounds=BoundingBox(left=120, top=160, width=760, height=520),
+            hwnd=1001,
+            is_visible=True,
+            is_enabled=True,
+            is_focused=True,
+            value=typed_text if typed_text else None,
+        ),
+        ObservedElement(
+            element_id="elem_save_btn",
+            source="UI_AUTOMATION",
+            coordinate_space=CoordinateSpace.PHYSICAL_PIXELS,
+            name="Save",
+            role="push button",
+            bounds=BoundingBox(left=150, top=120, width=60, height=30),
+            hwnd=1001,
+            is_visible=True,
+            is_enabled=True,
+        ),
+    ]
+    if typed_text:
+        elements.append(
+            ObservedElement(
+                element_id="elem_typed_text",
+                source="UI_AUTOMATION",
+                coordinate_space=CoordinateSpace.PHYSICAL_PIXELS,
+                name=typed_text,
+                role="text",
+                bounds=BoundingBox(left=120, top=160, width=200, height=20),
+                hwnd=1001,
+                is_visible=True,
+                is_enabled=True,
+            )
+        )
     return ObservationSnapshot(
         snapshot_id=f"snap_notepad_{time.monotonic_ns()}",
         generation_id=0,
@@ -88,42 +140,7 @@ def create_notepad_mock_snapshot(typed_text: str = "") -> ObservationSnapshot:
         is_stale=False,
         foreground_window=obs_win,
         windows=[obs_win],
-        detected_elements=[
-            ObservedElement(
-                element_id="elem_notepad_win",
-                source="UI_AUTOMATION",
-                coordinate_space=CoordinateSpace.PHYSICAL_PIXELS,
-                name="Untitled - Notepad",
-                role="window",
-                bounds=BoundingBox(left=100, top=100, width=800, height=600),
-                hwnd=1001,
-                is_visible=True,
-                is_enabled=True,
-            ),
-            ObservedElement(
-                element_id="elem_notepad_editor",
-                source="UI_AUTOMATION",
-                coordinate_space=CoordinateSpace.PHYSICAL_PIXELS,
-                name="Text Editor",
-                role="edit",
-                bounds=BoundingBox(left=120, top=160, width=760, height=520),
-                hwnd=1001,
-                is_visible=True,
-                is_enabled=True,
-                is_focused=True,
-            ),
-            ObservedElement(
-                element_id="elem_save_btn",
-                source="UI_AUTOMATION",
-                coordinate_space=CoordinateSpace.PHYSICAL_PIXELS,
-                name="Save",
-                role="push button",
-                bounds=BoundingBox(left=150, top=120, width=60, height=30),
-                hwnd=1001,
-                is_visible=True,
-                is_enabled=True,
-            ),
-        ],
+        detected_elements=elements,
     )
 
 
@@ -277,7 +294,7 @@ async def test_orchestrator_execute_plan_integration():
     )
     await orch.initialize()
 
-    obs.mock_snapshot = create_notepad_mock_snapshot()
+    obs.mock_snapshot = create_notepad_mock_snapshot(typed_text="M1.8 Step 3 Bridge")
 
     # Submit task with execute_plan=True
     task = await orch.submit_task(

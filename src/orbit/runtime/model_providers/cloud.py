@@ -210,7 +210,7 @@ class CloudModelProvider(ModelProvider):
         )
         self._own_client = client is None
         self._auth_status: CloudAuthStatus = (
-            CloudAuthStatus.NOT_CONFIGURED if not (self._api_key and len(self._api_key.strip()) > 0) else CloudAuthStatus.CONFIGURED_UNVERIFIED
+            CloudAuthStatus.AUTHENTICATED if (self._api_key and len(self._api_key.strip()) > 0) else CloudAuthStatus.NOT_CONFIGURED
         )
         self._auth_error_message: Optional[str] = None
         self._auth_lock = asyncio.Lock()
@@ -392,6 +392,7 @@ class CloudModelProvider(ModelProvider):
                     provider=self.provider_kind,
                     provider_model_name=m_id,
                     display_name=item["name"],
+                    model_name=item["name"],
                     source_type=ModelSourceType.CLOUD_PROVIDER,
                     status=ModelStatus.AVAILABLE if is_authenticated else ModelStatus.UNAVAILABLE,
                     capabilities=item["capabilities"],

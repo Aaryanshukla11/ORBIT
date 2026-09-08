@@ -194,109 +194,94 @@ class ProductionObservationAdapter(BaseCapabilityAdapter, ObservationCapability)
 
             # Execute capture pipeline in worker thread
             def _do_snapshot() -> Any:
+                com_inited = False
                 if sys.platform == "win32":
                     try:
-                        ctypes.windll.ole32.CoInitializeEx(None, 0)
+                        hr = ctypes.windll.ole32.CoInitializeEx(None, 0)
+                        com_inited = (hr in (0, 1))
                     except Exception:
                         pass
-                from app_types import ConfidenceLevel 
-                bounds = self._coord_mapper.get_virtual_desktop_bounds()
-                fg_win = self._window_tracker.get_foreground_window_observation()
-                active_hwnd = target_hwnd or (fg_win.hwnd if fg_win else 0)
-                if target_hwnd and fg_win and target_hwnd != fg_win.hwnd:
-                    active_win = self._window_tracker.get_window_observation(target_hwnd)
-                else:
-                    active_win = fg_win
-
-                # Check if active_hwnd belongs to the current process to prevent COM/MSAA cross-thread deadlock
-                import os
-                is_local_process_window = False
-                if active_hwnd and sys.platform == "win32":
-                    pid = wintypes.DWORD(0)
-                    ctypes.windll.user32.GetWindowThreadProcessId(active_hwnd, ctypes.byref(pid))
-                    if pid.value == os.getpid():
-                        is_local_process_window = True
-
-                # Window observations with comprehensive thread desktop and input desktop enumeration
-                raw_windows = list(self._window_tracker.enumerate_visible_windows())
-                if sys.platform == "win32":
-                    ctypes.windll.user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
-                    ctypes.windll.user32.GetWindowRect.restype = wintypes.BOOL
-                    ctypes.windll.user32.IsWindowVisible.argtypes = [wintypes.HWND]
-                    ctypes.windll.user32.IsWindowVisible.restype = wintypes.BOOL
-                    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-                    ctypes.windll.user32.EnumDesktopWindows.argtypes = [wintypes.HANDLE, WNDENUMPROC, wintypes.LPARAM]
-                    ctypes.windll.user32.EnumDesktopWindows.restype = wintypes.BOOL
-                    known_hwnds = {w.hwnd for w in raw_windows}
-
-                    def _desk_enum_cb(h, _):
-                        if h not in known_hwnds and ctypes.windll.user32.IsWindowVisible(h):
-                            r = wintypes.RECT()
-                            if ctypes.windll.user32.GetWindowRect(h, ctypes.byref(r)):
-                                if (r.right - r.left) > 0 and (r.bottom - r.top) > 0:
-                                    obs_w = self._window_tracker.get_window_observation(h, z_order_rank=len(raw_windows))
-                                    raw_windows.append(obs_w)
-                                    known_hwnds.add(h)
-                        return True
-
-                    cb = WNDENUMPROC(_desk_enum_cb)
-                    # 1. Enumerate calling thread desktop
-                    hdesk_thread = ctypes.windll.user32.GetThreadDesktop(ctypes.windll.kernel32.GetCurrentThreadId())
-                    if hdesk_thread:
-                        ctypes.windll.user32.EnumDesktopWindows(hdesk_thread, cb, 0)
-
-                    # 2. Enumerate interactive input desktop
-                    hdesk_input = ctypes.windll.user32.OpenInputDesktop(0, False, 0x01FF)
-                    if hdesk_input:
-                        try:
-                            ctypes.windll.user32.EnumDesktopWindows(hdesk_input, cb, 0)
-                        finally:
-                            ctypes.windll.user32.CloseDesktop(hdesk_input)
-                windows = tuple(raw_windows)
-
-                # Accessibility observations: only query when an explicit target_hwnd is specified and valid
-                acc_hwnd = target_hwnd if (target_hwnd and not is_local_process_window) else 0
-                elements, prov_results = ((), ())
-                if acc_hwnd:
-                    try:
-                        elements, prov_results = self._acc_coordinator.collect_accessibility_observations(
-                            hwnd=acc_hwnd,
-                            generation_id=self._freshness_tracker.current_generation,
-                        )
-                    except Exception as acc_ex:
-                        self.health_tracker.record_failure("ACC_COORDINATOR", str(acc_ex))
-                        elements, prov_results = ((), ())
-
-                # Record individual provider health results
-                for pres in prov_results:
-                    if hasattr(pres, "status") and getattr(pres.status, "value", str(pres.status)) == "SUCCESS":
-                        self.health_tracker.record_success(pres.provider_name, getattr(pres, "duration_ms", 0.0))
+                try:
+                    from app_types import ConfidenceLevel 
+                    bounds = self._coord_mapper.get_virtual_desktop_bounds()
+                    fg_win = self._window_tracker.get_foreground_window_observation()
+                    active_hwnd = target_hwnd or (fg_win.hwnd if fg_win else 0)
+                    if target_hwnd and fg_win and target_hwnd != fg_win.hwnd:
+                        active_win = self._window_tracker.get_window_observation(target_hwnd)
                     else:
-                        err = getattr(pres, "error_message", "Error") or "Error"
-                        self.health_tracker.record_failure(getattr(pres, "provider_name", "UNKNOWN"), str(err))
+                        active_win = fg_win
 
-                # Determine snapshot confidence
-                conf = ConfidenceLevel.CONFIRMED if (active_win and elements) else ConfidenceLevel.PARTIALLY_CONFIRMED
+                    # Check if active_hwnd belongs to the current process to prevent COM/MSAA cross-thread deadlock
+                    import os
+                    is_local_process_window = False
+                    if active_hwnd and sys.platform == "win32":
+                        pid = wintypes.DWORD(0)
+                        ctypes.windll.user32.GetWindowThreadProcessId(active_hwnd, ctypes.byref(pid))
+                        if pid.value == os.getpid():
+                            is_local_process_window = True
 
-                # Build Prototype D snapshot
-                proto_snap = self._freshness_tracker.build_snapshot(
-                    snapshot_id=snapshot_id,
-                    capture_duration_ms=round((time.perf_counter() - t0) * 1000.0, 2),
-                    desktop_geometry=bounds,
-                    foreground_window=active_win,
-                    windows=windows,
-                    visual_evidence=(),
-                    accessibility_evidence=elements,
-                    detected_targets=(),
-                    confidence=conf,
-                    conflicts=(),
-                )
-                return proto_snap
+                    # Window observations from WindowTracker (handles thread and input desktop enumeration)
+                    windows = tuple(self._window_tracker.enumerate_visible_windows())
 
-            proto_snap = await asyncio.to_thread(_do_snapshot)
+                    # Accessibility observations: query explicit target_hwnd or fallback to active foreground window
+                    acc_hwnd = target_hwnd if (target_hwnd and not is_local_process_window) else (active_hwnd if (active_hwnd and not is_local_process_window) else 0)
+                    elements, prov_results = ((), ())
+                    if acc_hwnd:
+                        try:
+                            elements, prov_results = self._acc_coordinator.collect_accessibility_observations(
+                                hwnd=acc_hwnd,
+                                generation_id=self._freshness_tracker.current_generation,
+                            )
+                        except Exception as acc_ex:
+                            self.health_tracker.record_failure("ACC_COORDINATOR", str(acc_ex))
+                            elements, prov_results = ((), ())
+
+                    # Record individual provider health results
+                    for pres in prov_results:
+                        if hasattr(pres, "status") and getattr(pres.status, "value", str(pres.status)) == "SUCCESS":
+                            self.health_tracker.record_success(pres.provider_name, getattr(pres, "duration_ms", 0.0))
+                        else:
+                            err = getattr(pres, "error_message", "Error") or "Error"
+                            self.health_tracker.record_failure(getattr(pres, "provider_name", "UNKNOWN"), str(err))
+
+                    # Determine snapshot confidence
+                    conf = ConfidenceLevel.CONFIRMED if (active_win and elements) else ConfidenceLevel.PARTIALLY_CONFIRMED
+
+                    # Capture live screenshot for visual/OCR pipelines
+                    img = None
+                    try:
+                        img, _, _ = self._capture_engine.capture_full_desktop()
+                    except Exception as cap_err:
+                        logger.debug("Desktop screenshot capture skipped: %s", cap_err)
+
+                    # Build Prototype D snapshot
+                    proto_snap = self._freshness_tracker.build_snapshot(
+                        snapshot_id=snapshot_id,
+                        capture_duration_ms=round((time.perf_counter() - t0) * 1000.0, 2),
+                        desktop_geometry=bounds,
+                        foreground_window=active_win,
+                        windows=windows,
+                        visual_evidence=(),
+                        accessibility_evidence=elements,
+                        detected_targets=(),
+                        confidence=conf,
+                        conflicts=(),
+                    )
+                    return proto_snap, img
+                finally:
+                    if com_inited and sys.platform == "win32":
+                        try:
+                            ctypes.windll.ole32.CoUninitialize()
+                        except Exception:
+                            pass
+
+            proto_snap, img = await asyncio.to_thread(_do_snapshot)
 
             # Map to production contract
             mapped_snap = map_prototype_snapshot(proto_snap, snapshot_id=snapshot_id)
+            if img is not None:
+                mapped_snap.telemetry["screenshot"] = img
+                mapped_snap.telemetry["image"] = img
 
             # Evaluate freshness
             fresh_state, is_stale, inv_reason = self.freshness_evaluator.evaluate_freshness(

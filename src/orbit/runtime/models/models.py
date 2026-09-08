@@ -318,6 +318,11 @@ class ModelGenerateResponse(BaseModel):
         description="Raw untransformed provider response dictionary",
     )
 
+    @property
+    def text(self) -> str:
+        """Alias for content."""
+        return self.content
+
 
 class LocalModelFileDescriptor(BaseModel):
     """Safe metadata collected from candidate local model files without loading weights."""

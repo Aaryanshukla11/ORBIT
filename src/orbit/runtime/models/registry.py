@@ -52,20 +52,16 @@ class ModelRegistry:
 
             # 3. Match stripping provider prefix or matching provider_model_name
             clean_id = model_id.split(":", 1)[-1].lower()
-            last_part = model_id.split(":")[-1].lower()
             for k, v in self._models.items():
                 k_clean = k.split(":", 1)[-1].lower()
-                k_last = k.split(":")[-1].lower()
-                if k_clean == clean_id or k_last == last_part or k_clean == last_part or k_last == clean_id:
-                    return v
-                if v.provider_model_name.lower() in (mid_lower, clean_id, last_part):
+                v_pname = (v.provider_model_name or "").lower()
+                if k_clean == clean_id or v_pname == clean_id or v_pname == mid_lower:
                     return v
 
-            # 4. Check if this is a Cloud Model (OpenAI, Anthropic, Gemini, DeepSeek, etc.)
+            # 4. Check if this is a known curated Cloud Model
             is_cloud = (
                 mid_lower.startswith(("cloud:", "openai:", "anthropic:", "gemini:", "google:", "deepseek:", "custom:"))
                 or clean_id.startswith(("gpt-", "o1-", "o1", "o3-", "claude-", "gemini-", "deepseek-", "text-embedding-"))
-                or last_part.startswith(("gpt-", "o1-", "o1", "o3-", "claude-", "gemini-", "deepseek-", "text-embedding-"))
             )
 
             if is_cloud:
@@ -93,53 +89,31 @@ class ModelRegistry:
                             matched_item = item
                             break
 
-                    display_name = matched_item["name"] if matched_item else clean_id.replace("-", " ").title()
-                    raw_name = matched_item["id"] if matched_item else last_part
-                    caps = matched_item.get("capabilities") if matched_item else {ModelCapability.TEXT_GENERATION, ModelCapability.CHAT, ModelCapability.CODE}
-                    ctx = matched_item.get("context_window", 128000) if matched_item else 128000
-                    fam = matched_item.get("family", "cloud") if matched_item else "cloud"
+                    if matched_item is not None:
+                        display_name = matched_item["name"]
+                        raw_name = matched_item["id"]
+                        caps = matched_item.get("capabilities", {ModelCapability.TEXT_GENERATION, ModelCapability.CHAT, ModelCapability.CODE})
+                        ctx = matched_item.get("context_window", 128000)
+                        fam = matched_item.get("family", "cloud")
 
-                    synth_id = f"cloud:{c_kind.value.lower()}:{raw_name}"
-                    synth_desc = ModelDescriptor(
-                        model_id=synth_id,
-                        provider=p_kind,
-                        provider_model_name=raw_name,
-                        display_name=display_name,
-                        source_type=ModelSourceType.CLOUD_PROVIDER,
-                        status=ModelStatus.AVAILABLE,
-                        capabilities=caps,
-                        context_window=ctx,
-                        family=fam,
-                        local_or_remote="remote",
-                    )
-                    self._models[synth_id] = synth_desc
-                    self._models[model_id] = synth_desc
-                    return synth_desc
+                        synth_id = f"cloud:{c_kind.value.lower()}:{raw_name}"
+                        synth_desc = ModelDescriptor(
+                            model_id=synth_id,
+                            provider=p_kind,
+                            provider_model_name=raw_name,
+                            display_name=display_name,
+                            source_type=ModelSourceType.CLOUD_PROVIDER,
+                            status=ModelStatus.AVAILABLE,
+                            capabilities=caps,
+                            context_window=ctx,
+                            family=fam,
+                            local_or_remote="remote",
+                        )
+                        self._models[synth_id] = synth_desc
+                        self._models[model_id] = synth_desc
+                        return synth_desc
                 except Exception:
                     pass
-
-            # 5. Local Ollama synthesis ONLY if it's explicitly local / not a cloud model
-            if not is_cloud:
-                from orbit.runtime.models.models import ModelSourceType
-                from orbit.runtime.models.capabilities import infer_capabilities
-
-                raw_name = model_id.split(":", 1)[-1] if "ollama" in mid_lower else model_id
-                synth_id = f"ollama:{raw_name}"
-                synth_desc = ModelDescriptor(
-                    model_id=synth_id,
-                    provider=ModelProviderKind.OLLAMA,
-                    provider_model_name=raw_name,
-                    display_name=raw_name,
-                    source_type=ModelSourceType.LOCAL_RUNTIME,
-                    status=ModelStatus.AVAILABLE,
-                    capabilities=infer_capabilities(raw_name),
-                    context_window=32768,
-                    family="Ollama",
-                    local_or_remote="local",
-                )
-                self._models[synth_id] = synth_desc
-                self._models[model_id] = synth_desc
-                return synth_desc
 
             return None
 

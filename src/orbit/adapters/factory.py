@@ -62,7 +62,10 @@ def create_capability_registry(config: Optional[RuntimeConfig] = None) -> Capabi
     if tkv_mode == AdapterMode.MOCK:
         registry.register(CapabilityType.HUMAN_TAKEOVER, MockHumanTakeoverAdapter())
     else:
-        registry.register(CapabilityType.HUMAN_TAKEOVER, ProductionHumanTakeoverAdapter())
+        registry.register(
+            CapabilityType.HUMAN_TAKEOVER,
+            ProductionHumanTakeoverAdapter(human_takeover_enabled=cfg.human_takeover_enabled),
+        )
 
     # 5. Workspace Capability
     wsp_mode = cfg.get_mode_for(CapabilityType.WORKSPACE)

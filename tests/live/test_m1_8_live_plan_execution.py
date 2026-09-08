@@ -181,78 +181,79 @@ async def test_live_controlled_gui_plan_execution():
 
     Epistemic Classification: LIVE_OS_VALIDATED
     """
-    bus = EventBus()
-    obs = ProductionObservationAdapter(default_ttl_ms=1500.0)
-    wsp = ProductionWorkspaceAdapter()
-    ptr = ProductionPointerAdapter()
-    locator = EvidenceBasedTargetLocator()
-    verifier = ActionVerifier()
+    with spawn_isolated_test_window("ORBIT Controlled Plan Window") as target_app:
+        bus = EventBus()
+        obs = ProductionObservationAdapter(default_ttl_ms=1500.0)
+        wsp = ProductionWorkspaceAdapter()
+        ptr = ProductionPointerAdapter()
+        locator = EvidenceBasedTargetLocator()
+        verifier = ActionVerifier()
 
-    await obs.initialize()
-    await wsp.initialize()
-    await ptr.initialize()
+        await obs.initialize()
+        await wsp.initialize()
+        await ptr.initialize()
 
-    try:
-        engine = ClosedLoopExecutionEngine(
-            observation=obs,
-            pointer=ptr,
-            workspace=wsp,
-            target_locator=locator,
-            action_verifier=verifier,
-            event_bus=bus,
-            clock=SystemClock(),
-        )
-        executor = PlanExecutor(execution_engine=engine, event_bus=bus)
+        try:
+            engine = ClosedLoopExecutionEngine(
+                observation=obs,
+                pointer=ptr,
+                workspace=wsp,
+                target_locator=locator,
+                action_verifier=verifier,
+                event_bus=bus,
+                clock=SystemClock(),
+            )
+            executor = PlanExecutor(execution_engine=engine, event_bus=bus)
 
-        # Build multi-step plan targeting the active IDE window
-        step1 = PlanStep(
-            step_id="step_open",
-            step_index=0,
-            action_type=PlanActionType.ENSURE_APPLICATION_OPEN,
-            description="Ensure Antigravity IDE is open",
-            target=TargetReference(semantic_type="application", identifier="Antigravity IDE"),
-            dependencies=[],
-        )
-        step2 = PlanStep(
-            step_id="step_verify",
-            step_index=1,
-            action_type=PlanActionType.VERIFY_APPLICATION_AVAILABLE,
-            description="Verify Antigravity IDE is available",
-            target=TargetReference(semantic_type="application", identifier="Antigravity IDE"),
-            dependencies=["step_open"],
-        )
+            # Build multi-step plan targeting the test window
+            step1 = PlanStep(
+                step_id="step_open",
+                step_index=0,
+                action_type=PlanActionType.ENSURE_APPLICATION_OPEN,
+                description=f"Ensure {target_app} is open",
+                target=TargetReference(semantic_type="application", identifier=target_app),
+                dependencies=[],
+            )
+            step2 = PlanStep(
+                step_id="step_verify",
+                step_index=1,
+                action_type=PlanActionType.VERIFY_APPLICATION_AVAILABLE,
+                description=f"Verify {target_app} is available",
+                target=TargetReference(semantic_type="application", identifier=target_app),
+                dependencies=["step_open"],
+            )
 
-        plan = ExecutableTaskPlan(
-            plan_id="plan_live_ide",
-            task_id="task_live_ide",
-            description="Verify live Antigravity IDE window",
-            status=PlanStatus.VALID,
-            steps=[step1, step2],
-            step_dependencies={"step_open": [], "step_verify": ["step_open"]},
-        )
+            plan = ExecutableTaskPlan(
+                plan_id="plan_live_ide",
+                task_id="task_live_ide",
+                description="Verify live window",
+                status=PlanStatus.VALID,
+                steps=[step1, step2],
+                step_dependencies={"step_open": [], "step_verify": ["step_open"]},
+            )
 
-        # Step 3: Execute plan against live desktop
-        result: PlanExecutionResult = await executor.execute_plan(
-            plan=plan,
-            session_id="session_live_step3",
-            policy=ExecutionPolicy(max_total_attempts=2, allow_inconclusive_as_success=True),
-        )
+            # Step 3: Execute plan against live desktop
+            result: PlanExecutionResult = await executor.execute_plan(
+                plan=plan,
+                session_id="session_live_step3",
+                policy=ExecutionPolicy(max_total_attempts=2, allow_inconclusive_as_success=True),
+            )
 
-        assert result.is_success is True
-        assert result.final_status == PlanExecutionStatus.SUCCEEDED
-        assert result.completed_steps == 2
-        assert result.failed_steps == 0
-        assert result.blocked_steps == 0
+            assert result.is_success is True
+            assert result.final_status == PlanExecutionStatus.SUCCEEDED
+            assert result.completed_steps == 2
+            assert result.failed_steps == 0
+            assert result.blocked_steps == 0
 
-        # Verify that physical coordinates were resolved against live desktop
-        first_resolved = next((r.resolved_target for r in result.step_results if r.resolved_target is not None), None)
-        assert first_resolved is not None
-        assert first_resolved.safe_point.x >= 0
-        assert first_resolved.safe_point.y >= 0
-    finally:
-        await ptr.shutdown()
-        await wsp.shutdown()
-        await obs.shutdown()
+            # Verify that physical coordinates were resolved against live desktop
+            first_resolved = next((r.resolved_target for r in result.step_results if r.resolved_target is not None), None)
+            assert first_resolved is not None
+            assert first_resolved.safe_point.x >= 0
+            assert first_resolved.safe_point.y >= 0
+        finally:
+            await ptr.shutdown()
+            await wsp.shutdown()
+            await obs.shutdown()
 
 
 @pytest.mark.asyncio

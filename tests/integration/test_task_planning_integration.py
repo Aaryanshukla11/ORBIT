@@ -85,6 +85,7 @@ async def test_end_to_end_natural_language_to_plan_attaches_to_task(orchestrator
     task = await orch.submit_task(
         session_id="sess_plan_1",
         prompt="Open Notepad and type 'M1.8 Step 2 Plan Integration' and click Save",
+        context={"plan_only": True},
     )
 
     for _ in range(50):

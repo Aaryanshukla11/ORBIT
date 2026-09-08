@@ -97,3 +97,5 @@ class TaskPlanningEngine:
         plan.explanation = self._explainer.explain_plan(plan)
 
         return plan
+
+    plan = plan_task

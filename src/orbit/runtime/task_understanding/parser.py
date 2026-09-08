@@ -109,11 +109,15 @@ class DeterministicTaskParser:
         if self._matches_open(clause_lower):
             return self._parse_open_clause(clause, clause_lower, seq_index, literals, is_negated, negation_details, evidence)
 
-        # 2. WRITE_TEXT / TYPE_TEXT
+        # 2. CALCULATE
+        if self._matches_calculate(clause_lower):
+            return self._parse_calculate_clause(clause, clause_lower, seq_index, literals, inherited_app, is_negated, negation_details, evidence)
+
+        # 3. WRITE_TEXT / TYPE_TEXT
         if self._matches_write(clause_lower):
             return self._parse_write_clause(clause, clause_lower, seq_index, literals, inherited_app, is_negated, negation_details, evidence)
 
-        # 3. CLICK_TARGET
+        # 4. CLICK_TARGET
         if self._matches_click(clause_lower):
             return self._parse_click_clause(clause, clause_lower, seq_index, literals, inherited_app, is_negated, negation_details, evidence)
 
@@ -149,6 +153,10 @@ class DeterministicTaskParser:
         if self._matches_navigate(clause_lower):
             return self._parse_navigate_clause(clause, clause_lower, seq_index, literals, inherited_app, is_negated, negation_details, evidence)
 
+        # 12. DRAW (Canvas / Drawing actions)
+        if self._matches_draw(clause_lower):
+            return self._parse_draw_clause(clause, clause_lower, seq_index, literals, inherited_app, is_negated, negation_details, evidence)
+
         # UNKNOWN / UNSUPPORTED
         evidence.append(f"unrecognized task clause: '{clause}'")
         unsupported_intent = StructuredTaskIntent(
@@ -175,8 +183,17 @@ class DeterministicTaskParser:
     def _matches_open(self, text: str) -> bool:
         return bool(re.search(r"\b(open|launch|start|run)\b", text))
 
+    def _matches_draw(self, text: str) -> bool:
+        return bool(re.search(r"\b(draw|paint|sketch|illustrate|scribble|doodle|color|render)\b", text))
+
+    def _matches_calculate(self, text: str) -> bool:
+        return bool(
+            re.search(r"\b(calculate|compute|multiply|divide|add|subtract|sum|eval|evaluate)\b", text)
+            or re.search(r"\b\d+\s*[\+\-\*\/×÷x]\s*\d+\b", text)
+        )
+
     def _matches_write(self, text: str) -> bool:
-        return bool(re.search(r"\b(type|write|enter|input)\b", text))
+        return bool(re.search(r"\b(type|write|enter|input|compose|draft|generate)\b", text))
 
     def _matches_click(self, text: str) -> bool:
         return bool(re.search(r"\b(click|press|tap|activate|push)\b", text))
@@ -319,15 +336,17 @@ class DeterministicTaskParser:
 
         # Look for literal placeholder first
         extracted_content = None
+        has_quoted_literal = False
         for key, val in literals.items():
             if key in clause:
                 extracted_content = val
+                has_quoted_literal = True
                 evidence.append(f"preserved exact quoted user content: '{val}'")
                 break
 
         # If no literal quotes found, extract trailing text after keyword
         if extracted_content is None and not is_negated:
-            m = re.search(r"\b(?:type|write|enter|input):?(?:\s+the\s+following\s+text:?|\s+text:?|\s+into\s+[a-zA-Z0-9_\-]+:?|:)?\s*(.*)$", clause, re.IGNORECASE)
+            m = re.search(r"\b(?:type|write|enter|input|compose|draft|generate):?(?:\s+the\s+following\s+text:?|\s+text:?|\s+into\s+[a-zA-Z0-9_\-]+:?|:)?\s*(.*)$", clause, re.IGNORECASE)
             if m and m.group(1).strip():
                 raw_payload = m.group(1).strip()
                 if raw_payload.startswith(":"):
@@ -335,9 +354,27 @@ class DeterministicTaskParser:
                 extracted_content = self._normalizer.restore_literal(raw_payload, literals)
                 evidence.append(f"extracted unquoted literal text payload: '{extracted_content}'")
 
+        # Classify Generative Intent vs Literal Typing
+        is_generative = False
+        generation_prompt: Optional[str] = None
+        if not has_quoted_literal and extracted_content and not is_negated:
+            content_lower = extracted_content.lower()
+            clause_starts_generative = bool(re.search(r"^(?:compose|draft|generate)\b", clause_lower.strip()))
+            has_generative_topic = bool(re.search(r"\b(about|on|explaining|regarding|summarizing|describing|discussing|for)\b", content_lower))
+            has_generative_noun = bool(re.search(r"\b(lines?|paragraphs?|sentences?|words?|essays?|poems?|articles?|emails?|letters?|summary|summaries|overview|notes|haiku|story|stories|code|bullet\s+points?)\b", content_lower))
+            
+            if clause_starts_generative or (has_generative_topic and has_generative_noun) or (has_generative_topic and len(content_lower.split()) > 3):
+                is_generative = True
+                if not content_lower.startswith(("write", "draft", "compose", "generate", "create")):
+                    generation_prompt = f"Write {extracted_content}"
+                else:
+                    generation_prompt = extracted_content
+                evidence.append(f"classified generative content request with prompt: '{generation_prompt}'")
+                extracted_content = None
+
         is_ambiguous = False
         unresolved_reason = None
-        if not is_negated and (extracted_content is None or not extracted_content.strip()):
+        if not is_negated and not is_generative and (extracted_content is None or not extracted_content.strip()):
             is_ambiguous = True
             unresolved_reason = "Missing text content to type"
             evidence.append("flagged missing content payload")
@@ -356,6 +393,8 @@ class DeterministicTaskParser:
             constraints=TaskConstraints(
                 application_name=inherited_app,
                 content=extracted_content,
+                is_generative=is_generative,
+                generation_prompt=generation_prompt,
                 is_negated=is_negated,
                 negation_details=negation_details,
             ),
@@ -720,3 +759,173 @@ class DeterministicTaskParser:
             unresolved_reason="Missing destination location" if not dest else None,
         )
         return intent, None
+
+    def _parse_calculate_clause(
+        self, clause: str, clause_lower: str, seq_index: int, literals: Dict[str, str],
+        inherited_app: Optional[str], is_negated: bool, negation_details: Optional[str], evidence: List[str]
+    ) -> Tuple[StructuredTaskIntent, Optional[str]]:
+        evidence.append("matched arithmetic calculation request")
+
+        expr_raw = None
+        m_expr = re.search(r"(\d+(?:\.\d+)?)\s*([\+\-\*\/×÷x]|times|multiplied\s+by|plus|minus|divided\s+by)\s*(\d+(?:\.\d+)?)", clause_lower)
+        if m_expr:
+            op_left = m_expr.group(1)
+            op_symbol = m_expr.group(2).strip()
+            op_right = m_expr.group(3)
+            
+            op_map = {
+                "×": "*", "x": "*", "*": "*", "times": "*", "multiplied by": "*",
+                "+": "+", "plus": "+",
+                "-": "-", "minus": "-",
+                "÷": "/", "/": "/", "divided by": "/",
+            }
+            standard_op = op_map.get(op_symbol, "*")
+            expr_raw = f"{op_left} {standard_op} {op_right}"
+        else:
+            m_verb = re.search(r"\b(multiply|divide|add|subtract)\s+(\d+(?:\.\d+)?)\s+(?:by|and|from|with)\s+(\d+(?:\.\d+)?)", clause_lower)
+            if m_verb:
+                verb = m_verb.group(1)
+                num1 = m_verb.group(2)
+                num2 = m_verb.group(3)
+                if verb == "multiply":
+                    expr_raw = f"{num1} * {num2}"
+                elif verb == "divide":
+                    expr_raw = f"{num1} / {num2}"
+                elif verb == "add":
+                    expr_raw = f"{num1} + {num2}"
+                elif verb == "subtract":
+                    expr_raw = f"{num1} - {num2}"
+
+        tokens: List[str] = []
+        expected_result_str: Optional[str] = None
+        expected_result_raw: Optional[str] = None
+
+        if expr_raw:
+            parts = expr_raw.split()
+            if len(parts) == 3:
+                left_num, op, right_num = parts
+                for ch in left_num:
+                    tokens.append(ch)
+                tokens.append(op)
+                for ch in right_num:
+                    tokens.append(ch)
+                tokens.append("=")
+                
+                try:
+                    num_l = float(left_num) if "." in left_num else int(left_num)
+                    num_r = float(right_num) if "." in right_num else int(right_num)
+                    if op == "*":
+                        val = num_l * num_r
+                    elif op == "+":
+                        val = num_l + num_r
+                    elif op == "-":
+                        val = num_l - num_r
+                    elif op == "/":
+                        val = num_l / num_r if num_r != 0 else 0
+                    else:
+                        val = 0
+                    
+                    if isinstance(val, float) and val.is_integer():
+                        val = int(val)
+                    
+                    expected_result_raw = str(val)
+                    if isinstance(val, int):
+                        expected_result_str = f"{val:,}"
+                    else:
+                        expected_result_str = str(val)
+                except Exception as eval_err:
+                    evidence.append(f"failed to compute exact math result: {eval_err}")
+        else:
+            expr_raw = clause.strip()
+            tokens = [c for c in re.findall(r"\d+|[\+\-\*\/=]", clause_lower)]
+
+        target_app = inherited_app or "Calculator"
+        target = TargetReference(
+            semantic_type="application",
+            identifier=target_app,
+            role="window",
+            is_ambiguous=False,
+        )
+
+        intent = StructuredTaskIntent(
+            sequence_index=seq_index,
+            goal=TaskGoal.CALCULATE if tokens else TaskGoal.UNSUPPORTED,
+            target=target,
+            constraints=TaskConstraints(
+                application_name=target_app,
+                content=expr_raw,
+                custom_parameters={
+                    "expression": expr_raw,
+                    "tokens": tokens,
+                    "expected_result": expected_result_str or expected_result_raw,
+                    "expected_result_raw": expected_result_raw,
+                },
+                is_negated=is_negated,
+                negation_details=negation_details,
+            ),
+            evidence=evidence + [
+                f"extracted expression: '{expr_raw}'",
+                f"button click tokens: {tokens}",
+                f"expected result: '{expected_result_str or expected_result_raw}'",
+            ],
+            is_negated=is_negated,
+            is_ambiguous=not bool(tokens),
+            unresolved_reason="Could not extract arithmetic expression tokens" if not tokens else None,
+        )
+        return intent, target_app
+
+    def _parse_draw_clause(
+        self,
+        clause: str,
+        clause_lower: str,
+        seq_index: int,
+        literals: Dict[str, str],
+        inherited_app: Optional[str],
+        is_negated: bool,
+        negation_details: Optional[str],
+        evidence: List[str],
+    ) -> Tuple[StructuredTaskIntent, Optional[str]]:
+        evidence.append("matched drawing/canvas action 'draw/paint/sketch'")
+
+        # Discover application name if mentioned, or inherit/default to Paint
+        app_name = inherited_app
+        for key, canonical_name in self.KNOWN_APPLICATIONS.items():
+            if re.search(rf"\b{re.escape(key)}\b", clause_lower):
+                app_name = canonical_name
+                break
+        if not app_name:
+            app_name = "Paint"
+
+        # Extract drawing subject / description (e.g., "a stickman with a gun")
+        draw_subject = None
+        m = re.search(r"\b(?:draw|paint|sketch|illustrate|scribble|doodle|color|render)\s+(.+)$", clause_lower)
+        if m:
+            raw_subj = m.group(1).strip()
+            # Strip trailing target app name if attached (e.g. "a stickman in paint")
+            raw_subj = re.sub(r"\s+(?:in|on|with|using)\s+(?:mspaint|paint|canvas|photoshop)$", "", raw_subj, flags=re.IGNORECASE)
+            draw_subject = self._normalizer.restore_literal(raw_subj, literals)
+            evidence.append(f"extracted drawing subject '{draw_subject}'")
+
+        target = TargetReference(
+            semantic_type="canvas",
+            identifier=app_name,
+            role="drawing_canvas",
+            is_ambiguous=False,
+        )
+
+        intent = StructuredTaskIntent(
+            sequence_index=seq_index,
+            goal=TaskGoal.DRAW,
+            target=target,
+            constraints=TaskConstraints(
+                application_name=app_name,
+                content=draw_subject,
+                custom_parameters={"subject": draw_subject},
+                is_negated=is_negated,
+                negation_details=negation_details,
+            ),
+            evidence=evidence,
+            is_negated=is_negated,
+            is_ambiguous=False,
+        )
+        return intent, app_name

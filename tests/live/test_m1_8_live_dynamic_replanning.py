@@ -114,83 +114,83 @@ async def test_live_controlled_gui_dynamic_replanning_and_execution():
 
     Epistemic Classification: LIVE_OS_VALIDATED
     """
-    target_app = "Antigravity IDE"
-    bus = EventBus()
-    obs = ProductionObservationAdapter(default_ttl_ms=1500.0)
-    wsp = ProductionWorkspaceAdapter()
-    ptr = ProductionPointerAdapter()
-    locator = EvidenceBasedTargetLocator()
-    verifier = ActionVerifier()
+    with launch_live_replan_gui_fixture() as target_app:
+        bus = EventBus()
+        obs = ProductionObservationAdapter(default_ttl_ms=1500.0)
+        wsp = ProductionWorkspaceAdapter()
+        ptr = ProductionPointerAdapter()
+        locator = EvidenceBasedTargetLocator()
+        verifier = ActionVerifier()
 
-    await obs.initialize()
-    await wsp.initialize()
-    await ptr.initialize()
+        await obs.initialize()
+        await wsp.initialize()
+        await ptr.initialize()
 
-    reg = CapabilityRegistry()
-    reg.register(CapabilityType.OBSERVATION, obs)
-    reg.register(CapabilityType.WORKSPACE, wsp)
-    reg.register(CapabilityType.POINTER, ptr)
+        reg = CapabilityRegistry()
+        reg.register(CapabilityType.OBSERVATION, obs)
+        reg.register(CapabilityType.WORKSPACE, wsp)
+        reg.register(CapabilityType.POINTER, ptr)
 
-    try:
-        replanner = DynamicReplanner(
-            observation=obs,
-            budget=ReplanBudget(max_global_replans=3, max_step_replans=2),
-        )
+        try:
+            replanner = DynamicReplanner(
+                observation=obs,
+                budget=ReplanBudget(max_global_replans=3, max_step_replans=2),
+            )
 
-        engine = ClosedLoopExecutionEngine(
-            capability_registry=reg,
-            target_locator=locator,
-            action_verifier=verifier,
-            event_bus=bus,
-            clock=SystemClock(),
-        )
+            engine = ClosedLoopExecutionEngine(
+                capability_registry=reg,
+                target_locator=locator,
+                action_verifier=verifier,
+                event_bus=bus,
+                clock=SystemClock(),
+            )
 
-        executor = PlanExecutor(
-            execution_engine=engine,
-            replanner=replanner,
-            event_bus=bus,
-        )
+            executor = PlanExecutor(
+                execution_engine=engine,
+                replanner=replanner,
+                event_bus=bus,
+            )
 
-        step1 = PlanStep(
-            step_id="step_open_gui",
-            step_index=0,
-            action_type=PlanActionType.ENSURE_APPLICATION_OPEN,
-            description=f"Ensure {target_app} is open",
-            target=TargetReference(semantic_type="application", identifier=target_app),
-            dependencies=[],
-        )
-        step2 = PlanStep(
-            step_id="step_verify_gui",
-            step_index=1,
-            action_type=PlanActionType.VERIFY_APPLICATION_AVAILABLE,
-            description=f"Verify {target_app} is available",
-            target=TargetReference(semantic_type="application", identifier=target_app),
-            dependencies=["step_open_gui"],
-        )
+            step1 = PlanStep(
+                step_id="step_open_gui",
+                step_index=0,
+                action_type=PlanActionType.ENSURE_APPLICATION_OPEN,
+                description=f"Ensure {target_app} is open",
+                target=TargetReference(semantic_type="application", identifier=target_app),
+                dependencies=[],
+            )
+            step2 = PlanStep(
+                step_id="step_verify_gui",
+                step_index=1,
+                action_type=PlanActionType.VERIFY_APPLICATION_AVAILABLE,
+                description=f"Verify {target_app} is available",
+                target=TargetReference(semantic_type="application", identifier=target_app),
+                dependencies=["step_open_gui"],
+            )
 
-        plan = ExecutableTaskPlan(
-            plan_id="plan_live_replan_gui",
-            task_id="task_live_replan_gui",
-            description="Live GUI replan execution test",
-            status=PlanStatus.VALID,
-            steps=[step1, step2],
-            step_dependencies={"step_open_gui": [], "step_verify_gui": ["step_open_gui"]},
-        )
+            plan = ExecutableTaskPlan(
+                plan_id="plan_live_replan_gui",
+                task_id="task_live_replan_gui",
+                description="Live GUI replan execution test",
+                status=PlanStatus.VALID,
+                steps=[step1, step2],
+                step_dependencies={"step_open_gui": [], "step_verify_gui": ["step_open_gui"]},
+            )
 
-        result: PlanExecutionResult = await executor.execute_plan(
-            plan=plan,
-            session_id="sess_live_replan_1",
-            policy=ExecutionPolicy(max_total_attempts=2, allow_inconclusive_as_success=True),
-        )
+            result: PlanExecutionResult = await executor.execute_plan(
+                plan=plan,
+                session_id="sess_live_replan_1",
+                policy=ExecutionPolicy(max_total_attempts=2, allow_inconclusive_as_success=True),
+            )
 
-        assert result.is_success is True
-        assert result.final_status == PlanExecutionStatus.SUCCEEDED
-        assert result.completed_steps == 2
-        assert result.failed_steps == 0
-    finally:
-        await ptr.shutdown()
-        await wsp.shutdown()
-        await obs.shutdown()
+            assert result.is_success is True
+            assert result.final_status == PlanExecutionStatus.SUCCEEDED
+            assert result.completed_steps == 2
+            assert result.failed_steps == 0
+        finally:
+            await ptr.shutdown()
+            await wsp.shutdown()
+            await obs.shutdown()
 
 
 @pytest.mark.asyncio

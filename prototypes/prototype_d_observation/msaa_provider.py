@@ -23,6 +23,8 @@ from app_types import (
 ole32 = ctypes.windll.ole32
 oleacc = ctypes.windll.oleacc
 user32 = ctypes.windll.user32
+user32.IsWindow.argtypes = [wintypes.HWND]
+user32.IsWindow.restype = wintypes.BOOL
 
 # GUID Struct
 class GUID(ctypes.Structure):
@@ -91,6 +93,15 @@ ROLE_NAMES = {
 }
 
 
+def _release_com(ptr: Optional[int]) -> None:
+    if ptr:
+        try:
+            vtable = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+            ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)(vtable[2])(ptr)
+        except Exception:
+            pass
+
+
 class MSAAProvider:
     """
     Independent MSAA / IAccessible observation driver.
@@ -157,6 +168,7 @@ class MSAAProvider:
             )
         except Exception as e:
             t1 = time.perf_counter()
+            _release_com(pAcc.value)
             return ProviderResult(
                 provider_name="MSAA",
                 status=ProviderStatus.PARTIAL_SUCCESS if elements else ProviderStatus.FAILED,
@@ -168,6 +180,8 @@ class MSAAProvider:
                 error_message=str(e),
                 worker_state="EXIT_CONFIRMED",
             )
+        finally:
+            _release_com(pAcc.value)
 
         t1 = time.perf_counter()
         duration_ms = round((t1 - t0) * 1000.0, 2)
@@ -278,25 +292,73 @@ class MSAAProvider:
                 )
                 elements_out.append(elem)
 
-            # Traverse Children via AccessibleChildren if count > 0
-            if count > 0 and depth < max_depth:
-                var_array = (VARIANT * count)()
+            # Traverse Children via AccessibleChildren if safe_count > 0
+            safe_count = min(max(0, count), 64)
+            if safe_count > 0 and depth < max_depth:
+                var_array = (VARIANT * safe_count)()
                 obtained = wintypes.LONG(0)
-                hr_child = oleacc.AccessibleChildren(pAcc_ptr, 0, count, ctypes.byref(var_array), ctypes.byref(obtained))
+                hr_child = oleacc.AccessibleChildren(pAcc_ptr, 0, safe_count, ctypes.byref(var_array), ctypes.byref(obtained))
                 if hr_child == 0:
-                    for i in range(obtained.value):
+                    for i in range(min(obtained.value, safe_count)):
                         if cancellation_event and cancellation_event.is_set():
                             break
                         v = var_array[i]
                         if v.vt == VT_DISPATCH and v.pdispVal:
-                            self._traverse_node(
-                                pAcc_ptr=v.pdispVal,
-                                depth=depth + 1,
-                                max_depth=max_depth,
-                                hwnd=hwnd,
-                                generation_id=generation_id,
-                                elements_out=elements_out,
-                                cancellation_event=cancellation_event,
-                            )
+                            try:
+                                vtable_disp = ctypes.cast(v.pdispVal, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+                                QI = ctypes.WINFUNCTYPE(wintypes.LONG, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))(vtable_disp[0])
+                                pChildAcc = ctypes.c_void_p()
+                                hr_qi = QI(v.pdispVal, ctypes.byref(IID_IAccessible), ctypes.byref(pChildAcc))
+                                if hr_qi == 0 and pChildAcc.value:
+                                    try:
+                                        self._traverse_node(
+                                            pAcc_ptr=pChildAcc.value,
+                                            depth=depth + 1,
+                                            max_depth=max_depth,
+                                            hwnd=hwnd,
+                                            generation_id=generation_id,
+                                            elements_out=elements_out,
+                                            cancellation_event=cancellation_event,
+                                        )
+                                    finally:
+                                        _release_com(pChildAcc.value)
+                            except Exception:
+                                pass
+                            finally:
+                                _release_com(v.pdispVal)
+                        elif v.vt == VT_I4 and v.lVal != 0:
+                            try:
+                                bstr_cname = BSTR()
+                                hr_cn = get_accName(pAcc_ptr, v, ctypes.byref(bstr_cname))
+                                c_name = str(bstr_cname.value) if (hr_cn == 0 and bstr_cname.value) else ""
+
+                                var_crole = VARIANT()
+                                hr_cr = get_accRole(pAcc_ptr, v, ctypes.byref(var_crole))
+                                c_role_id = var_crole.lVal if (hr_cr == 0 and var_crole.vt == VT_I4) else 0
+                                c_role_str = ROLE_NAMES.get(c_role_id, f"Role_0x{c_role_id:02X}")
+
+                                cx, cy, cw, ch = wintypes.LONG(0), wintypes.LONG(0), wintypes.LONG(0), wintypes.LONG(0)
+                                hr_cloc = accLocation(pAcc_ptr, ctypes.byref(cx), ctypes.byref(cy), ctypes.byref(cw), ctypes.byref(ch), v)
+                                if hr_cloc == 0 and cw.value > 0 and ch.value > 0:
+                                    crect = Rect(left=cx.value, top=cy.value, right=cx.value + cw.value, bottom=cy.value + ch.value)
+                                    celem_id = f"msaa_{hwnd}_{depth + 1}_{len(elements_out)}_{cx.value}_{cy.value}"
+                                    celem = UIElementObservation(
+                                        element_id=celem_id,
+                                        evidence_source=EvidenceSource.MSAA.value,
+                                        name=c_name,
+                                        role=c_role_str,
+                                        control_type=c_role_str,
+                                        automation_id=None,
+                                        bounds=crect,
+                                        is_enabled=True,
+                                        is_focused=False,
+                                        is_offscreen=False,
+                                        timestamp_ns=time.perf_counter_ns(),
+                                        generation_id=generation_id,
+                                        confidence=ConfidenceLevel.PARTIALLY_CONFIRMED,
+                                    )
+                                    elements_out.append(celem)
+                            except Exception:
+                                pass
         except Exception:
             pass

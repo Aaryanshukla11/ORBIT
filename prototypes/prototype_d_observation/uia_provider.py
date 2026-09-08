@@ -24,6 +24,8 @@ from app_types import (
 
 ole32 = ctypes.windll.ole32
 user32 = ctypes.windll.user32
+user32.IsWindow.argtypes = [wintypes.HWND]
+user32.IsWindow.restype = wintypes.BOOL
 
 class GUID(ctypes.Structure):
     _fields_ = [
@@ -42,6 +44,15 @@ ole32.IIDFromString("{ff48dba4-60ef-4201-aa87-54103eef594e}", ctypes.byref(CLSID
 ole32.IIDFromString("{30cbe57d-d9d0-452a-ab13-7ac5ac4825ee}", ctypes.byref(IID_IUIAutomation))
 
 CLSCTX_INPROC_SERVER = 1
+
+
+def _release_com(ptr: Optional[int]) -> None:
+    if ptr:
+        try:
+            vtable = ctypes.cast(ptr, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+            ctypes.WINFUNCTYPE(wintypes.ULONG, ctypes.c_void_p)(vtable[2])(ptr)
+        except Exception:
+            pass
 
 
 class UIAutomationProvider:
@@ -80,6 +91,13 @@ class UIAutomationProvider:
                 worker_state="WORKER_EXIT_CONFIRMED",
             )
 
+        com_inited = False
+        try:
+            hr_init = ole32.CoInitializeEx(None, 0)
+            com_inited = (hr_init in (0, 1))
+        except Exception:
+            pass
+
         # 1. Instantiate IUIAutomation COM object
         pUIA = ctypes.c_void_p()
         hr = ole32.CoCreateInstance(
@@ -91,6 +109,11 @@ class UIAutomationProvider:
         )
 
         if hr != 0 or not pUIA.value:
+            if com_inited:
+                try:
+                    ole32.CoUninitialize()
+                except Exception:
+                    pass
             return ProviderResult(
                 provider_name="UI_AUTOMATION",
                 status=ProviderStatus.UNAVAILABLE,
@@ -105,6 +128,8 @@ class UIAutomationProvider:
 
         elements: List[UIElementObservation] = []
         timed_out = False
+        pRootElem = ctypes.c_void_p()
+        pWalker = ctypes.c_void_p()
 
         try:
             vtable_uia = ctypes.cast(pUIA.value, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
@@ -113,9 +138,9 @@ class UIAutomationProvider:
             ELEMENT_FROM_HANDLE_TYPE = ctypes.WINFUNCTYPE(wintypes.LONG, ctypes.c_void_p, wintypes.HWND, ctypes.POINTER(ctypes.c_void_p))
             ElementFromHandle = ELEMENT_FROM_HANDLE_TYPE(vtable_uia[6])
             
-            pRootElem = ctypes.c_void_p()
             hr_elem = ElementFromHandle(pUIA.value, hwnd, ctypes.byref(pRootElem))
             if hr_elem != 0 or not pRootElem.value:
+                _release_com(pUIA.value)
                 return ProviderResult(
                     provider_name="UI_AUTOMATION",
                     status=ProviderStatus.UNAVAILABLE,
@@ -131,9 +156,10 @@ class UIAutomationProvider:
             # get_ControlViewWalker (vtable index 14)
             GET_WALKER_TYPE = ctypes.WINFUNCTYPE(wintypes.LONG, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p))
             get_ControlViewWalker = GET_WALKER_TYPE(vtable_uia[14])
-            pWalker = ctypes.c_void_p()
             hr_walker = get_ControlViewWalker(pUIA.value, ctypes.byref(pWalker))
             if hr_walker != 0 or not pWalker.value:
+                _release_com(pRootElem.value)
+                _release_com(pUIA.value)
                 return ProviderResult(
                     provider_name="UI_AUTOMATION",
                     status=ProviderStatus.UNAVAILABLE,
@@ -163,6 +189,9 @@ class UIAutomationProvider:
 
         except Exception as e:
             t1 = time.perf_counter()
+            _release_com(pWalker.value)
+            _release_com(pRootElem.value)
+            _release_com(pUIA.value)
             return ProviderResult(
                 provider_name="UI_AUTOMATION",
                 status=ProviderStatus.PARTIAL_SUCCESS if elements else ProviderStatus.FAILED,
@@ -174,6 +203,15 @@ class UIAutomationProvider:
                 error_message=str(e),
                 worker_state="WORKER_EXIT_CONFIRMED",
             )
+        finally:
+            _release_com(pWalker.value)
+            _release_com(pRootElem.value)
+            _release_com(pUIA.value)
+            if com_inited:
+                try:
+                    ole32.CoUninitialize()
+                except Exception:
+                    pass
 
         t1 = time.perf_counter()
         duration_ms = round((t1 - t0) * 1000.0, 2)

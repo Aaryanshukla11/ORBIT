@@ -416,8 +416,18 @@ class WindowsNativeOCRProvider(OCRProvider):
                 # Ensure RoInitialize on worker thread
                 self._combase.RoInitialize(1)
 
+                # Auto-scale large images to stay within WinRT OcrEngine optimal dimensions (<= 2400px)
+                scale_factor = 1.0
+                curr_img = image
+                if image.width > 2400 or image.height > 2400:
+                    scale_factor = max(image.width, image.height) / 2000.0
+                    curr_img = image.resize(
+                        (int(image.width / scale_factor), int(image.height / scale_factor)),
+                        Image.Resampling.BILINEAR,
+                    )
+
                 # Convert image to BGRA8 format
-                conv_img = image.convert("RGBA")
+                conv_img = curr_img.convert("RGBA")
                 r, g, b, a = conv_img.split()
                 bgra_img = Image.merge("RGBA", (b, g, r, a))
                 raw_bytes = bgra_img.tobytes()
@@ -520,8 +530,14 @@ class WindowsNativeOCRProvider(OCRProvider):
                         w_rect = _WinRTRect()
                         word.contents.lpVtbl.contents.get_BoundingRect(word, byref(w_rect))
 
+                        # Scale coordinates back to original image space
                         word_bbox = OCRBoundingBox.from_rect(
-                            w_rect.X, w_rect.Y, w_rect.Width, w_rect.Height, offset_x=offset_x, offset_y=offset_y
+                            w_rect.X * scale_factor,
+                            w_rect.Y * scale_factor,
+                            w_rect.Width * scale_factor,
+                            w_rect.Height * scale_factor,
+                            offset_x=offset_x,
+                            offset_y=offset_y,
                         )
                         line_words.append(
                             OCRWord(
@@ -586,6 +602,218 @@ class WindowsNativeOCRProvider(OCRProvider):
 
         return await asyncio.to_thread(_do_ocr)
 
+    def extract_text_sync(
+        self,
+        image: Image.Image,
+        desktop_generation_id: int = 0,
+        observation_id: Optional[str] = None,
+        region_offset: Optional[Tuple[int, int]] = None,
+    ) -> OCRResult:
+        """Synchronously extract text regions and bounding boxes from the provided image."""
+        t0 = time.perf_counter()
+        if not self._available:
+            return OCRResult(
+                status=OCRStatus.UNSUPPORTED,
+                provider_kind=self.provider_kind,
+                text_regions=[],
+                full_text="",
+                observation_id=observation_id,
+                desktop_generation_id=desktop_generation_id,
+                duration_ms=round((time.perf_counter() - t0) * 1000.0, 2),
+                error_message=f"WindowsNativeOCRProvider is unavailable: {self._init_error or 'WinRT initialization failed'}",
+            )
+
+        if image is None or image.width <= 0 or image.height <= 0:
+            return OCRResult(
+                status=OCRStatus.INVALID_INPUT,
+                provider_kind=self.provider_kind,
+                text_regions=[],
+                full_text="",
+                observation_id=observation_id,
+                desktop_generation_id=desktop_generation_id,
+                duration_ms=round((time.perf_counter() - t0) * 1000.0, 2),
+                error_message="Provided image is None or has zero dimensions",
+            )
+
+        offset_x, offset_y = region_offset if region_offset is not None else (0, 0)
+        try:
+            if self._combase:
+                self._combase.RoInitialize(1)
+
+            # Auto-scale large images to stay within WinRT OcrEngine optimal dimensions (<= 2400px)
+            scale_factor = 1.0
+            curr_img = image
+            if image.width > 2400 or image.height > 2400:
+                scale_factor = max(image.width, image.height) / 2000.0
+                curr_img = image.resize(
+                    (int(image.width / scale_factor), int(image.height / scale_factor)),
+                    Image.Resampling.BILINEAR,
+                )
+
+            conv_img = curr_img.convert("RGBA")
+            r, g, b, a = conv_img.split()
+            bgra_img = Image.merge("RGBA", (b, g, r, a))
+            raw_bytes = bgra_img.tobytes()
+            c_buf = (c_ubyte * len(raw_bytes)).from_buffer_copy(raw_bytes)
+
+            ibuffer = c_void_p()
+            assert self._crypto_factory is not None
+            hr_buf = self._crypto_factory.contents.lpVtbl.contents.CreateFromByteArray(
+                self._crypto_factory, len(raw_bytes), cast(c_buf, POINTER(c_ubyte)), byref(ibuffer)
+            )
+            if hr_buf != 0 or not ibuffer.value:
+                raise RuntimeError(f"CryptographicBuffer.CreateFromByteArray failed: hr={hex(hr_buf & 0xFFFFFFFF)}")
+
+            software_bitmap = c_void_p()
+            assert self._sb_factory is not None
+            hr_sb = self._sb_factory.contents.lpVtbl.contents.CreateCopyFromBuffer(
+                self._sb_factory, ibuffer, 87, conv_img.width, conv_img.height, byref(software_bitmap)
+            )
+            if hr_sb != 0 or not software_bitmap.value:
+                raise RuntimeError(f"SoftwareBitmap.CreateCopyFromBuffer failed: hr={hex(hr_sb & 0xFFFFFFFF)}")
+
+            async_op = c_void_p()
+            assert self._ocr_engine is not None
+            hr_rec = self._ocr_engine.contents.lpVtbl.contents.RecognizeAsync(
+                self._ocr_engine, software_bitmap, byref(async_op)
+            )
+            if hr_rec != 0 or not async_op.value:
+                raise RuntimeError(f"OcrEngine.RecognizeAsync failed: hr={hex(hr_rec & 0xFFFFFFFF)}")
+
+            qi_ptr = cast(cast(async_op, POINTER(c_void_p)).contents, POINTER(c_void_p))[0]
+            QueryInterface = WINFUNCTYPE(c_int, c_void_p, POINTER(_GUID), POINTER(c_void_p))(qi_ptr)
+            iid_async_info = _GUID.from_str("00000036-0000-0000-C000-000000000046")
+            async_info = POINTER(_IAsyncInfo)()
+            QueryInterface(async_op, byref(iid_async_info), cast(byref(async_info), POINTER(c_void_p)))
+
+            status = c_int(0)
+            deadline = time.perf_counter() + 5.0
+            while time.perf_counter() < deadline:
+                async_info.contents.lpVtbl.contents.get_Status(async_info, byref(status))
+                if status.value == 1:
+                    break
+                elif status.value in {2, 3}:
+                    raise RuntimeError(f"OcrEngine async operation terminated with status {status.value}")
+                time.sleep(0.005)
+
+            if status.value != 1:
+                raise TimeoutError("OcrEngine async recognition timed out after 5.0 seconds")
+
+            async_op_typed = cast(async_op, POINTER(_IAsyncOperation))
+            ocr_result_ptr = POINTER(_IOcrResult)()
+            hr_res = async_op_typed.contents.lpVtbl.contents.GetResults(async_op_typed, byref(ocr_result_ptr))
+            if hr_res != 0 or not ocr_result_ptr:
+                raise RuntimeError(f"OcrEngine.GetResults failed: hr={hex(hr_res & 0xFFFFFFFF)}")
+
+            hs_full = c_void_p()
+            ocr_result_ptr.contents.lpVtbl.contents.get_Text(ocr_result_ptr, byref(hs_full))
+            full_text = self._hstring_to_str(hs_full)
+
+            lines_view = POINTER(_IVectorView)()
+            ocr_result_ptr.contents.lpVtbl.contents.get_Lines(ocr_result_ptr, byref(lines_view))
+            lines_count = c_uint(0)
+            lines_view.contents.lpVtbl.contents.get_Size(lines_view, byref(lines_count))
+
+            text_regions: List[OCRTextRegion] = []
+            for i in range(lines_count.value):
+                line_ptr = c_void_p()
+                lines_view.contents.lpVtbl.contents.GetAt(lines_view, i, byref(line_ptr))
+                line = cast(line_ptr, POINTER(_IOcrLine))
+
+                hs_line = c_void_p()
+                line.contents.lpVtbl.contents.get_Text(line, byref(hs_line))
+                line_text = self._hstring_to_str(hs_line)
+
+                words_view = POINTER(_IVectorView)()
+                line.contents.lpVtbl.contents.get_Words(line, byref(words_view))
+                words_count = c_uint(0)
+                words_view.contents.lpVtbl.contents.get_Size(words_view, byref(words_count))
+
+                line_words: List[OCRWord] = []
+                min_left, min_top = float("inf"), float("inf")
+                max_right, max_bottom = float("-inf"), float("-inf")
+
+                for j in range(words_count.value):
+                    word_ptr = c_void_p()
+                    words_view.contents.lpVtbl.contents.GetAt(words_view, j, byref(word_ptr))
+                    word = cast(word_ptr, POINTER(_IOcrWord))
+
+                    hs_word = c_void_p()
+                    word.contents.lpVtbl.contents.get_Text(word, byref(hs_word))
+                    word_text = self._hstring_to_str(hs_word)
+
+                    w_rect = _WinRTRect()
+                    word.contents.lpVtbl.contents.get_BoundingRect(word, byref(w_rect))
+
+                    word_bbox = OCRBoundingBox.from_rect(
+                        w_rect.X * scale_factor,
+                        w_rect.Y * scale_factor,
+                        w_rect.Width * scale_factor,
+                        w_rect.Height * scale_factor,
+                        offset_x=offset_x,
+                        offset_y=offset_y,
+                    )
+                    line_words.append(
+                        OCRWord(
+                            text=word_text,
+                            normalized_text=normalize_text(word_text),
+                            bounding_box=word_bbox,
+                            confidence=None,
+                        )
+                    )
+
+                    min_left = min(min_left, word_bbox.left)
+                    min_top = min(min_top, word_bbox.top)
+                    max_right = max(max_right, word_bbox.right)
+                    max_bottom = max(max_bottom, word_bbox.bottom)
+
+                if line_words:
+                    line_bbox = OCRBoundingBox(
+                        left=int(min_left),
+                        top=int(min_top),
+                        right=int(max_right),
+                        bottom=int(max_bottom),
+                    )
+                else:
+                    line_bbox = OCRBoundingBox(left=offset_x, top=offset_y, right=offset_x, bottom=offset_y)
+
+                text_regions.append(
+                    OCRTextRegion(
+                        text=line_text,
+                        normalized_text=normalize_text(line_text),
+                        bounding_box=line_bbox,
+                        words=line_words,
+                        confidence=None,
+                        source_provider="WINDOWS_NATIVE",
+                    )
+                )
+
+            duration_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+            status_code = OCRStatus.SUCCESS if text_regions else OCRStatus.NO_TEXT
+
+            return OCRResult(
+                status=status_code,
+                provider_kind=self.provider_kind,
+                text_regions=text_regions,
+                full_text=full_text,
+                observation_id=observation_id,
+                desktop_generation_id=desktop_generation_id,
+                duration_ms=duration_ms,
+            )
+
+        except Exception as ex:
+            logger.exception("WindowsNativeOCRProvider synchronous extraction failed: %s", ex)
+            return OCRResult(
+                status=OCRStatus.FAILED,
+                provider_kind=self.provider_kind,
+                text_regions=[],
+                full_text="",
+                observation_id=observation_id,
+                desktop_generation_id=desktop_generation_id,
+                duration_ms=round((time.perf_counter() - t0) * 1000.0, 2),
+                error_message=str(ex),
+            )
+
 
 class MockOCRProvider(OCRProvider):
     """Deterministic Mock OCR Provider for unit and integration testing."""
@@ -614,6 +842,25 @@ class MockOCRProvider(OCRProvider):
 
     def set_injected_status(self, status: OCRStatus) -> None:
         self._injected_status = status
+
+    def extract_text_sync(
+        self,
+        image: Image.Image,
+        desktop_generation_id: int = 0,
+        observation_id: Optional[str] = None,
+        region_offset: Optional[Tuple[int, int]] = None,
+    ) -> OCRResult:
+        """Synchronously return configured mock OCR result."""
+        full_text = " ".join(r.text for r in self._injected_regions)
+        return OCRResult(
+            status=self._injected_status,
+            provider_kind=self.provider_kind,
+            text_regions=self._injected_regions,
+            full_text=full_text,
+            observation_id=observation_id,
+            desktop_generation_id=desktop_generation_id,
+            duration_ms=0.0,
+        )
 
     async def extract_text(
         self,

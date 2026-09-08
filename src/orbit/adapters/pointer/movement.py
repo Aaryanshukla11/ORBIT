@@ -19,6 +19,12 @@ from orbit.adapters.pointer.safety import (
     INPUT,
     INPUT_MOUSE,
     MOUSEINPUT,
+    MOUSEEVENTF_LEFTDOWN,
+    MOUSEEVENTF_LEFTUP,
+    MOUSEEVENTF_RIGHTDOWN,
+    MOUSEEVENTF_RIGHTUP,
+    MOUSEEVENTF_MIDDLEDOWN,
+    MOUSEEVENTF_MIDDLEUP,
     ORBIT_EXTRA_INFO_SIGNATURE,
     AbiGate,
     VirtualDesktopMetrics,
@@ -225,6 +231,13 @@ class NativeDispatchGateway:
                 accepted = self._sendinput_override(1, input_packet, ctypes.sizeof(INPUT))
             elif user32 is not None:
                 accepted = user32.SendInput(1, ctypes.byref(input_packet), ctypes.sizeof(INPUT))
+                if input_packet.type == INPUT_MOUSE and sys.platform == "win32":
+                    mi = input_packet.union.mi
+                    if mi.dwFlags & (MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP | MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_MIDDLEDOWN | MOUSEEVENTF_MIDDLEUP):
+                        try:
+                            user32.mouse_event(mi.dwFlags, mi.dx, mi.dy, mi.mouseData, mi.dwExtraInfo)
+                        except Exception:
+                            pass
             else:
                 accepted = 0
 

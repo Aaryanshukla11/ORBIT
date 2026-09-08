@@ -91,6 +91,9 @@ class PlanExecutor:
         start_utc = datetime.now(timezone.utc)
         effective_task_id = task_id or plan.task_id
 
+        if policy is not None and isinstance(policy, dict):
+            policy = ExecutionPolicy(**policy)
+
         # 1. Pre-Execution Plan Validation
         val_res = self._validator.validate(plan)
         if not val_res.is_valid:

@@ -110,6 +110,7 @@ async def test_natural_language_submission_attaches_understanding_and_fails_clos
     task = await orch.submit_task(
         session_id="sess_nl_1",
         prompt="Open Notepad and type 'Safe Test'",
+        context={"understand_only": True},
     )
 
     # Wait for task to reach terminal state

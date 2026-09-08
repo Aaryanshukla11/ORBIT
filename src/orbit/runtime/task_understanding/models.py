@@ -18,11 +18,14 @@ class TaskGoal(str, Enum):
     SEARCH = "SEARCH"
     NAVIGATE = "NAVIGATE"
     CLICK_TARGET = "CLICK_TARGET"
+    CALCULATE = "CALCULATE"
     SELECT_OPTION = "SELECT_OPTION"
     COPY_CONTENT = "COPY_CONTENT"
     PASTE_CONTENT = "PASTE_CONTENT"
     SAVE_DOCUMENT = "SAVE_DOCUMENT"
     CLOSE_APPLICATION = "CLOSE_APPLICATION"
+    DRAW = "DRAW"
+    INTERACT = "INTERACT"
     UNKNOWN = "UNKNOWN"
     UNSUPPORTED = "UNSUPPORTED"
 
@@ -70,6 +73,8 @@ class TaskConstraints(BaseModel):
 
     application_name: Optional[str] = Field(default=None, description="Target application name context")
     content: Optional[str] = Field(default=None, description="Exact literal text payload (case, punctuation, Unicode preserved)")
+    is_generative: bool = Field(default=False, description="Whether this task requires dynamic LLM generation")
+    generation_prompt: Optional[str] = Field(default=None, description="The prompt instructions for the LLM")
     destination: Optional[str] = Field(default=None, description="Destination path or area if specified")
     source_reference: Optional[str] = Field(default=None, description="Source reference if applicable")
     is_negated: bool = Field(default=False, description="Whether the operation contains an explicit negative constraint")

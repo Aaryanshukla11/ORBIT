@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import AsyncGenerator
 import pytest
 from httpx import ASGITransport, AsyncClient
+
+# Default to enabled in test harness to preserve existing takeover tests
+os.environ.setdefault("ORBIT_HUMAN_TAKEOVER_ENABLED", "true")
+
 
 from orbit.adapters.mocks import (
     MockHumanTakeoverAdapter,

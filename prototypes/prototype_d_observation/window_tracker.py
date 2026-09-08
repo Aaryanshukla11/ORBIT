@@ -73,6 +73,35 @@ WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 user32.EnumWindows.argtypes = [WNDENUMPROC, wintypes.LPARAM]
 user32.EnumWindows.restype = wintypes.BOOL
 
+user32.GetDesktopWindow.argtypes = []
+user32.GetDesktopWindow.restype = wintypes.HWND
+
+user32.EnumChildWindows.argtypes = [wintypes.HWND, WNDENUMPROC, wintypes.LPARAM]
+user32.EnumChildWindows.restype = wintypes.BOOL
+
+user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR]
+user32.FindWindowExW.restype = wintypes.HWND
+
+if hasattr(user32, "GetThreadDesktop"):
+    user32.GetThreadDesktop.argtypes = [wintypes.DWORD]
+    user32.GetThreadDesktop.restype = wintypes.HANDLE
+
+if hasattr(user32, "OpenInputDesktop"):
+    user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    user32.OpenInputDesktop.restype = wintypes.HANDLE
+
+if hasattr(user32, "EnumDesktopWindows"):
+    user32.EnumDesktopWindows.argtypes = [wintypes.HANDLE, WNDENUMPROC, wintypes.LPARAM]
+    user32.EnumDesktopWindows.restype = wintypes.BOOL
+
+if hasattr(user32, "GetWindow"):
+    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetWindow.restype = wintypes.HWND
+
+if hasattr(user32, "CloseDesktop"):
+    user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+    user32.CloseDesktop.restype = wintypes.BOOL
+
 
 class WindowTracker:
     """
@@ -131,16 +160,32 @@ class WindowTracker:
     @classmethod
     def get_window_observation(cls, hwnd: int, z_order_rank: int = 0) -> WindowObservation:
         """Constructs an immutable WindowObservation for a specific HWND."""
-        buf = ctypes.create_unicode_buffer(512)
-        user32.GetWindowTextW(hwnd, buf, 512)
-        title = buf.value
+        title = ""
+        try:
+            buf = ctypes.create_unicode_buffer(512)
+            user32.GetWindowTextW(hwnd, buf, 512)
+            title = buf.value
+        except Exception:
+            pass
 
-        pid, proc_name = cls.get_process_info(hwnd)
-        ext_bounds = cls.get_extended_frame_bounds(hwnd)
-        client_bounds = cls.get_client_bounds(hwnd)
-        is_vis = bool(user32.IsWindowVisible(hwnd))
-        is_min = bool(user32.IsIconic(hwnd))
-        is_max = bool(user32.IsZoomed(hwnd))
+        try:
+            pid, proc_name = cls.get_process_info(hwnd)
+        except Exception:
+            pid, proc_name = 0, "unknown"
+
+        try:
+            ext_bounds = cls.get_extended_frame_bounds(hwnd)
+        except Exception:
+            ext_bounds = Rect(left=0, top=0, right=0, bottom=0)
+
+        try:
+            client_bounds = cls.get_client_bounds(hwnd)
+        except Exception:
+            client_bounds = Rect(left=0, top=0, right=0, bottom=0)
+
+        is_vis = bool(user32.IsWindowVisible(hwnd)) if user32.IsWindow(hwnd) else False
+        is_min = bool(user32.IsIconic(hwnd)) if user32.IsWindow(hwnd) else False
+        is_max = bool(user32.IsZoomed(hwnd)) if user32.IsWindow(hwnd) else False
         is_fg = (user32.GetForegroundWindow() == hwnd)
 
         dpi = 96
@@ -172,10 +217,16 @@ class WindowTracker:
         """Returns WindowObservation for the current foreground window."""
         hwnd = user32.GetForegroundWindow()
         if hwnd and user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
-            return cls.get_window_observation(hwnd, z_order_rank=0)
+            try:
+                return cls.get_window_observation(hwnd, z_order_rank=0)
+            except Exception:
+                pass
         # Fallback to top-most visible window in Z-order if desktop has no explicit focus
-        visible = cls.enumerate_visible_windows()
-        return visible[0] if visible else None
+        try:
+            visible = cls.enumerate_visible_windows()
+            return visible[0] if visible else None
+        except Exception:
+            return None
 
     @classmethod
     def enumerate_visible_windows(cls) -> List[WindowObservation]:
@@ -183,22 +234,48 @@ class WindowTracker:
         Enumerates all visible top-level windows in Z-order.
         """
         windows: List[WindowObservation] = []
+        known_hwnds = set()
         rank = 0
 
         def enum_callback(hwnd, lparam):
             nonlocal rank
-            if user32.IsWindowVisible(hwnd):
-                # Ignore zero-size or off-screen hidden helper windows
-                r = wintypes.RECT()
-                user32.GetWindowRect(hwnd, ctypes.byref(r))
-                if (r.right - r.left) > 0 and (r.bottom - r.top) > 0:
-                    obs = cls.get_window_observation(hwnd, z_order_rank=rank)
-                    windows.append(obs)
-                    rank += 1
+            try:
+                if hwnd not in known_hwnds and user32.IsWindow(hwnd) and user32.IsWindowVisible(hwnd):
+                    r = wintypes.RECT()
+                    if user32.GetWindowRect(hwnd, ctypes.byref(r)):
+                        if (r.right - r.left) > 0 and (r.bottom - r.top) > 0:
+                            obs = cls.get_window_observation(hwnd, z_order_rank=rank)
+                            windows.append(obs)
+                            known_hwnds.add(hwnd)
+                            rank += 1
+            except Exception:
+                pass
             return True
 
         cb = WNDENUMPROC(enum_callback)
+
+        # 1. Primary: Enumerate input desktop windows (reliable across processes & worker threads)
+        if hasattr(user32, "OpenInputDesktop") and hasattr(user32, "EnumDesktopWindows"):
+            hdesk = user32.OpenInputDesktop(0, False, 0x01FF)
+            if hdesk:
+                try:
+                    user32.EnumDesktopWindows(hdesk, cb, 0)
+                finally:
+                    if hasattr(user32, "CloseDesktop"):
+                        user32.CloseDesktop(hdesk)
+
+        # 2. Secondary: Standard EnumWindows
         user32.EnumWindows(cb, 0)
+
+        # 3. Fallback sweep via top-level FindWindowExW
+        curr = 0
+        while True:
+            curr = user32.FindWindowExW(0, curr, None, None)
+            if not curr:
+                break
+            enum_callback(curr, 0)
+
         return windows
 
     get_all_windows = enumerate_visible_windows
+

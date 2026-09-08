@@ -105,6 +105,138 @@ class SemanticPerceptionEngine:
             region_offset=region_offset,
         )
 
+    def extract_text_from_image_sync(
+        self,
+        image: Image.Image,
+        desktop_generation_id: int = 0,
+        observation_id: Optional[str] = None,
+        region_offset: Optional[Tuple[int, int]] = None,
+    ) -> OCRResult:
+        """Synchronously extract text from a standalone image."""
+        if not self._ocr_provider.is_available():
+            return OCRResult(
+                status=OCRStatus.UNSUPPORTED,
+                provider_kind=self._ocr_provider.provider_kind,
+                text_regions=[],
+                full_text="",
+                observation_id=observation_id,
+                desktop_generation_id=desktop_generation_id,
+                error_message=f"OCR provider {self._ocr_provider.provider_kind.value} is unavailable",
+            )
+
+        if hasattr(self._ocr_provider, "extract_text_sync"):
+            return self._ocr_provider.extract_text_sync(
+                image=image,
+                desktop_generation_id=desktop_generation_id,
+                observation_id=observation_id,
+                region_offset=region_offset,
+            )
+
+        import asyncio
+        import concurrent.futures
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    self._ocr_provider.extract_text(
+                        image=image,
+                        desktop_generation_id=desktop_generation_id,
+                        observation_id=observation_id,
+                        region_offset=region_offset,
+                    ),
+                )
+                return future.result(timeout=10.0)
+        except Exception as ex:
+            return OCRResult(
+                status=OCRStatus.ERROR,
+                provider_kind=self._ocr_provider.provider_kind,
+                text_regions=[],
+                full_text="",
+                observation_id=observation_id,
+                desktop_generation_id=desktop_generation_id,
+                error_message=f"Synchronous OCR extraction failed: {ex}",
+            )
+
+    def scan_observation_sync(
+        self,
+        snapshot: ObservationSnapshot,
+        image: Optional[Image.Image] = None,
+        image_bytes: Optional[bytes] = None,
+    ) -> OCRResult:
+        """Synchronously extract OCR evidence from an ObservationSnapshot and associated image frame."""
+        # 1. Freshness Gate
+        if snapshot.is_stale or snapshot.freshness_state == FreshnessState.STALE:
+            reason = snapshot.invalidation_reason or "Observation snapshot TTL expired or generation invalid"
+            logger.warning("OCR scan rejected: snapshot %s is stale (%s)", snapshot.snapshot_id, reason)
+            return OCRResult(
+                status=OCRStatus.STALE_OBSERVATION,
+                provider_kind=self._ocr_provider.provider_kind,
+                text_regions=[],
+                full_text="",
+                observation_id=snapshot.snapshot_id,
+                desktop_generation_id=snapshot.generation_id,
+                error_message=f"Observation snapshot is stale: {reason}",
+            )
+
+        # 2. Resolve image
+        img: Optional[Image.Image] = None
+        if image is not None:
+            img = image
+        elif image_bytes is not None:
+            try:
+                img = Image.open(io.BytesIO(image_bytes))
+            except Exception as ex:
+                logger.error("Failed to decode image_bytes for snapshot %s: %s", snapshot.snapshot_id, ex)
+                return OCRResult(
+                    status=OCRStatus.INVALID_INPUT,
+                    provider_kind=self._ocr_provider.provider_kind,
+                    text_regions=[],
+                    full_text="",
+                    observation_id=snapshot.snapshot_id,
+                    desktop_generation_id=snapshot.generation_id,
+                    error_message=f"Failed to decode image bytes: {ex}",
+                )
+        elif snapshot.telemetry:
+            raw_img = snapshot.telemetry.get("screenshot") or snapshot.telemetry.get("image")
+            if isinstance(raw_img, Image.Image):
+                img = raw_img
+            elif isinstance(raw_img, bytes):
+                try:
+                    img = Image.open(io.BytesIO(raw_img))
+                except Exception:
+                    img = None
+
+        if img is None:
+            try:
+                from PIL import ImageGrab
+                img = ImageGrab.grab()
+            except Exception as grab_err:
+                logger.debug("ImageGrab fallback failed: %s", grab_err)
+
+        if img is None:
+            logger.error("Cannot perform OCR scan: no image or image_bytes provided for snapshot %s", snapshot.snapshot_id)
+            return OCRResult(
+                status=OCRStatus.INVALID_INPUT,
+                provider_kind=self._ocr_provider.provider_kind,
+                text_regions=[],
+                full_text="",
+                observation_id=snapshot.snapshot_id,
+                desktop_generation_id=snapshot.generation_id,
+                error_message="No image provided for OCR scan",
+            )
+
+        region_offset = (
+            (snapshot.desktop_geometry.left, snapshot.desktop_geometry.top)
+            if snapshot.desktop_geometry
+            else (0, 0)
+        )
+        return self.extract_text_from_image_sync(
+            image=img,
+            desktop_generation_id=snapshot.generation_id,
+            observation_id=snapshot.snapshot_id,
+            region_offset=region_offset,
+        )
+
     async def scan_observation(
         self,
         snapshot: ObservationSnapshot,

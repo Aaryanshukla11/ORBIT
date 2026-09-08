@@ -83,6 +83,7 @@ class PlanStepCompiler:
         text: Optional[str] = None
         window_title: Optional[str] = None
         role: Optional[str] = None
+        target_ref: Optional[Any] = None
 
         if step.deferred_grounding:
             dg = step.deferred_grounding
@@ -116,6 +117,12 @@ class PlanStepCompiler:
                     role = "button"
             name = None
             text = None
+
+        if not window_title and step.constraints.application_name:
+            window_title = step.constraints.application_name
+
+        if target_ref and getattr(target_ref, "semantic_type", "") in ("ui_control", "button", "input_surface", "element") and strategy == TargetStrategy.WINDOW_TITLE:
+            strategy = TargetStrategy.ACCESSIBILITY_ELEMENT
 
         # Build strategy-tailored TargetIntent
         return TargetIntent(
@@ -159,17 +166,12 @@ class PlanStepCompiler:
 
     def _compile_locate_target(self, step: PlanStep) -> CompiledRuntimeAction:
         intent = self._build_target_intent_from_step(step, default_strategy=TargetStrategy.ACCESSIBILITY_ELEMENT)
-        app_name = step.constraints.application_name or intent.window_title or "Application"
         return CompiledRuntimeAction(
             step_id=step.step_id,
             action_type="pointer_move",
             target_intent=intent,
             action_parameters={},
-            expected_outcome=ExpectedOutcome(
-                outcome_type=ExpectedOutcomeType.WINDOW_FOCUSED,
-                strategy=VerificationStrategy.WINDOW_STATE_CHANGE,
-                window_title=app_name,
-            ),
+            expected_outcome=None,
             is_supported=True,
             metadata={"target_name": intent.name or intent.text},
         )
@@ -347,7 +349,7 @@ class PlanStepCompiler:
         )
 
     def _compile_verify_target_effect(self, step: PlanStep) -> CompiledRuntimeAction:
-        intent = self._build_target_intent_from_step(step, default_strategy=TargetStrategy.ACCESSIBILITY_ELEMENT)
+        intent = self._build_target_intent_from_step(step, default_strategy=TargetStrategy.WINDOW_TITLE)
         return CompiledRuntimeAction(
             step_id=step.step_id,
             action_type="observe",

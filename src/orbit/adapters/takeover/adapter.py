@@ -18,6 +18,7 @@ from orbit.adapters.takeover.hook import NativeHookInstallationError, NativeInpu
 from orbit.adapters.takeover.safety import TakeoverAbiGate
 from orbit.adapters.takeover.state import TakeoverState, TakeoverStateManager
 from orbit.adapters.takeover.telemetry import TakeoverTelemetryLogger, TakeoverTelemetrySnapshot
+from orbit.config import is_human_takeover_enabled
 from orbit.contracts.capabilities import (
     AdapterMode,
     CapabilityHealth,
@@ -37,6 +38,7 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
         self,
         enable_live_hooks: bool = True,
         quiet_period_seconds: float = 1.0,
+        human_takeover_enabled: Optional[bool] = None,
     ) -> None:
         super().__init__(
             capability_name="ProductionHumanTakeover",
@@ -44,6 +46,7 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
             adapter_mode=AdapterMode.PRODUCTION,
         )
         self._enable_live_hooks = enable_live_hooks
+        self._human_takeover_enabled = human_takeover_enabled
         self._state_manager = TakeoverStateManager(quiet_period_seconds=quiet_period_seconds)
         self._monitor = NativeInputMonitor()
         self.telemetry = TakeoverTelemetryLogger()
@@ -54,8 +57,16 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
         self._details = {
             "integration_status": "ACTIVE" if enable_live_hooks else "MOCK_ONLY",
             "live_hooks_enabled": enable_live_hooks,
+            "human_takeover_enabled": self.is_feature_enabled,
             "hooks_active": False,
         }
+
+    @property
+    def is_feature_enabled(self) -> bool:
+        if self._human_takeover_enabled is not None:
+            return self._human_takeover_enabled
+        return is_human_takeover_enabled()
+
 
     @property
     def state_manager(self) -> TakeoverStateManager:
@@ -116,7 +127,8 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
             hook_to_sig_us = max(0.0, (t_now - evidence.timestamp_ns) / 1000.0)
 
             is_primary_trigger = False
-            if evidence.should_trigger_takeover:
+            # Only trigger takeover if the feature is actively enabled
+            if self.is_feature_enabled and evidence.should_trigger_takeover:
                 is_primary_trigger = self._state_manager.handle_takeover_event(evidence)
 
             self.telemetry.log_evidence(
@@ -133,7 +145,7 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
             self._monitor.start(on_event_callback=_on_hook_evidence)
             self._state_manager.transition_to(TakeoverState.MONITORING, reason="Hooks active")
             self._details["hooks_active"] = True
-            logger.info("Human Takeover monitoring active")
+            logger.info("Human Takeover monitoring active (feature_enabled=%s)", self.is_feature_enabled)
             return True
         except NativeHookInstallationError as ex:
             self._state_manager.transition_to(TakeoverState.FAILED, reason=str(ex))
@@ -145,6 +157,8 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
 
     def _dispatch_takeover_callback(self, evidence: TakeoverEvidence) -> None:
         """Executes inside asyncio event loop thread."""
+        if not self.is_feature_enabled:
+            return
         if self._on_takeover_cb:
             try:
                 res = self._on_takeover_cb()
@@ -172,6 +186,8 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
 
     async def is_takeover_active(self) -> bool:
         """Query whether human takeover is actively preempting."""
+        if not self.is_feature_enabled:
+            return False
         return self._state_manager.is_takeover_active
 
     async def reset_takeover_state(self) -> bool:
@@ -190,11 +206,20 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
         """Query aggregated latency and event statistics."""
         return self.telemetry.get_snapshot().model_dump()
 
+    def get_diagnostics(self) -> Dict[str, Any]:
+        """Query detailed takeover state diagnostics."""
+        diag = self._state_manager.get_diagnostics()
+        diag["is_monitoring"] = self._monitor.is_running
+        diag["hooks_active"] = self._details.get("hooks_active", False)
+        diag["human_takeover_enabled"] = self.is_feature_enabled
+        return diag
+
     async def get_health(self) -> CapabilityHealth:
         """Query subsystem health."""
         details = dict(self._details)
+        details["human_takeover_enabled"] = self.is_feature_enabled
         details["current_takeover_state"] = self._state_manager.current_state.value
-        details["is_takeover_active"] = self._state_manager.is_takeover_active
+        details["is_takeover_active"] = self._state_manager.is_takeover_active if self.is_feature_enabled else False
         details["is_monitoring"] = self._monitor.is_running
         details["telemetry"] = self.telemetry.get_snapshot().model_dump()
 
@@ -205,7 +230,7 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
         status = CapabilityHealthStatus.HEALTHY
         if self._state_manager.current_state == TakeoverState.FAILED or not self.is_ready:
             status = CapabilityHealthStatus.FAILED
-        elif self._state_manager.is_takeover_active:
+        elif self.is_feature_enabled and self._state_manager.is_takeover_active:
             status = CapabilityHealthStatus.DEGRADED
 
         return CapabilityHealth(
@@ -214,6 +239,6 @@ class ProductionHumanTakeoverAdapter(BaseCapabilityAdapter, HumanTakeoverCapabil
             adapter_mode=self._adapter_mode,
             lifecycle_state=self._lifecycle_state,
             status=status,
-            message=f"TakeoverState={self._state_manager.current_state.value}, Hooks={self._monitor.is_running}",
+            message=f"TakeoverState={self._state_manager.current_state.value}, Hooks={self._monitor.is_running}, Enabled={self.is_feature_enabled}",
             details=details,
         )

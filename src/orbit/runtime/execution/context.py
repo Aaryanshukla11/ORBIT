@@ -13,12 +13,14 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from orbit.config import is_human_takeover_enabled
 from orbit.runtime.cancellation import CancellationSource, CancellationToken
 
 logger = logging.getLogger(__name__)
 
 
 class CancellationReason(str, Enum):
+
     """Canonical reasons for cancelling or preempting autonomous execution."""
 
     HUMAN_TAKEOVER = "HUMAN_TAKEOVER"
@@ -152,6 +154,8 @@ class ExecutionContext:
 
     async def is_takeover_active(self) -> bool:
         """Poll takeover state. If active, automatically latch HUMAN_TAKEOVER cancellation."""
+        if not is_human_takeover_enabled():
+            return False
         if self._takeover_checker is None:
             return False
         try:
@@ -170,6 +174,7 @@ class ExecutionContext:
                 message="Human takeover active; execution preempted fail-closed",
             )
         return is_active
+
 
     async def wait_cancelled(self, timeout: Optional[float] = None) -> bool:
         """Wait for cancellation or timeout. Returns True if cancelled, False if timed out."""

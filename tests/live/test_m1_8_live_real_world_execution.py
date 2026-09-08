@@ -204,78 +204,79 @@ async def test_live_scenario_b_real_browser_multi_step_workflow():
 
     Epistemic Classification: LIVE_OS_VALIDATED
     """
-    bus = EventBus()
-    obs = ProductionObservationAdapter(default_ttl_ms=3000.0)
-    wsp = ProductionWorkspaceAdapter()
-    ptr = ProductionPointerAdapter()
-    kbd = ProductionKeyboardAdapter()
-    locator = EvidenceBasedTargetLocator()
-    verifier = ActionVerifier()
+    with launch_real_windows_notepad() as hwnd:
+        bus = EventBus()
+        obs = ProductionObservationAdapter(default_ttl_ms=3000.0)
+        wsp = ProductionWorkspaceAdapter()
+        ptr = ProductionPointerAdapter()
+        kbd = ProductionKeyboardAdapter()
+        locator = EvidenceBasedTargetLocator()
+        verifier = ActionVerifier()
 
-    await obs.initialize()
-    await wsp.initialize()
-    await ptr.initialize()
-    await kbd.initialize()
+        await obs.initialize()
+        await wsp.initialize()
+        await ptr.initialize()
+        await kbd.initialize()
 
-    reg = CapabilityRegistry()
-    reg.register(CapabilityType.OBSERVATION, obs)
-    reg.register(CapabilityType.WORKSPACE, wsp)
-    reg.register(CapabilityType.POINTER, ptr)
-    reg.register(CapabilityType.KEYBOARD, kbd)
+        reg = CapabilityRegistry()
+        reg.register(CapabilityType.OBSERVATION, obs)
+        reg.register(CapabilityType.WORKSPACE, wsp)
+        reg.register(CapabilityType.POINTER, ptr)
+        reg.register(CapabilityType.KEYBOARD, kbd)
 
-    try:
-        engine = ClosedLoopExecutionEngine(
-            capability_registry=reg,
-            target_locator=locator,
-            action_verifier=verifier,
-            event_bus=bus,
-            clock=SystemClock(),
-        )
-        executor = PlanExecutor(execution_engine=engine, event_bus=bus)
+        try:
+            engine = ClosedLoopExecutionEngine(
+                capability_registry=reg,
+                target_locator=locator,
+                action_verifier=verifier,
+                event_bus=bus,
+                clock=SystemClock(),
+            )
+            executor = PlanExecutor(execution_engine=engine, event_bus=bus)
 
-        # Build plan targeting active desktop IDE window
-        target_name = "ORBIT - Antigravity IDE"
-        step1 = PlanStep(
-            step_id="step_discover_app",
-            step_index=0,
-            action_type=PlanActionType.ENSURE_APPLICATION_OPEN,
-            description=f"Ensure {target_name} is open",
-            target=TargetReference(semantic_type="application", identifier=target_name),
-            dependencies=[],
-        )
-        step2 = PlanStep(
-            step_id="step_verify_app",
-            step_index=1,
-            action_type=PlanActionType.VERIFY_APPLICATION_AVAILABLE,
-            description=f"Verify {target_name} is available",
-            target=TargetReference(semantic_type="application", identifier=target_name),
-            dependencies=["step_discover_app"],
-        )
+            # Build plan targeting Notepad application
+            target_name = "Notepad"
+            step1 = PlanStep(
+                step_id="step_discover_app",
+                step_index=0,
+                action_type=PlanActionType.ENSURE_APPLICATION_OPEN,
+                description=f"Ensure {target_name} is open",
+                target=TargetReference(semantic_type="application", identifier=target_name),
+                dependencies=[],
+            )
+            step2 = PlanStep(
+                step_id="step_verify_app",
+                step_index=1,
+                action_type=PlanActionType.VERIFY_APPLICATION_AVAILABLE,
+                description=f"Verify {target_name} is available",
+                target=TargetReference(semantic_type="application", identifier=target_name),
+                dependencies=["step_discover_app"],
+            )
 
-        plan = ExecutableTaskPlan(
-            plan_id="plan_live_browser",
-            task_id="task_live_browser",
-            description="Verify real active desktop application",
-            status=PlanStatus.VALID,
-            steps=[step1, step2],
-            step_dependencies={"step_discover_app": [], "step_verify_app": ["step_discover_app"]},
-        )
+            plan = ExecutableTaskPlan(
+                plan_id="plan_live_browser",
+                task_id="task_live_browser",
+                description="Verify real active desktop application",
+                status=PlanStatus.VALID,
+                steps=[step1, step2],
+                step_dependencies={"step_discover_app": [], "step_verify_app": ["step_discover_app"]},
+            )
 
-        result: PlanExecutionResult = await executor.execute_plan(
-            plan=plan,
-            session_id="sess_live_scenario_b",
-            policy=ExecutionPolicy(max_total_attempts=2, allow_inconclusive_as_success=True),
-        )
+            result: PlanExecutionResult = await executor.execute_plan(
+                plan=plan,
+                session_id="sess_live_scenario_b",
+                policy=ExecutionPolicy(max_total_attempts=2, allow_inconclusive_as_success=True),
+            )
 
-        assert result.is_success is True
-        assert result.final_status == PlanExecutionStatus.SUCCEEDED
-        assert result.completed_steps == 2
-        assert result.failed_steps == 0
-    finally:
-        await kbd.shutdown()
-        await ptr.shutdown()
-        await wsp.shutdown()
-        await obs.shutdown()
+            assert result.is_success is True
+            assert result.final_status == PlanExecutionStatus.SUCCEEDED
+            assert result.completed_steps == 2
+            assert result.failed_steps == 0
+        finally:
+            await kbd.shutdown()
+            await ptr.shutdown()
+            await wsp.shutdown()
+            await obs.shutdown()
 
 
 # ==============================================================================

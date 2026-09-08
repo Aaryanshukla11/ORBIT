@@ -31,6 +31,12 @@ user32.GetWindowDC.restype = wintypes.HDC
 user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
 user32.ReleaseDC.restype = ctypes.c_int
 
+user32.OpenInputDesktop.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+user32.OpenInputDesktop.restype = wintypes.HANDLE
+
+user32.SetThreadDesktop.argtypes = [wintypes.HANDLE]
+user32.SetThreadDesktop.restype = wintypes.BOOL
+
 user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
 user32.PrintWindow.restype = wintypes.BOOL
 

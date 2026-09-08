@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, List, Optional, Protocol, Tuple, runtime_check
 from uuid import uuid4
 
 from orbit.adapters.observation.snapshot import (
+    BoundingBox,
     FreshnessState,
     ObservationSnapshot,
     ObservedElement,
@@ -34,6 +35,35 @@ if TYPE_CHECKING:
 from orbit.runtime.perception.models import OCRResult, OCRStatus
 
 logger = logging.getLogger(__name__)
+
+if sys.platform == "win32":
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+
 
 
 @runtime_checkable
@@ -70,6 +100,7 @@ class EvidenceBasedTargetLocator:
     ) -> TargetResolutionResult:
         """Resolve TargetIntent against ObservationSnapshot using evidence-based matching."""
         # 1. Stale Observation Gate
+
         if snapshot.is_stale or snapshot.freshness_state == FreshnessState.STALE:
             reason = snapshot.invalidation_reason or "Observation snapshot TTL expired or generation invalid"
             logger.warning("Target localization rejected: snapshot %s is stale (%s)", snapshot.snapshot_id, reason)
@@ -106,6 +137,9 @@ class EvidenceBasedTargetLocator:
                 desktop_generation_id=snapshot.generation_id,
                 diagnostic_message=f"Unsupported target resolution strategy: {intent.strategy}",
             )
+
+    resolve = locate_target
+
 
     def _resolve_coordinate_region(
         self,
@@ -185,6 +219,63 @@ class EvidenceBasedTargetLocator:
         ctypes.windll.kernel32.CloseHandle(h_proc)
         return (pid.value, name)
 
+    @staticmethod
+    def _force_foreground_window(hwnd: int) -> bool:
+        """Robustly bring window to foreground using Win32 thread input attachment and Alt key simulation."""
+        if sys.platform != "win32" or not hwnd:
+            return False
+        try:
+            u32 = ctypes.windll.user32
+            k32 = ctypes.windll.kernel32
+            if not u32.IsWindow(hwnd):
+                return False
+
+            root_hwnd = u32.GetAncestor(hwnd, 2)  # GA_ROOT = 2
+            if not root_hwnd or not u32.IsWindow(root_hwnd):
+                root_hwnd = hwnd
+
+            if u32.IsIconic(root_hwnd):
+                u32.ShowWindow(root_hwnd, 9)  # SW_RESTORE
+            else:
+                u32.ShowWindow(root_hwnd, 5)  # SW_SHOW
+
+            cur_fg = u32.GetForegroundWindow()
+            if cur_fg == root_hwnd or cur_fg == hwnd:
+                return True
+
+            cur_tid = k32.GetCurrentThreadId()
+            fg_tid = u32.GetWindowThreadProcessId(cur_fg, None) if cur_fg else 0
+            target_tid = u32.GetWindowThreadProcessId(root_hwnd, None)
+
+            if fg_tid and fg_tid != cur_tid:
+                u32.AttachThreadInput(cur_tid, fg_tid, True)
+            if target_tid and target_tid != cur_tid:
+                u32.AttachThreadInput(cur_tid, target_tid, True)
+
+            # Bypass Windows SetForegroundWindow lock using Alt key simulation
+            VK_MENU = 0x12
+            KEYEVENTF_KEYUP = 0x0002
+            u32.keybd_event(VK_MENU, 0, 0, 0)
+            u32.SetForegroundWindow(root_hwnd)
+            u32.BringWindowToTop(root_hwnd)
+            u32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+
+            if hwnd != root_hwnd and u32.IsWindow(hwnd):
+                u32.SetFocus(hwnd)
+            else:
+                u32.SetFocus(root_hwnd)
+
+            if fg_tid and fg_tid != cur_tid:
+                u32.AttachThreadInput(cur_tid, fg_tid, False)
+            if target_tid and target_tid != cur_tid:
+                u32.AttachThreadInput(cur_tid, target_tid, False)
+
+            time.sleep(0.05)
+            final_fg = u32.GetForegroundWindow()
+            return final_fg == root_hwnd or final_fg == hwnd or (u32.GetAncestor(final_fg, 2) == root_hwnd)
+        except Exception:
+            return False
+
     def _resolve_window(
         self,
         snapshot: ObservationSnapshot,
@@ -217,13 +308,25 @@ class EvidenceBasedTargetLocator:
 
             # Check Window Title or Process Name
             if tq_clean:
-                title_match = bool(win.window_title and tq_clean in win.window_title.lower())
-                proc_match = bool(win.process_name and (tq_clean in win.process_name.lower() or win.process_name.lower().startswith(tq_clean)))
+                w_title = (win.window_title or "").lower()
+                w_proc = (win.process_name or "").lower()
+                proc_match = bool(w_proc and (tq_clean in w_proc or w_proc.startswith(tq_clean) or (tq_clean in ("calculator", "calc") and "calc" in w_proc)))
+                title_exact = bool(w_title and (w_title == tq_clean or w_title.endswith(f" - {tq_clean}") or w_title.startswith(f"{tq_clean} - ") or w_title.startswith(f"{tq_clean} ")))
+                title_words = [word.strip(' -–_()[],.') for word in w_title.split()]
+                word_match = bool(tq_clean in title_words or (tq_clean in ("calculator", "calc") and ("calc" in title_words or "calculator" in title_words)))
+                title_substr = bool(w_title and (tq_clean in w_title or (len(w_title) >= 4 and w_title in tq_clean)))
+
+                # Exclude IDE/editor tabs matching utility app names unless process matches
+                is_ide = any(ide in w_proc for ide in ("antigravity", "code.exe", "devenv.exe", "pycharm", "idea", "studio"))
+                if is_ide and tq_clean in ("notepad", "calculator", "calc", "paint", "mspaint", "cmd", "terminal") and not proc_match:
+                    continue
+
                 if tq_clean in ("browser", "web browser", "internet"):
                     known_browsers = ("chrome", "msedge", "edge", "brave", "firefox", "opera")
-                    if any(b in (win.process_name or "").lower() or b in (win.window_title or "").lower() for b in known_browsers):
+                    if any(b in w_proc or b in w_title for b in known_browsers):
                         proc_match = True
-                if not (title_match or proc_match):
+
+                if not (proc_match or title_exact or word_match or title_substr):
                     continue
 
             candidates.append(win)
@@ -231,79 +334,118 @@ class EvidenceBasedTargetLocator:
         if len(candidates) == 0:
             if tq_clean and sys.platform == "win32":
                 known_app_launchers = {
-                    "notepad": "notepad.exe",
-                    "paint": "mspaint.exe",
-                    "mspaint": "mspaint.exe",
-                    "calculator": "calc.exe",
-                    "calc": "calc.exe",
-                    "cmd": "cmd.exe",
-                    "terminal": "wt.exe",
-                    "explorer": "explorer.exe",
+                    "notepad": [
+                        r"C:\Windows\System32\notepad.exe",
+                        "notepad.exe",
+                        "notepad",
+                        "explorer.exe shell:AppsFolder\\Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+                    ],
+                    "paint": [
+                        "mspaint.exe",
+                        r"C:\Windows\System32\mspaint.exe",
+                        "mspaint",
+                        "explorer.exe shell:AppsFolder\\Microsoft.Paint_8wekyb3d8bbwe!App",
+                    ],
+                    "mspaint": [
+                        "mspaint.exe",
+                        r"C:\Windows\System32\mspaint.exe",
+                        "mspaint",
+                    ],
+                    "calculator": [
+                        "calc.exe",
+                        "calculator:",
+                        r"C:\Windows\System32\calc.exe",
+                        "explorer.exe shell:AppsFolder\\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+                    ],
+                    "calc": [
+                        "calc.exe",
+                        "calculator:",
+                        r"C:\Windows\System32\calc.exe",
+                    ],
+                    "cmd": ["cmd.exe", "wt.exe"],
+                    "terminal": ["wt.exe", "cmd.exe"],
+                    "explorer": ["explorer.exe"],
                 }
-                exe_name = known_app_launchers.get(tq_clean)
-                if exe_name:
+                launch_targets = known_app_launchers.get(tq_clean, [])
+                if isinstance(launch_targets, str):
+                    launch_targets = [launch_targets]
+
+                for target_cmd in launch_targets:
                     try:
-                        import subprocess
-                        subprocess.Popen([exe_name], shell=False)
+                        # Launch via robust Windows mechanism
+                        try:
+                            if os.path.isabs(target_cmd) and os.path.exists(target_cmd):
+                                os.startfile(target_cmd)
+                            elif target_cmd.endswith(".exe"):
+                                try:
+                                    os.startfile(target_cmd)
+                                except Exception:
+                                    os.system(f"start {target_cmd}")
+                            elif target_cmd.startswith("explorer.exe "):
+                                os.system(f"start {target_cmd}")
+                            elif ":" in target_cmd:
+                                os.system(f"start {target_cmd}")
+                            else:
+                                os.system(f"start {target_cmd}")
+                        except Exception as l_err:
+                            logger.debug("Primary launch exception for '%s': %s", target_cmd, l_err)
+                            try:
+                                ctypes.windll.shell32.ShellExecuteW(0, "open", target_cmd, None, None, 1)
+                            except Exception:
+                                subprocess.Popen([target_cmd], shell=False)
                         
-                        # Deterministic polling loop (up to 3.0s) for launched application window
+                        # Deterministic polling loop (up to 4.5s) for launched application window
                         t_poll_start = time.perf_counter()
-                        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-                        GetWindowTextLength = ctypes.windll.user32.GetWindowTextLengthW
-                        GetWindowText = ctypes.windll.user32.GetWindowTextW
-                        IsWindowVisible = ctypes.windll.user32.IsWindowVisible
-                        GetWindowRect = ctypes.windll.user32.GetWindowRect
-
                         found_wins: List[ObservedWindow] = []
-                        while (time.perf_counter() - t_poll_start) < 3.0:
+                        while (time.perf_counter() - t_poll_start) < 4.5:
                             found_wins.clear()
-                            def _enum_cb(hwnd, lparam):
-                                if IsWindowVisible(hwnd):
-                                    r = wintypes.RECT()
-                                    if GetWindowRect(hwnd, ctypes.byref(r)):
-                                        w = r.right - r.left
-                                        h = r.bottom - r.top
-                                        if w > 50 and h > 50:
-                                            length = GetWindowTextLength(hwnd)
-                                            buff = ctypes.create_unicode_buffer(length + 1)
-                                            GetWindowText(hwnd, buff, length + 1)
-                                            w_title = buff.value
-                                            pid, proc_name = self._get_proc_name_by_hwnd(hwnd)
-                                            
-                                            title_match = bool(w_title and tq_clean in w_title.lower())
-                                            proc_match = bool(proc_name and (tq_clean in proc_name.lower() or exe_name.lower() in proc_name.lower()))
-                                            
-                                            if title_match or proc_match:
-                                                from orbit.models.common import BoundingBox
-                                                found_wins.append(
-                                                    ObservedWindow(
-                                                        hwnd=hwnd,
-                                                        process_id=pid or 0,
-                                                        window_title=w_title,
-                                                        process_name=proc_name or exe_name,
-                                                        is_visible=True,
-                                                        is_foreground=(ctypes.windll.user32.GetForegroundWindow() == hwnd),
-                                                        extended_bounds=BoundingBox(
-                                                            left=r.left,
-                                                            top=r.top,
-                                                            width=w,
-                                                            height=h,
-                                                        ),
-                                                    )
-                                                )
-                                return True
+                            try:
+                                from window_tracker import WindowTracker
+                                from orbit.adapters.observation.mapper import map_rect_to_bounding_box
+                                wt = WindowTracker()
+                                raw_wins = wt.enumerate_visible_windows()
+                                for w_obs in raw_wins:
+                                    w_title = (w_obs.window_title or "").lower()
+                                    w_proc = (w_obs.process_name or "").lower()
+                                    
+                                    is_ide = any(ide in w_proc for ide in ("antigravity", "code.exe", "devenv.exe", "pycharm", "idea", "studio"))
+                                    if is_ide and not (tq_clean in w_proc):
+                                        continue
 
-                            cb = WNDENUMPROC(_enum_cb)
-                            ctypes.windll.user32.EnumWindows(cb, 0)
+                                    title_match = bool(w_title and (tq_clean in w_title or (len(w_title) >= 4 and w_title in tq_clean) or (tq_clean in ("calc", "calculator") and "calc" in w_title) or (tq_clean in ("paint", "mspaint") and "paint" in w_title)))
+                                    proc_match = bool(w_proc and (tq_clean in w_proc or (tq_clean in ("calc", "calculator") and ("calc" in w_proc or "calculator" in w_proc)) or (tq_clean == "notepad" and "notepad" in w_proc) or (tq_clean in ("paint", "mspaint") and "paint" in w_proc)))
+                                    uwp_host_match = bool("applicationframehost" in w_proc and title_match)
+
+                                    if title_match or proc_match or uwp_host_match:
+                                        found_wins.append(
+                                            ObservedWindow(
+                                                hwnd=w_obs.hwnd,
+                                                process_id=w_obs.process_id or 0,
+                                                window_title=w_obs.window_title or "",
+                                                process_name=w_obs.process_name or target_cmd,
+                                                is_visible=True,
+                                                is_foreground=(ctypes.windll.user32.GetForegroundWindow() == w_obs.hwnd),
+                                                extended_bounds=map_rect_to_bounding_box(w_obs.extended_bounds),
+                                            )
+                                        )
+                                if not found_wins:
+                                    logger.debug("Polling for '%s' (cmd '%s'): %d raw windows", tq_clean, target_cmd, len(raw_wins))
+                            except Exception as poll_ex:
+                                logger.warning("Polling error: %s", poll_ex)
+
                             if found_wins:
+                                logger.info("Found launched window for '%s': %s", tq_clean, [(w.hwnd, w.window_title, w.process_name) for w in found_wins])
                                 candidates.extend(found_wins)
                                 break
-                            time.sleep(0.1)
+                            time.sleep(0.2)
 
-                        if not candidates:
-                            logger.warning("Application '%s' was launched via '%s' but no visible window appeared within timeout", title_query, exe_name)
+                        if candidates:
+                            break
                     except Exception as launch_err:
-                        logger.warning("Failed to launch application '%s': %s", title_query, launch_err)
+                        logger.warning("Failed to launch application '%s' with '%s': %s", title_query, target_cmd, launch_err)
+
+                if not candidates:
+                    logger.warning("Application '%s' was launched but no visible window appeared within timeout", title_query)
 
         if len(candidates) == 0:
             title_query = intent.window_title or intent.name
@@ -320,23 +462,23 @@ class EvidenceBasedTargetLocator:
 
         if len(candidates) > 1:
             def score_win(w: ObservedWindow) -> tuple:
+                w_title = (w.window_title or "").lower()
+                w_proc = (w.process_name or "").lower()
+                proc_exact = 1 if (tq_clean and (w_proc == f"{tq_clean}.exe" or w_proc.startswith(tq_clean))) else 0
+                title_exact = 1 if (tq_clean and (w_title == tq_clean or w_title.endswith(f" - {tq_clean}") or w_title.startswith(f"{tq_clean} - ") or w_title.startswith(f"{tq_clean} "))) else 0
                 has_title = 1 if bool(w.window_title and w.window_title.strip()) else 0
-                title_matches = 1 if (tq_clean and w.window_title and tq_clean in w.window_title.lower()) else 0
+                title_matches = 1 if (tq_clean and tq_clean in w_title) else 0
                 is_fg = 1 if w.is_foreground else 0
                 area = (w.extended_bounds.width or 0) * (w.extended_bounds.height or 0) if w.extended_bounds else 0
                 z_rank = getattr(w, "z_order_rank", 9999)
-                return (has_title, title_matches, is_fg, area, -z_rank)
+                return (proc_exact, title_exact, has_title, title_matches, is_fg, area, -z_rank)
 
             matched_win = max(candidates, key=score_win)
         else:
             matched_win = candidates[0]
 
         if sys.platform == "win32" and matched_win.hwnd:
-            try:
-                ctypes.windll.user32.ShowWindow(matched_win.hwnd, 9)
-                ctypes.windll.user32.SetForegroundWindow(matched_win.hwnd)
-            except Exception:
-                pass
+            self._force_foreground_window(matched_win.hwnd)
 
         try:
             tbox = TargetBoundingBox.from_bounding_box(matched_win.extended_bounds)
@@ -381,14 +523,243 @@ class EvidenceBasedTargetLocator:
                 diagnostic_message=f"Failed to calculate safe point for window bounds: {ex}",
             )
 
+    @staticmethod
+    def _find_target_window(snapshot: ObservationSnapshot, intent: TargetIntent) -> Optional[ObservedWindow]:
+        """Resolve the active or intended target window from snapshot and intent."""
+        # 1. Match explicit HWND
+        if intent.target_hwnd:
+            for w in snapshot.windows:
+                if w.hwnd == intent.target_hwnd:
+                    return w
+            if snapshot.foreground_window and snapshot.foreground_window.hwnd == intent.target_hwnd:
+                return snapshot.foreground_window
+
+        # 2. Match Window Title or Process Name
+        tq = (intent.window_title or "").strip().lower()
+        pq = (intent.process_name or "").strip().lower()
+        if tq or pq:
+            scored_candidates: List[Tuple[float, ObservedWindow]] = []
+            all_wins = list(snapshot.windows)
+            if snapshot.foreground_window and snapshot.foreground_window not in all_wins:
+                all_wins.append(snapshot.foreground_window)
+
+            for w in all_wins:
+                if not w.is_visible:
+                    continue
+                w_title = (w.window_title or "").lower()
+                w_proc = (w.process_name or "").lower()
+                
+                is_ide = any(ide in w_proc for ide in ("antigravity", "code.exe", "devenv.exe", "pycharm", "idea", "studio"))
+                if is_ide and tq in ("notepad", "calculator", "calc", "paint", "mspaint", "cmd", "terminal") and not (tq in w_proc):
+                    continue
+
+                score = 0.0
+                if pq and (pq == w_proc or pq in w_proc):
+                    score += 100.0
+                if tq:
+                    if w_proc == f"{tq}.exe" or w_proc.startswith(tq):
+                        score += 100.0
+                    elif tq in w_proc or (tq in ("calc", "calculator") and "calc" in w_proc):
+                        score += 80.0
+                    
+                    if w_title == tq:
+                        score += 90.0
+                    elif w_title.endswith(f" - {tq}") or w_title.startswith(f"{tq} - ") or w_title.startswith(f"{tq} "):
+                        score += 85.0
+                    elif tq in w_title.split() or (tq in ("calc", "calculator") and "calculator" in w_title.split()):
+                        score += 50.0
+                    elif tq in w_title or (tq in ("calc", "calculator") and "calculator" in w_title):
+                        score += 10.0
+
+                if score > 0:
+                    if w.is_foreground:
+                        score += 5.0
+                    scored_candidates.append((score, w))
+
+            if scored_candidates:
+                scored_candidates.sort(key=lambda item: item[0], reverse=True)
+                return scored_candidates[0][1]
+
+            # Check live desktop windows if window just launched
+            if sys.platform == "win32":
+                try:
+                    from window_tracker import WindowTracker
+                    from orbit.adapters.observation.mapper import map_rect_to_bounding_box
+                    wt = WindowTracker()
+                    live_candidates: List[Tuple[float, ObservedWindow]] = []
+                    for w_obs in wt.enumerate_visible_windows():
+                        w_title = (w_obs.window_title or "").lower()
+                        w_proc = (w_obs.process_name or "").lower()
+                        
+                        is_ide = any(ide in w_proc for ide in ("antigravity", "code.exe", "devenv.exe", "pycharm", "idea", "studio"))
+                        if is_ide and tq in ("notepad", "calculator", "calc", "paint", "mspaint", "cmd", "terminal") and not (tq in w_proc):
+                            continue
+
+                        score = 0.0
+                        if pq and (pq in w_proc or pq in w_title):
+                            score += 100.0
+                        if tq:
+                            if w_proc == f"{tq}.exe" or w_proc.startswith(tq):
+                                score += 100.0
+                            elif tq in w_proc or (tq in ("calc", "calculator") and "calc" in w_proc):
+                                score += 80.0
+                            if w_title == tq:
+                                score += 90.0
+                            elif w_title.endswith(f" - {tq}") or w_title.startswith(f"{tq} - ") or w_title.startswith(f"{tq} "):
+                                score += 85.0
+                            elif tq in w_title.split() or (tq in ("calc", "calculator") and "calculator" in w_title.split()):
+                                score += 50.0
+                            elif tq in w_title or (tq in ("calc", "calculator") and "calculator" in w_title):
+                                score += 10.0
+
+                        if score > 0:
+                            live_candidates.append((
+                                score,
+                                ObservedWindow(
+                                    hwnd=w_obs.hwnd,
+                                    process_id=w_obs.process_id or 0,
+                                    window_title=w_obs.window_title or "",
+                                    process_name=w_obs.process_name or "",
+                                    is_visible=True,
+                                    is_foreground=(ctypes.windll.user32.GetForegroundWindow() == w_obs.hwnd),
+                                    extended_bounds=map_rect_to_bounding_box(w_obs.extended_bounds),
+                                )
+                            ))
+                    if live_candidates:
+                        live_candidates.sort(key=lambda item: item[0], reverse=True)
+                        return live_candidates[0][1]
+                except Exception:
+                    pass
+
+            return None
+
+        # 3. Use focused / foreground window if no explicit title requested
+        if snapshot.foreground_window and snapshot.foreground_window.is_visible:
+            return snapshot.foreground_window
+
+        for w in snapshot.windows:
+            if w.is_visible and w.is_foreground:
+                return w
+
+        # 4. First visible window if any
+        for w in snapshot.windows:
+            if w.is_visible and w.extended_bounds and w.extended_bounds.width > 50:
+                return w
+
+        return None
+
+    @staticmethod
+    def _match_semantic_target(
+        query: str,
+        name: Optional[str],
+        automation_id: Optional[str] = None,
+        role: Optional[str] = None,
+        control_type: Optional[str] = None,
+        class_name: Optional[str] = None,
+    ) -> Tuple[bool, float]:
+        """Match element metadata against semantic query string, returning (is_match, score)."""
+        if not query:
+            return (False, 0.0)
+
+        q = query.strip().lower()
+        n = (name or "").strip().lower()
+        aid = (automation_id or "").strip().lower()
+
+        # Semantic Digit & Operator Mappings
+        digit_map = {
+            "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
+            "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine",
+        }
+        reverse_digit_map = {v: k for k, v in digit_map.items()}
+        operator_map = {
+            "+": ["plus", "add", "addition", "plusbutton", "addbutton"],
+            "-": ["minus", "subtract", "subtraction", "minusbutton", "subtractbutton"],
+            "*": ["multiply", "multiplication", "times", "multiplybutton", "multiply by"],
+            "x": ["multiply", "multiplication", "times", "multiplybutton", "multiply by"],
+            "×": ["multiply", "multiplication", "times", "multiplybutton", "multiply by"],
+            "/": ["divide", "division", "dividebutton", "divide by"],
+            "÷": ["divide", "division", "dividebutton", "divide by"],
+            "=": ["equal", "equals", "equalbutton", "equalsbutton"],
+            "c": ["clear", "clearbutton"],
+            "ce": ["clear entry", "clear entry button"],
+        }
+
+        # 1. Exact Name match
+        if n and q == n:
+            return (True, 1.0)
+
+        # 2. Digit alias name match (e.g. "7" <-> "Seven" or "Seven" <-> "7")
+        if q in digit_map and n == digit_map[q]:
+            return (True, 0.98)
+        if q in reverse_digit_map and n == reverse_digit_map[q]:
+            return (True, 0.98)
+
+        # 3. Operator alias name match (e.g. "+" <-> "plus")
+        if q in operator_map and any(n == op for op in operator_map[q]):
+            return (True, 0.98)
+
+        # 4. Exact AutomationId match
+        if aid and q == aid:
+            return (True, 0.97)
+
+        # 5. AutomationId semantic digit patterns (e.g. "num7Button", "sevenButton", "button7", "NumberPad7")
+        if q in digit_map:
+            word_d = digit_map[q]
+            patterns = [
+                f"num{q}button", f"num{word_d}button", f"{word_d}button", f"button{q}",
+                f"numberpad{q}", f"numberpad_{q}", f"button_{q}", f"num{q}", f"digit{q}",
+            ]
+            if aid and any(p in aid for p in patterns):
+                return (True, 0.96)
+            if n and any(p in n for p in patterns):
+                return (True, 0.96)
+
+        # 6. AutomationId operator patterns (e.g. "plusButton", "equalButton")
+        if q in operator_map:
+            for op in operator_map[q]:
+                if aid and (f"{op}button" in aid or f"btn{op}" in aid or op in aid):
+                    return (True, 0.95)
+
+        # 7. Exact AutomationId containing target as full word/token (e.g. "SaveButton", "btnSave", "SettingsButton")
+        if aid:
+            tokens = [aid, aid.replace("_", ""), aid.replace("-", "")]
+            if any(t.endswith(f"{q}button") or t.startswith(f"btn{q}") or t == f"{q}button" for t in tokens):
+                return (True, 0.94)
+
+        # 8. Normalized Name Substring match (e.g. "Save", "File", "Settings", "OK")
+        if n and q in n:
+            # Full word or clean substring
+            score = 0.92 if len(n.split()) == 1 else 0.88
+            return (True, score)
+
+        # 9. AutomationId contains query substring
+        if aid and q in aid:
+            return (True, 0.80)
+
+        return (False, 0.0)
+
     def _resolve_accessibility_element(
         self,
         snapshot: ObservationSnapshot,
         intent: TargetIntent,
     ) -> TargetResolutionResult:
         """Resolve target from UI accessibility elements (MSAA, UI Automation, Win32)."""
-        candidates: List[ObservedElement] = []
+        target_win = self._find_target_window(snapshot, intent)
+        target_hwnd = target_win.hwnd if target_win else intent.target_hwnd
 
+        if sys.platform == "win32" and target_hwnd:
+            self._force_foreground_window(target_hwnd)
+
+        # Extract target window bounding box for spatial containment filtering
+        win_box = None
+        if target_win and target_win.extended_bounds:
+            wb = target_win.extended_bounds
+            if wb.width > 0 and wb.height > 0:
+                win_box = (wb.left, wb.top, wb.left + wb.width, wb.top + wb.height)
+
+        scored_candidates: List[Tuple[float, ObservedElement]] = []
+
+        query = intent.name or intent.text or intent.automation_id
         for el in snapshot.detected_elements:
             # Skip disabled or offscreen elements
             if el.is_offscreen or not el.is_enabled:
@@ -398,77 +769,149 @@ class EvidenceBasedTargetLocator:
             if el.bounds.width <= 0 or el.bounds.height <= 0:
                 continue
 
-            # Check accessible name
-            if intent.name:
-                if not el.name or intent.name.lower() not in el.name.lower():
+            # Spatial validation: Element must lie within window bounds if window is identified
+            el_cx = el.bounds.left + (el.bounds.width / 2.0)
+            el_cy = el.bounds.top + (el.bounds.height / 2.0)
+
+            if win_box:
+                w_left, w_top, w_right, w_bottom = win_box
+                # Allow a small 30px tolerance margin for non-client window borders/shadows
+                if not (w_left - 30 <= el_cx <= w_right + 30 and w_top - 30 <= el_cy <= w_bottom + 30):
+                    # Candidate is outside the target window bounds
                     continue
 
-            # Check role / control type
+            # Check role / control type if specified
+            role_boost = 0.0
             if intent.role:
                 req_role = intent.role.lower()
                 role_match = (
-                    req_role in el.role.lower()
-                    or req_role in el.control_type.lower()
+                    req_role in (el.role or "").lower()
+                    or req_role in (el.control_type or "").lower()
                 )
-                if not role_match:
-                    continue
+                if role_match:
+                    role_boost = 0.05
 
-            # Check automation_id
-            if intent.automation_id:
-                if not el.automation_id or intent.automation_id.lower() != el.automation_id.lower():
-                    continue
-
-            # Check class name
+            # Check class name if specified
             if intent.class_name:
                 if not el.class_name or intent.class_name.lower() not in el.class_name.lower():
                     continue
 
-            candidates.append(el)
+            # Semantic match
+            is_match, score = self._match_semantic_target(
+                query=query,
+                name=el.name,
+                automation_id=el.automation_id,
+                role=el.role,
+                control_type=el.control_type,
+                class_name=el.class_name,
+            )
 
-        if len(candidates) == 0:
+            if is_match:
+                score += role_boost
+                if el.is_focused:
+                    score += 0.05
+                scored_candidates.append((score, el))
+
+        # If no snapshot elements matched, query genuine UI Automation directly for target window HWND
+        if not scored_candidates and sys.platform == "win32" and target_win and target_win.hwnd:
+            try:
+                from accessibility_coordinator import AccessibilityCoordinator
+                coord = AccessibilityCoordinator(timeout_ms=1500.0)
+                live_elems, _ = coord.collect_accessibility_observations(hwnd=target_win.hwnd)
+                if not live_elems:
+                    time.sleep(0.3)
+                    live_elems, _ = coord.collect_accessibility_observations(hwnd=target_win.hwnd)
+                for uia_el in live_elems:
+                    b = uia_el.bounds
+                    if b.width <= 0 or b.height <= 0:
+                        continue
+                    el_cx = b.left + (b.width / 2.0)
+                    el_cy = b.top + (b.height / 2.0)
+                    if win_box:
+                        w_left, w_top, w_right, w_bottom = win_box
+                        if not (w_left - 30 <= el_cx <= w_right + 30 and w_top - 30 <= el_cy <= w_bottom + 30):
+                            continue
+                    
+                    role_boost = 0.0
+                    if intent.role:
+                        req_role = intent.role.lower()
+                        if req_role in (uia_el.role or "").lower() or req_role in (getattr(uia_el, "control_type", "") or "").lower():
+                            role_boost = 0.05
+
+                    is_match, score = self._match_semantic_target(
+                        query=query,
+                        name=uia_el.name,
+                        automation_id=uia_el.automation_id,
+                        role=uia_el.role,
+                        control_type=getattr(uia_el, "control_type", None),
+                        class_name=getattr(uia_el, "class_name", None),
+                    )
+                    if is_match:
+                        score += role_boost
+                        if uia_el.is_focused:
+                            score += 0.05
+                        src_val = getattr(uia_el, "evidence_source", None) or getattr(uia_el, "source", "UI_AUTOMATION")
+                        if hasattr(src_val, "value"):
+                            src_val = src_val.value
+                        obs_el = ObservedElement(
+                            element_id=f"el_live_{uia_el.element_id}",
+                            source=str(src_val),
+                            name=uia_el.name,
+                            role=uia_el.role,
+                            control_type=getattr(uia_el, "control_type", "Unknown") or "Unknown",
+                            automation_id=uia_el.automation_id,
+                            class_name=getattr(uia_el, "class_name", None),
+                            bounds=BoundingBox(left=b.left, top=b.top, width=b.width, height=b.height),
+                            is_enabled=uia_el.is_enabled,
+                            is_focused=uia_el.is_focused,
+                            is_offscreen=uia_el.is_offscreen,
+                        )
+                        scored_candidates.append((score, obs_el))
+
+            except Exception as live_acc_err:
+                logger.debug("Window-scoped accessibility collection notice: %s", live_acc_err)
+
+        if not scored_candidates:
             # Fallback for document/editor surfaces: if targeting generic edit/input/document role without specific name,
-            # resolve against active foreground window or matching window client area.
-            target_win = snapshot.foreground_window or next((w for w in snapshot.windows if w.is_foreground), None)
-            if not target_win and intent.window_title:
-                target_win = next((w for w in snapshot.windows if intent.window_title.lower() in (w.window_title or "").lower()), None)
-            elif not target_win and snapshot.windows:
-                target_win = snapshot.windows[0]
+            # resolve against active foreground window client area.
+            if target_win:
+                win_bounds = getattr(target_win, "client_bounds", None) or getattr(target_win, "extended_bounds", None)
+                if win_bounds and win_bounds.width > 0 and win_bounds.height > 0:
+                    generic_edit_roles = {"edit", "document", "input", "document_body", "editor", "text", "canvas"}
+                    if not query or query.lower() in generic_edit_roles:
 
-            win_bounds = getattr(target_win, "client_bounds", None) or getattr(target_win, "extended_bounds", None) if target_win else None
-            if target_win and win_bounds and win_bounds.width > 0 and win_bounds.height > 0:
-                generic_edit_roles = {"edit", "document", "input", "document_body", "editor", "text", "canvas"}
-                if not intent.name or intent.name.lower() in generic_edit_roles:
-                    try:
-                        tbox = TargetBoundingBox.from_bounding_box(win_bounds)
-                        safe_pt = calculate_safe_action_point(bounds=tbox, desktop_generation_id=snapshot.generation_id)
-                        resolved = ResolvedTarget(
-                            target_id=f"tgt_client_{target_win.hwnd}_{uuid4().hex[:6]}",
-                            bounding_box=tbox,
-                            safe_point=safe_pt,
-                            confidence=0.90,
-                            evidence=TargetEvidence(
-                                source="WINDOW_CLIENT_AREA",
-                                identifier=str(target_win.hwnd),
-                                name=target_win.window_title or "WindowClientArea",
-                                role=intent.role or "edit",
+                        try:
+                            tbox = TargetBoundingBox.from_bounding_box(win_bounds)
+                            safe_pt = calculate_safe_action_point(bounds=tbox, desktop_generation_id=snapshot.generation_id)
+                            resolved = ResolvedTarget(
+                                target_id=f"tgt_client_{target_win.hwnd}_{uuid4().hex[:6]}",
+                                bounding_box=tbox,
+                                safe_point=safe_pt,
                                 confidence=0.90,
-                                raw_metadata={"hwnd": target_win.hwnd, "process_name": target_win.process_name},
-                            ),
-                            observation_id=snapshot.snapshot_id,
-                            desktop_generation_id=snapshot.generation_id,
-                            target_hwnd=target_win.hwnd,
-                        )
-                        return TargetResolutionResult(
-                            status=TargetResolutionStatus.RESOLVED,
-                            target=resolved,
-                            candidates_count=1,
-                            observation_id=snapshot.snapshot_id,
-                            desktop_generation_id=snapshot.generation_id,
-                        )
-                    except Exception as ex:
-                        logger.warning("Failed client bounds fallback resolution: %s", ex)
+                                evidence=TargetEvidence(
+                                    source="WINDOW_CLIENT_AREA",
+                                    identifier=str(target_win.hwnd),
+                                    name=target_win.window_title or "WindowClientArea",
+                                    role=intent.role or "edit",
+                                    confidence=0.90,
+                                    raw_metadata={"hwnd": target_win.hwnd, "process_name": target_win.process_name},
+                                ),
+                                observation_id=snapshot.snapshot_id,
+                                desktop_generation_id=snapshot.generation_id,
+                                target_hwnd=target_win.hwnd,
+                            )
+                            return TargetResolutionResult(
+                                status=TargetResolutionStatus.RESOLVED,
+                                target=resolved,
+                                candidates_count=1,
+                                observation_id=snapshot.snapshot_id,
+                                desktop_generation_id=snapshot.generation_id,
+                            )
+                        except Exception as ex:
+                            logger.warning("Failed client bounds fallback resolution: %s", ex)
 
-            if self._perception_engine and (intent.name or intent.text):
+            # Tier 2: Attempt OCR fallback if accessibility did not resolve
+            if query:
                 try:
                     ocr_res = self._resolve_ocr_text(snapshot, intent)
                     if ocr_res.status == TargetResolutionStatus.RESOLVED and ocr_res.target:
@@ -482,36 +925,40 @@ class EvidenceBasedTargetLocator:
                 observation_id=snapshot.snapshot_id,
                 desktop_generation_id=snapshot.generation_id,
                 diagnostic_message=(
-                    f"No accessible element matched criteria: name='{intent.name}', "
-                    f"role='{intent.role}', automation_id='{intent.automation_id}'"
+                    f"No accessible element matched criteria: query='{query}', "
+                    f"role='{intent.role}', automation_id='{intent.automation_id}' in window {target_hwnd}"
                 ),
             )
 
-        if len(candidates) > 1:
-            # If multiple match, check if exactly one is focused or has exact name match
-            exact_name_matches = [
-                c for c in candidates
-                if intent.name and c.name and c.name.strip().lower() == intent.name.strip().lower()
-            ]
-            if len(exact_name_matches) == 1:
-                matched_el = exact_name_matches[0]
-            else:
-                focused_matches = [c for c in candidates if c.is_focused]
-                if len(focused_matches) == 1:
-                    matched_el = focused_matches[0]
+        # Sort candidates descending by score
+        scored_candidates.sort(key=lambda item: item[0], reverse=True)
+
+        top_score, top_el = scored_candidates[0]
+        if len(scored_candidates) > 1:
+            second_score, _ = scored_candidates[1]
+            # If top two candidates have identical score and neither has exact name match or focus
+            if abs(top_score - second_score) < 0.01 and not top_el.is_focused:
+                exact_name_matches = [
+                    c for score, c in scored_candidates
+                    if query and c.name and c.name.strip().lower() == query.strip().lower()
+                ]
+                if len(exact_name_matches) == 1:
+                    matched_el = exact_name_matches[0]
                 else:
                     return TargetResolutionResult(
                         status=TargetResolutionStatus.AMBIGUOUS,
-                        candidates_count=len(candidates),
+                        candidates_count=len(scored_candidates),
                         observation_id=snapshot.snapshot_id,
                         desktop_generation_id=snapshot.generation_id,
                         diagnostic_message=(
-                            f"Ambiguous accessibility target: {len(candidates)} elements matched "
-                            f"criteria (name='{intent.name}', role='{intent.role}')"
+                            f"Ambiguous accessibility target: {len(scored_candidates)} elements matched "
+                            f"query '{query}' (top scores: {top_score:.2f}, {second_score:.2f})"
                         ),
                     )
+            else:
+                matched_el = top_el
         else:
-            matched_el = candidates[0]
+            matched_el = top_el
 
         try:
             tbox = TargetBoundingBox.from_bounding_box(matched_el.bounds)
@@ -524,27 +971,29 @@ class EvidenceBasedTargetLocator:
                 target_id=f"tgt_el_{matched_el.element_id}_{uuid4().hex[:6]}",
                 bounding_box=tbox,
                 safe_point=safe_pt,
-                confidence=0.95,
+                confidence=min(1.0, top_score),
                 evidence=TargetEvidence(
-                    source=matched_el.source,
+                    source=matched_el.source or "UI_AUTOMATION",
                     identifier=matched_el.element_id,
                     name=matched_el.name,
-                    role=matched_el.role,
-                    confidence=0.95,
+                    role=matched_el.role or matched_el.control_type,
+                    confidence=min(1.0, top_score),
                     raw_metadata={
                         "control_type": matched_el.control_type,
                         "automation_id": matched_el.automation_id,
                         "class_name": matched_el.class_name,
                         "is_focused": matched_el.is_focused,
+                        "target_hwnd": target_hwnd,
                     },
                 ),
                 observation_id=snapshot.snapshot_id,
                 desktop_generation_id=snapshot.generation_id,
+                target_hwnd=target_hwnd,
             )
             return TargetResolutionResult(
                 status=TargetResolutionStatus.RESOLVED,
                 target=resolved,
-                candidates_count=1,
+                candidates_count=len(scored_candidates),
                 observation_id=snapshot.snapshot_id,
                 desktop_generation_id=snapshot.generation_id,
             )
@@ -561,7 +1010,7 @@ class EvidenceBasedTargetLocator:
         snapshot: ObservationSnapshot,
         intent: TargetIntent,
     ) -> TargetResolutionResult:
-        """Resolve target from OCR text recognition evidence."""
+        """Resolve target from OCR text recognition evidence (Tier 2)."""
         query_text = intent.text or intent.name
         if not query_text or not query_text.strip():
             return TargetResolutionResult(
@@ -571,38 +1020,42 @@ class EvidenceBasedTargetLocator:
                 diagnostic_message="OCR_TEXT strategy requires non-empty 'text' or 'name' in TargetIntent",
             )
 
-        # 1. Extract OCRResult evidence from intent metadata or snapshot telemetry
-        ocr_result_raw = intent.metadata.get("ocr_result") or snapshot.telemetry.get("ocr_result")
-        if ocr_result_raw is None:
-            return TargetResolutionResult(
-                status=TargetResolutionStatus.INVALID_REQUEST,
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                diagnostic_message=(
-                    "OCR_TEXT strategy requires OCRResult evidence in intent.metadata['ocr_result'] "
-                    "or snapshot.telemetry['ocr_result']"
-                ),
-            )
+        has_explicit_window = bool(intent.window_title or intent.process_name or intent.target_hwnd)
+        target_win = self._find_target_window(snapshot, intent) if has_explicit_window else None
+        target_hwnd = target_win.hwnd if target_win else intent.target_hwnd
 
-        if isinstance(ocr_result_raw, OCRResult):
-            ocr_result = ocr_result_raw
-        elif isinstance(ocr_result_raw, dict):
-            try:
-                ocr_result = OCRResult.model_validate(ocr_result_raw)
-            except Exception as ex:
-                return TargetResolutionResult(
-                    status=TargetResolutionStatus.INVALID_REQUEST,
-                    observation_id=snapshot.snapshot_id,
-                    desktop_generation_id=snapshot.generation_id,
-                    diagnostic_message=f"Invalid OCRResult structure: {ex}",
-                )
-        else:
-            return TargetResolutionResult(
-                status=TargetResolutionStatus.INVALID_REQUEST,
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                diagnostic_message=f"Unsupported ocr_result type: {type(ocr_result_raw)}",
-            )
+        # Extract target window bounding box for spatial containment filtering
+        win_box = None
+        if target_win and target_win.extended_bounds and has_explicit_window:
+            wb = target_win.extended_bounds
+            if wb.width > 0 and wb.height > 0:
+                win_box = (wb.left, wb.top, wb.left + wb.width, wb.top + wb.height)
+
+        # 1. Acquire OCR evidence: intent metadata, snapshot telemetry, or live synchronous scan
+        ocr_result: Optional[OCRResult] = None
+        ocr_result_raw = intent.metadata.get("ocr_result") or snapshot.telemetry.get("ocr_result")
+
+        if ocr_result_raw is not None:
+            if isinstance(ocr_result_raw, OCRResult):
+                ocr_result = ocr_result_raw
+            elif isinstance(ocr_result_raw, dict):
+                try:
+                    ocr_result = OCRResult.model_validate(ocr_result_raw)
+                except Exception as ex:
+                    return TargetResolutionResult(
+                        status=TargetResolutionStatus.INVALID_REQUEST,
+                        observation_id=snapshot.snapshot_id,
+                        desktop_generation_id=snapshot.generation_id,
+                        diagnostic_message=f"Invalid OCRResult structure: {ex}",
+                    )
+
+        if ocr_result is None:
+            # Perform live synchronous OCR extraction
+            engine = self._perception_engine
+            if engine is None:
+                from orbit.runtime.perception.engine import SemanticPerceptionEngine
+                engine = SemanticPerceptionEngine()
+            ocr_result = engine.scan_observation_sync(snapshot)
 
         # 2. Check OCR status
         if ocr_result.status == OCRStatus.STALE_OBSERVATION:
@@ -650,18 +1103,35 @@ class EvidenceBasedTargetLocator:
             )
 
         # 4. Search matching text regions using perception engine
-        if self._perception_engine is not None:
-            perception_engine = self._perception_engine
-        else:
+        engine = self._perception_engine
+        if engine is None:
             from orbit.runtime.perception.engine import SemanticPerceptionEngine
-            perception_engine = SemanticPerceptionEngine()
-        matches = perception_engine.find_text_regions(
+            engine = SemanticPerceptionEngine()
+
+        matches = engine.find_text_regions(
             ocr_result=ocr_result,
             query_text=query_text,
             exact_match=intent.exact_match,
             case_sensitive=intent.case_sensitive,
             min_confidence=intent.min_confidence,
         )
+
+        # If direct string match returned nothing, check semantic digit aliases (e.g. query "7" matching "7" or "Seven")
+        if not matches:
+            digit_map = {
+                "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four",
+                "5": "five", "6": "six", "7": "seven", "8": "eight", "9": "nine",
+            }
+            reverse_digit_map = {v: k for k, v in digit_map.items()}
+            alt_query = digit_map.get(query_text.strip().lower()) or reverse_digit_map.get(query_text.strip().lower())
+            if alt_query:
+                matches = engine.find_text_regions(
+                    ocr_result=ocr_result,
+                    query_text=alt_query,
+                    exact_match=False,
+                    case_sensitive=False,
+                    min_confidence=intent.min_confidence,
+                )
 
         if not matches:
             return TargetResolutionResult(
@@ -675,37 +1145,65 @@ class EvidenceBasedTargetLocator:
                 ),
             )
 
+        # 5. Spatial window containment filter
+        if win_box:
+            w_left, w_top, w_right, w_bottom = win_box
+            filtered_matches = []
+            for m in matches:
+                mc_x = m.bounding_box.left + (m.bounding_box.width / 2.0)
+                mc_y = m.bounding_box.top + (m.bounding_box.height / 2.0)
+                if (w_left - 30 <= mc_x <= w_right + 30) and (w_top - 30 <= mc_y <= w_bottom + 30):
+                    filtered_matches.append(m)
+            if filtered_matches:
+                matches = filtered_matches
+            else:
+                return TargetResolutionResult(
+                    status=TargetResolutionStatus.NOT_FOUND,
+                    observation_id=snapshot.snapshot_id,
+                    desktop_generation_id=snapshot.generation_id,
+                    candidates_count=0,
+                    diagnostic_message=(
+                        f"OCR text '{query_text}' was detected but lies outside the active window bounds ({win_box})"
+                    ),
+                )
+
         if len(matches) > 1:
-            candidate_boxes = [
-                f"({m.bounding_box.left},{m.bounding_box.top},{m.bounding_box.width}x{m.bounding_box.height})"
-                for m in matches
+            # Check if exactly 1 has exact text match
+            exact_matches = [
+                m for m in matches
+                if m.text.strip().lower() == query_text.strip().lower()
             ]
-            logger.warning(
-                "OCR text resolution ambiguous: found %d matches for '%s': %s",
-                len(matches),
-                query_text,
-                candidate_boxes,
-            )
-            return TargetResolutionResult(
-                status=TargetResolutionStatus.AMBIGUOUS,
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                candidates_count=len(matches),
-                diagnostic_message=(
-                    f"Ambiguous OCR target: {len(matches)} regions matched '{query_text}': "
-                    f"{', '.join(candidate_boxes[:5])}"
-                ),
-            )
+            if len(exact_matches) == 1:
+                match = exact_matches[0]
+            else:
+                candidate_boxes = [
+                    f"('{m.text}' at {m.bounding_box.left},{m.bounding_box.top})"
+                    for m in matches
+                ]
+                logger.warning(
+                    "OCR text resolution ambiguous: found %d matches for '%s': %s",
+                    len(matches),
+                    query_text,
+                    candidate_boxes,
+                )
+                return TargetResolutionResult(
+                    status=TargetResolutionStatus.AMBIGUOUS,
+                    observation_id=snapshot.snapshot_id,
+                    desktop_generation_id=snapshot.generation_id,
+                    candidates_count=len(matches),
+                    diagnostic_message=(
+                        f"Ambiguous OCR target: {len(matches)} regions matched '{query_text}': "
+                        f"{', '.join(candidate_boxes[:5])}"
+                    ),
+                )
+        else:
+            match = matches[0]
 
-        # Exactly 1 match found
-        match = matches[0]
         from orbit.runtime.perception.coordinate_mapper import OCRCoordinateMapper
-
         mapper = OCRCoordinateMapper()
-        # Derive screenshot offset if available in snapshot
         offset_x = getattr(snapshot, "screenshot_offset_x", 0)
         offset_y = getattr(snapshot, "screenshot_offset_y", 0)
-        
+
         map_res = mapper.map_to_virtual_desktop(
             box=match.bounding_box,
             screenshot_offset_x=offset_x,
@@ -741,6 +1239,20 @@ class EvidenceBasedTargetLocator:
                 desktop_generation_id=snapshot.generation_id,
             )
 
+            # Display region containment check
+            if snapshot.desktop_geometry:
+                dg = snapshot.desktop_geometry
+                if not (dg.left <= safe_pt.x <= dg.left + dg.width and dg.top <= safe_pt.y <= dg.top + dg.height):
+                    return TargetResolutionResult(
+                        status=TargetResolutionStatus.INVALID_REQUEST,
+                        observation_id=snapshot.snapshot_id,
+                        desktop_generation_id=snapshot.generation_id,
+                        diagnostic_message=(
+                            f"OCR resolved action point ({safe_pt.x}, {safe_pt.y}) "
+                            f"is outside visible desktop bounds ({dg})"
+                        ),
+                    )
+
             resolved = ResolvedTarget(
                 target_id=f"tgt_ocr_{uuid4().hex[:8]}",
                 bounding_box=tbox,
@@ -755,11 +1267,12 @@ class EvidenceBasedTargetLocator:
                         "normalized_text": match.normalized_text,
                         "source_provider": match.source_provider,
                         "words_count": len(match.words),
+                        "target_hwnd": target_hwnd,
                     },
                 ),
                 observation_id=snapshot.snapshot_id,
                 desktop_generation_id=snapshot.generation_id,
-                target_hwnd=intent.target_hwnd,
+                target_hwnd=target_hwnd,
             )
 
             return TargetResolutionResult(
