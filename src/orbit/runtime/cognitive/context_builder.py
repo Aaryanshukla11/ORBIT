@@ -68,8 +68,9 @@ Output ONLY a single valid JSON object strictly matching this schema:
 Rules:
 1. If the goal is fully achieved according to the live observation, set "goal_progress": "COMPLETED", "next_action.action_type": "COMPLETE_GOAL".
 2. If the application is not running or visible, launch it using LAUNCH_APPLICATION.
-3. If the application is open but in the background, bring it forward using FOCUS_WINDOW.
-4. Output plain JSON. Do NOT include markdown fences (```json).
+3. If the application is ALREADY open, DO NOT call LAUNCH_APPLICATION. Focus the existing window using FOCUS_WINDOW, or directly interact with it using CLICK or TYPE_TEXT.
+4. When typing text into an open editor (like Notepad), use TYPE_TEXT with parameter "text": "<requested string>".
+5. Output plain JSON. Do NOT include markdown fences (```json).
 """
 
 
@@ -172,18 +173,55 @@ class AgentReasoningContextBuilder:
         if visual_summary:
             lines.append(f"Visual Summary: {visual_summary}")
 
-        # 3. Recent Action History
-        lines.append(f"\n=== EXECUTION CONTEXT (Step {step_index}) ===")
+        # 3. Target Application Status
+        target_app_identified = ""
+        if objective.target_entities:
+            target_app_identified = objective.target_entities[0].lower()
+        elif "notepad" in objective.user_goal.lower():
+            target_app_identified = "notepad"
+        elif "paint" in objective.user_goal.lower():
+            target_app_identified = "paint"
+        elif "calc" in objective.user_goal.lower():
+            target_app_identified = "calc"
+
+        if target_app_identified:
+            is_active = target_app_identified in active_window_title.lower()
+            matching_wins = [w for w in visible_windows if target_app_identified in w.lower()]
+            has_typed_in_history = any(
+                s.action_dispatched
+                and s.action_dispatched.action_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE)
+                and s.outcome_verified
+                for s in history
+            )
+            lines.append("\n=== APPLICATION REASONING STATE ===")
+            if is_active:
+                lines.append(f"STATUS: Target application '{target_app_identified}' is ALREADY OPEN AND ACTIVE in the foreground window ('{active_window_title}').")
+                if has_typed_in_history:
+                    lines.append("INSTRUCTION: The requested text has ALREADY BEEN TYPED into the editor. If the text is present, emit COMPLETE_GOAL to conclude the task.")
+                else:
+                    lines.append(f"INSTRUCTION: DO NOT call LAUNCH_APPLICATION. It is already open. Proceed to interact with it directly (e.g. TYPE_TEXT or CLICK).")
+            elif matching_wins:
+                lines.append(f"STATUS: Target application '{target_app_identified}' is ALREADY RUNNING in window '{matching_wins[0]}'.")
+                lines.append(f"INSTRUCTION: DO NOT call LAUNCH_APPLICATION. Use FOCUS_WINDOW to bring it forward, or interact with it.")
+            else:
+                lines.append(f"STATUS: Target application '{target_app_identified}' is not detected among visible windows. You may use LAUNCH_APPLICATION.")
+
+        # 4. Action History
+        lines.append(f"\n=== EXECUTION HISTORY (Step {step_index}) ===")
         if history:
-            last_step = history[-1]
-            act = last_step.action_dispatched
-            if act:
-                lines.append(f"Recent Action: {act.action_type.value} on '{act.target.name if act.target else 'N/A'}'")
-            lines.append(f"Recent Verified: {last_step.outcome_verified}")
-            if last_step.execution_result and last_step.execution_result.error_message:
-                lines.append(f"Recent Error: {last_step.execution_result.error_message}")
+            for s in history:
+                act = s.action_dispatched
+                act_str = f"{act.action_type.value}('{act.target.name if act.target else ''}')" if act else "NO_ACTION"
+                v_str = "EFFECT_VERIFIED" if s.outcome_verified else "UNVERIFIED"
+                err_str = f" [Error: {s.execution_result.error_message}]" if (s.execution_result and s.execution_result.error_message) else ""
+                lines.append(f"  Step {s.step_index}: {act_str} -> {v_str}{err_str}")
         else:
-            lines.append("Recent Action: Initial step (No actions dispatched yet)")
+            lines.append("  Initial step: No actions dispatched yet.")
+
+        # 5. Diagnostic Feedback & Redundancy Warnings
+        if task_context and "feedback" in task_context and task_context["feedback"]:
+            lines.append("\n=== CRITICAL GUIDANCE ===")
+            lines.append(str(task_context["feedback"]))
 
         lines.append("\nDecide the next single action to make progress toward the user goal.")
         return "\n".join(lines)

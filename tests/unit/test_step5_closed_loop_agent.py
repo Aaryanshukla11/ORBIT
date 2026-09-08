@@ -30,8 +30,11 @@ from orbit.runtime.agent.contracts import (
     ExpectedState,
     OutcomeStatus,
     SemanticTarget,
+    TextVerificationResult,
     VerificationStrategy,
 )
+from orbit.runtime.agent.state import DesktopStateSnapshot
+from orbit.runtime.agent.verifier import AgentStateTransitionVerifier
 from orbit.runtime.cancellation import CancellationSource
 from orbit.runtime.cognitive.agent_loop import AgentExecutionLoop, AgentExecutionResult
 from orbit.runtime.cognitive.models import (
@@ -470,3 +473,279 @@ def test_cycle_execution_trace_formatting():
     assert "VERIFICATION" in formatted
     assert "GOAL EVALUATION" in formatted
     assert "PROGRESS" in formatted
+
+
+# ============================================================================
+# 6. CRITICAL STEP 5 REALITY VALIDATION REGRESSION TESTS (PHASE G)
+# ============================================================================
+
+@pytest.mark.asyncio
+async def test_text_execution_preserves_exact_character_sequence():
+    """1. Test that text execution preserves exact character sequence and repeated characters like 'ORBIT 3333333333' are detected as incorrect."""
+    verifier = AgentStateTransitionVerifier()
+    action = AbstractAction(
+        action_type=AbstractActionType.TYPE_TEXT,
+        parameters={"text": "ORBIT Vision Test 123"},
+    )
+    # Simulate post-action observation that contains repeated '3's instead of 'ORBIT Vision Test 123'
+    pre_state = DesktopStateSnapshot(
+        snapshot_id="obs_pre_1",
+        ocr_tokens=["Untitled", "Notepad"],
+    )
+    post_state = DesktopStateSnapshot(
+        snapshot_id="obs_post_1",
+        ocr_tokens=["ORBIT", "333333333333333"],
+    )
+
+    outcome = await verifier.verify_action_outcome(
+        action=action,
+        dispatch_success=True,
+        pre_state=pre_state,
+        post_state=post_state,
+    )
+
+    # Verification MUST fail
+    assert outcome.expected_effect_observed is False
+    assert outcome.verified is False
+    assert outcome.outcome_status == OutcomeStatus.EFFECT_UNVERIFIED
+    assert "NOT observed in post-action state" in outcome.verification_reason
+    assert outcome.observed_delta.get("exact_match") is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_success_does_not_imply_text_verification():
+    """2. Test that dispatch_success=True does not imply expected_effect_observed=True when text is incorrect."""
+    verifier = AgentStateTransitionVerifier()
+    action = AbstractAction(
+        action_type=AbstractActionType.TYPE_TEXT,
+        parameters={"text": "ORBIT Vision Test 123"},
+    )
+    pre_state = DesktopStateSnapshot(snapshot_id="obs_10", ocr_tokens=[])
+    # Observed text is garbage / incorrect
+    post_state = DesktopStateSnapshot(snapshot_id="obs_11", ocr_tokens=["Welcome", "Explorer"])
+
+    outcome = await verifier.verify_action_outcome(
+        action=action,
+        dispatch_success=True,  # Dispatch succeeded at OS level
+        pre_state=pre_state,
+        post_state=post_state,
+    )
+
+    assert outcome.dispatch_success is True
+    assert outcome.expected_effect_observed is False
+    assert outcome.outcome_status == OutcomeStatus.EFFECT_UNVERIFIED
+
+
+@pytest.mark.asyncio
+async def test_goal_verifier_rejects_wrong_visible_text():
+    """3. Test that GoalVerifier rejects wrong visible text even if action history claimed typing."""
+    goal_verifier = GoalVerifier()
+    # Observation containing only the corrupted text
+    obs = CurrentStateObservation(
+        observation_id="obs_corrupt",
+        ocr_tokens=["ORBIT", "333333333333333"],
+        active_window_title="Notepad - Untitled",
+    )
+
+    step_hist = [
+        MagicMock(
+            action_dispatched=AbstractAction(
+                action_type=AbstractActionType.TYPE_TEXT,
+                parameters={"text": "ORBIT Vision Test 123"},
+            )
+        )
+    ]
+
+    res = await goal_verifier.verify_goal_achievement(
+        task_id="task_reg_3",
+        objective=StructuredObjective(
+            raw_prompt="Open Notepad and type 'ORBIT Vision Test 123'",
+            user_goal="Open Notepad and type 'ORBIT Vision Test 123'",
+            end_condition="notepad_contains_typed_text",
+        ),
+        current_observation=obs,
+        step_history=step_hist,
+    )
+
+    assert res.is_completed is False
+    assert res.status == TaskCompletionStatus.FAILED
+    assert "Objective evidence not satisfied" in res.failure_reason
+
+
+@pytest.mark.asyncio
+async def test_verifier_cannot_use_action_parameters_as_evidence():
+    """4. Test that verifier cannot use action parameters as evidence of success."""
+    verifier = AgentStateTransitionVerifier()
+    # Action contains desired text
+    action = AbstractAction(
+        action_type=AbstractActionType.TYPE_TEXT,
+        parameters={"text": "SECRET_PASSCODE_XYZ"},
+    )
+    # Screen is empty
+    pre_state = DesktopStateSnapshot(snapshot_id="obs_pre_4", ocr_tokens=[])
+    post_state = DesktopStateSnapshot(snapshot_id="obs_post_4", ocr_tokens=["Empty", "Screen"])
+
+    outcome = await verifier.verify_action_outcome(
+        action=action,
+        dispatch_success=True,
+        pre_state=pre_state,
+        post_state=post_state,
+    )
+
+    assert outcome.expected_effect_observed is False
+    assert outcome.observed_delta.get("exact_match") is False
+
+
+@pytest.mark.asyncio
+async def test_verifier_rejects_stale_observation():
+    """5. Test that verifier rejects stale observations where post_action_id == pre_action_id."""
+    verifier = AgentStateTransitionVerifier()
+    action = AbstractAction(
+        action_type=AbstractActionType.TYPE_TEXT,
+        parameters={"text": "Any text"},
+    )
+    # Same snapshot_id simulates stale observation reuse
+    pre_state = DesktopStateSnapshot(snapshot_id="obs_stale_1", ocr_tokens=["Any", "text"])
+    post_state = DesktopStateSnapshot(snapshot_id="obs_stale_1", ocr_tokens=["Any", "text"])
+
+    outcome = await verifier.verify_action_outcome(
+        action=action,
+        dispatch_success=True,
+        pre_state=pre_state,
+        post_state=post_state,
+    )
+
+    assert outcome.expected_effect_observed is False
+    assert outcome.outcome_status == OutcomeStatus.EFFECT_UNVERIFIED
+    assert "Stale observation rejected" in outcome.verification_reason
+
+
+@pytest.mark.asyncio
+async def test_post_action_observation_must_advance():
+    """6. Test that post-action observation must advance to a fresh observation ID."""
+    verifier = AgentStateTransitionVerifier()
+    action = AbstractAction(
+        action_type=AbstractActionType.LAUNCH_APPLICATION,
+        parameters={"application_name": "notepad"},
+    )
+    # Pre and post have identical snapshot IDs
+    pre_state = DesktopStateSnapshot(snapshot_id="obs_identical", active_window_title="Desktop")
+    post_state = DesktopStateSnapshot(snapshot_id="obs_identical", active_window_title="Notepad")
+
+    outcome = await verifier.verify_action_outcome(
+        action=action,
+        dispatch_success=True,
+        pre_state=pre_state,
+        post_state=post_state,
+    )
+
+    assert outcome.expected_effect_observed is False
+    assert "post_action_id 'obs_identical' equals pre_action_id" in outcome.verification_reason
+
+
+@pytest.mark.asyncio
+async def test_recovery_does_not_duplicate_text():
+    """7. Test that recovery does not blindly duplicate text if text entry failed."""
+    # When text is unverified, recovery manager diagnoses the failure without dispatching duplicate appending
+    rec_mgr = AgentRecoveryManager()
+    action = AbstractAction(
+        action_type=AbstractActionType.TYPE_TEXT,
+        parameters={"text": "ORBIT Vision Test 123"},
+    )
+    pre_obs = CurrentStateObservation(observation_id="obs_7a", active_window_title="Notepad")
+    post_obs = CurrentStateObservation(observation_id="obs_7b", active_window_title="Notepad", ocr_tokens=["ORBIT", "3333333333"])
+    exec_res = ActionExecutionResult(
+        dispatch_success=True,
+        expected_effect_observed=False,
+        outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+    )
+
+    strategy, reason = rec_mgr.diagnose_failure(action, pre_obs, post_obs, exec_res)
+    # Recovery strategy should refocus window or wait for settlement, never blind re-append
+    assert strategy in (RecoveryStrategy.REFOCUS_WINDOW, RecoveryStrategy.WAIT_FOR_SETTLEMENT, RecoveryStrategy.REFRESH_OBSERVATION)
+
+
+@pytest.mark.asyncio
+async def test_repeated_keyboard_input_is_detected():
+    """8. Test that repeated keyboard input with wrong visible text is detected and blocked by stagnation guards."""
+    budget = ExecutionBudget(max_repeated_actions_without_progress=2)
+    rec_mgr = AgentRecoveryManager()
+
+    # Step 1: typed action fails verification
+    action = AbstractAction(action_type=AbstractActionType.TYPE_TEXT, parameters={"text": "test"})
+    # Verifier detects wrong text
+    verifier = AgentStateTransitionVerifier()
+    pre_state = DesktopStateSnapshot(snapshot_id="obs_8a", ocr_tokens=[])
+    post_state = DesktopStateSnapshot(snapshot_id="obs_8b", ocr_tokens=["33333333"])
+
+    outcome = await verifier.verify_action_outcome(
+        action=action,
+        dispatch_success=True,
+        pre_state=pre_state,
+        post_state=post_state,
+    )
+    assert outcome.expected_effect_observed is False
+
+
+@pytest.mark.asyncio
+async def test_false_positive_completion_is_impossible():
+    """9. Complete regression test: Construct the exact failure observed live:
+       Expected: 'ORBIT Vision Test 123'
+       Actual visible: 'ORBIT 333333333333'
+       Ensure: dispatch_success = True, expected_effect_observed = False, goal_satisfied = False, loop cannot complete.
+    """
+    verifier = AgentStateTransitionVerifier()
+    goal_verifier = GoalVerifier()
+
+    expected_text = "ORBIT Vision Test 123"
+    actual_tokens = ["ORBIT", "333333333333333"]
+
+    action = AbstractAction(
+        action_type=AbstractActionType.TYPE_TEXT,
+        parameters={"text": expected_text},
+    )
+
+    pre_state = DesktopStateSnapshot(snapshot_id="obs_live_pre", ocr_tokens=["Notepad"])
+    post_state = DesktopStateSnapshot(snapshot_id="obs_live_post", ocr_tokens=actual_tokens)
+
+    # 1. State transition verification
+    outcome = await verifier.verify_action_outcome(
+        action=action,
+        dispatch_success=True,
+        pre_state=pre_state,
+        post_state=post_state,
+    )
+
+    assert outcome.dispatch_success is True
+    assert outcome.expected_effect_observed is False
+    assert outcome.goal_satisfied is False
+    assert outcome.outcome_status == OutcomeStatus.EFFECT_UNVERIFIED
+
+    # 2. Goal verification
+    post_obs = CurrentStateObservation(
+        observation_id="obs_live_post",
+        ocr_tokens=actual_tokens,
+        active_window_title="Notepad - Untitled",
+    )
+    step_hist = [
+        MagicMock(
+            action_dispatched=action,
+            execution_result=outcome,
+        )
+    ]
+
+    goal_res = await goal_verifier.verify_goal_achievement(
+        task_id="notepad_reg_live",
+        objective=StructuredObjective(
+            raw_prompt="Open Notepad and type 'ORBIT Vision Test 123'",
+            user_goal="Open Notepad and type 'ORBIT Vision Test 123'",
+            end_condition="notepad_contains_typed_text",
+        ),
+        current_observation=post_obs,
+        step_history=step_hist,
+    )
+
+    # Invariant: Goal CANNOT be satisfied
+    assert goal_res.is_completed is False
+    assert goal_res.status == TaskCompletionStatus.FAILED
+

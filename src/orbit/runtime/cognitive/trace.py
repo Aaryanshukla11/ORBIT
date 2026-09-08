@@ -39,6 +39,7 @@ class CycleExecutionTrace(BaseModel):
     vision_capable: bool = False
     screenshot_attached: bool = False
     model_latency_ms: Optional[float] = None
+    raw_model_response: Optional[str] = None
 
     # 3. Decision
     decision_summary: str = ""
@@ -125,6 +126,7 @@ def format_cycle_trace_block(trace: CycleExecutionTrace) -> str:
         f"- confidence: {conf_str}",
         f"- goal_progress: {trace.goal_progress}",
         f"- next_action: {trace.next_action_type or 'None'}",
+        *( [f"- raw_model_response: {trace.raw_model_response.strip()}"] if trace.raw_model_response else [] ),
         "",
         "GROUNDING",
         f"- semantic target: {trace.semantic_target_name or 'None'} (role: {trace.semantic_target_role or 'None'})",

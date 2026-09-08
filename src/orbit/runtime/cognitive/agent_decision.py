@@ -85,6 +85,7 @@ class AgentDecisionTrace(BaseModel):
     validation_result: str = "VALID"
     fallback_used: bool = False
     escalated_to_cloud: bool = False
+    raw_response: Optional[str] = None
     decision_summary: str = ""
     evidence_used: List[str] = Field(default_factory=list)
     timestamp_utc: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -269,6 +270,15 @@ class AgentDecisionEngine:
             resp: ModelGenerateResponse = await runtime.chat(chat_req)
             latency_ms = resp.total_duration_ms or (time.perf_counter() - t_call) * 1000.0
             raw_content = resp.content
+            logger.info(
+                "[MODEL INFERENCE] Model: %s (%s, local=%s, vision=%s, latency=%.1fms)\n[RAW RESPONSE]\n%s",
+                runtime.model_id,
+                runtime.descriptor.provider.value,
+                profile.is_local,
+                attached_vision,
+                latency_ms,
+                raw_content.strip(),
+            )
 
             # Parse and validate decision with coordinate isolation check
             decision = StructuredDecisionParser.parse_decision(
@@ -277,6 +287,12 @@ class AgentDecisionEngine:
                 model_id=runtime.model_id,
                 latency_ms=latency_ms,
                 attached_vision=attached_vision,
+            )
+            logger.info(
+                "[DECISION PARSED] Next Action: %s | Target: %s | Summary: %s",
+                decision.next_action.action_type.value if decision.next_action else "None",
+                decision.next_action.target.name if decision.next_action and decision.next_action.target else "None",
+                decision.decision_summary,
             )
 
         except CoordinateSecurityViolation as sec_err:
@@ -310,6 +326,7 @@ class AgentDecisionEngine:
             target_name=decision.next_action.target.name if decision.next_action and decision.next_action.target else None,
             validation_result=validation_status,
             fallback_used=validation_status != "VALID",
+            raw_response=raw_content,
             decision_summary=decision.decision_summary,
             evidence_used=decision.evidence_used,
         )
@@ -359,6 +376,14 @@ class AgentDecisionEngine:
         self._decision_traces.append(trace)
         if len(self._decision_traces) > 200:
             self._decision_traces = self._decision_traces[-200:]
+
+    def get_recent_traces(self, count: int = 10) -> List[AgentDecisionTrace]:
+        """Return recent decision traces."""
+        return list(self._decision_traces[-count:])
+
+    def get_last_trace(self) -> Optional[AgentDecisionTrace]:
+        """Return most recent decision trace."""
+        return self._decision_traces[-1] if self._decision_traces else None
 
     def _build_safe_recovery_decision(self, step_index: int, error_reason: str) -> CognitiveDecision:
         """Return a safe diagnostic wait action when model output is invalid."""

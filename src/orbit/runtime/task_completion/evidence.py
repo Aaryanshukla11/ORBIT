@@ -20,7 +20,7 @@ class CompletionEvidenceCollector:
 
     def build_evidence(
         self,
-        snapshot: Optional[ObservationSnapshot],
+        snapshot: Optional[ObservationSnapshot] = None,
         plan_result: Optional[PlanExecutionResult] = None,
         target_app: Optional[str] = None,
         target_hwnd: Optional[int] = None,

@@ -53,9 +53,7 @@ class Win32WindowObserver:
             import ctypes
             import ctypes.wintypes
             user32 = ctypes.windll.user32
-
-            h_desk = self._ensure_desktop_attached()
-
+            h_desk = None
             # Setup ctypes signatures
             user32.GetForegroundWindow.restype = ctypes.wintypes.HWND
             user32.IsWindowVisible.argtypes = [ctypes.wintypes.HWND]
@@ -73,7 +71,12 @@ class Win32WindowObserver:
             visible_windows: List[WindowObservation] = []
 
             # Callback for EnumWindows / EnumDesktopWindows
-            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.wintypes.BOOL, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+            user32.EnumWindows.argtypes = [WNDENUMPROC, ctypes.wintypes.LPARAM]
+            user32.EnumWindows.restype = ctypes.wintypes.BOOL
+            if hasattr(user32, "EnumDesktopWindows"):
+                user32.EnumDesktopWindows.argtypes = [ctypes.wintypes.HANDLE, WNDENUMPROC, ctypes.wintypes.LPARAM]
+                user32.EnumDesktopWindows.restype = ctypes.wintypes.BOOL
 
             def enum_proc(hwnd: int, lparam: Any) -> bool:
                 if not user32.IsWindowVisible(hwnd):
@@ -141,14 +144,13 @@ class Win32WindowObserver:
                 return True
 
             cb = WNDENUMPROC(enum_proc)
-            if h_desk:
-                user32.EnumDesktopWindows(h_desk, cb, 0)
-            else:
-                user32.EnumWindows(cb, 0)
+            user32.EnumWindows(cb, 0)
 
-            # If EnumDesktopWindows produced no windows, fallback to EnumWindows
+            # If EnumWindows produced no windows, fallback to EnumDesktopWindows
             if not visible_windows:
-                user32.EnumWindows(cb, 0)
+                h_desk = self._ensure_desktop_attached()
+                if h_desk:
+                    user32.EnumDesktopWindows(h_desk, cb, 0)
 
             # Resolve foreground window observation
             foreground_obs = None

@@ -181,10 +181,18 @@ class NativeKeyboardDispatchGateway:
                     u32 = ctypes.windll.user32
                     u32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_uint64]
                     u32.keybd_event.restype = None
-                    u32.keybd_event(0, inp_down.union.ki.wScan & 0xFF, inp_down.union.ki.dwFlags, inp_down.union.ki.dwExtraInfo)
-                    u32.keybd_event(0, inp_up.union.ki.wScan & 0xFF, inp_up.union.ki.dwFlags, inp_up.union.ki.dwExtraInfo)
-                    accepted = 2
-                    err = 0
+                    vk_res = u32.VkKeyScanW(code_unit & 0xFFFF)
+                    if vk_res != -1:
+                        vk = vk_res & 0xFF
+                        shift = (vk_res >> 8) & 1
+                        if shift:
+                            u32.keybd_event(0x10, 0, 0, 0)  # VK_SHIFT down
+                        u32.keybd_event(vk, 0, 0, 0)        # Key down
+                        u32.keybd_event(vk, 0, 2, 0)        # Key up
+                        if shift:
+                            u32.keybd_event(0x10, 0, 2, 0)  # VK_SHIFT up
+                        accepted = 2
+                        err = 0
                 except Exception:
                     pass
 

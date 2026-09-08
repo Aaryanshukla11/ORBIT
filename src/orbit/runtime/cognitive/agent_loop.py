@@ -186,6 +186,8 @@ class AgentExecutionLoop:
         sm = AgentLoopStateMachine(initial_state=AgentLoopState.INITIALIZING)
         logger.info("AgentExecutionLoop starting task %s: '%s'", effective_task_id, prompt)
 
+        context = dict(context or {})
+
         # 1. LLM Intent Interpretation
         objective = await self._interpreter.interpret(prompt, context)
         logger.info(
@@ -198,6 +200,7 @@ class AgentExecutionLoop:
         step_history: List[CognitiveStepResult] = []
         cycle_traces: List[CycleExecutionTrace] = []
         consecutive_identical_actions = 0
+        consecutive_redundant_actions = 0
         last_action_signature: Optional[str] = None
         target_resolution_failures = 0
         last_observed_id: Optional[str] = None
@@ -376,7 +379,7 @@ class AgentExecutionLoop:
                     recent_traces = get_tr_fn(1)
                     if isinstance(recent_traces, list) and recent_traces:
                         dtrace = recent_traces[-1]
-                        if hasattr(dtrace, "model_id") and not isinstance(dtrace.model_id, MagicMock):
+                        if hasattr(dtrace, "model_id") and "mock" not in type(dtrace.model_id).__name__.lower():
                             cycle_trace.model_id = str(dtrace.model_id)
                             cycle_trace.model_provider = str(dtrace.model_provider)
                             cycle_trace.local_or_cloud = "CLOUD" if getattr(dtrace, "escalated_to_cloud", False) else "LOCAL"
@@ -385,8 +388,9 @@ class AgentExecutionLoop:
                             lat = getattr(dtrace, "model_latency_ms", None)
                             cycle_trace.model_latency_ms = float(lat) if isinstance(lat, (int, float)) else None
                             cycle_trace.capabilities = [str(c) for c in getattr(dtrace, "input_modalities", [])]
-                except Exception:
-                    pass
+                            cycle_trace.raw_model_response = getattr(dtrace, "raw_response", None)
+                except Exception as tr_err:
+                    logger.debug("Trace extraction notice: %s", tr_err)
 
             cycle_trace.decision_summary = str(decision.decision_summary)
             cycle_trace.decision_confidence = float(decision.decision_confidence) if isinstance(decision.decision_confidence, (int, float)) else 1.0
@@ -553,6 +557,164 @@ class AgentExecutionLoop:
                     verification_strategy=VerificationStrategy.AUTO_ROUTED,
                 )
 
+            # -------------------------------------------------------------
+            # REPEATED ACTION & IDEMPOTENCY SAFETY GUARD (Requirements C & D)
+            # -------------------------------------------------------------
+            is_redundant = False
+            redundancy_reason = ""
+            app_target_name = ""
+
+            if action.action_type == AbstractActionType.LAUNCH_APPLICATION:
+                app_target_name = str(
+                    action.parameters.get(
+                        "application_name",
+                        action.parameters.get("app_name", action.target.name if action.target else ""),
+                    )
+                ).strip().lower()
+
+                # 1. Inspect current DesktopObservation: Check if requested application is already open
+                already_open_hwnd = None
+                already_open_title = ""
+                for win in current_obs.visible_windows:
+                    w_title = (win.get("title") or "").lower()
+                    w_proc = (win.get("process_name") or "").lower()
+                    if app_target_name in w_title or app_target_name in w_proc:
+                        already_open_hwnd = win.get("hwnd")
+                        already_open_title = win.get("title", "")
+                        break
+
+                if not already_open_hwnd and current_obs.active_window_title and app_target_name in current_obs.active_window_title.lower():
+                    already_open_hwnd = current_obs.active_window_hwnd
+                    already_open_title = current_obs.active_window_title
+
+                # 2. Check if LAUNCH_APPLICATION for this app was already executed in step_history
+                launch_already_succeeded = any(
+                    s.action_dispatched
+                    and s.action_dispatched.action_type == AbstractActionType.LAUNCH_APPLICATION
+                    and s.execution_result
+                    and s.execution_result.expected_effect_observed
+                    for s in step_history
+                )
+
+                if already_open_hwnd or launch_already_succeeded:
+                    is_redundant = True
+                    redundancy_reason = (
+                        f"Application '{app_target_name}' is ALREADY RUNNING and usable on desktop "
+                        f"(HWND: {already_open_hwnd}, Window: '{already_open_title}'). Re-launching is blocked."
+                    )
+                    # Focus existing window if not foreground
+                    if already_open_hwnd and sys.platform == "win32":
+                        from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                        EvidenceBasedTargetLocator._force_foreground_window(int(already_open_hwnd))
+
+            # 3. General semantic check: Identical action and target already successfully executed
+            if not is_redundant and step_history and action.action_type not in (
+                AbstractActionType.WAIT,
+                AbstractActionType.COMPLETE_GOAL,
+                AbstractActionType.COMPLETE,
+                AbstractActionType.ABORT_TASK,
+                AbstractActionType.ABORT,
+            ):
+                last_step = step_history[-1]
+                if (
+                    last_step.action_dispatched
+                    and last_step.action_dispatched.action_type == action.action_type
+                    and last_step.action_dispatched.parameters == action.parameters
+                    and last_step.execution_result
+                    and last_step.execution_result.expected_effect_observed
+                ):
+                    is_redundant = True
+                    redundancy_reason = f"Action '{action.action_type.value}' with identical parameters was already executed and verified in previous step."
+
+            if is_redundant:
+                consecutive_redundant_actions += 1
+                logger.warning(
+                    "[REPEATED ACTION SAFETY GUARD] BLOCKED REDUNDANT ACTION: %s (Count: %d/%d). Reason: %s",
+                    action.action_type.value,
+                    consecutive_redundant_actions,
+                    self._budget.max_repeated_actions_without_progress,
+                    redundancy_reason,
+                )
+
+                # Hard Emergency Circuit Breaker
+                if consecutive_redundant_actions >= self._budget.max_repeated_actions_without_progress:
+                    sm.transition_to(
+                        AgentLoopState.FAILED,
+                        cycle_number=step_idx,
+                        observation_id=current_obs.observation_id,
+                        action_id=action.action_id,
+                        action_type=action.action_type.value,
+                        failure_reason=f"Emergency Circuit Breaker: Redundant action '{action.action_type.value}' repeated {consecutive_redundant_actions} times",
+                    )
+                    return AgentExecutionResult(
+                        task_id=effective_task_id,
+                        objective=objective,
+                        is_success=False,
+                        total_steps=len(step_history),
+                        step_history=step_history,
+                        final_status=TaskCompletionStatus.FAILED,
+                        failure_reason=f"Emergency Circuit Breaker: Redundant action '{action.action_type.value}' blocked {consecutive_redundant_actions} times",
+                        failure_code="CIRCUIT_BREAKER_REDUNDANT_ACTION",
+                        elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                        state_transitions=sm.history,
+                        cycle_traces=cycle_traces,
+                        recovery_records=self._recovery_manager.get_history(),
+                    )
+
+                # Inject redundancy evidence into reasoning context to force next unmet sub-goal
+                context["feedback"] = (
+                    f"CRITICAL GUIDANCE: Action '{action.action_type.value}' was BLOCKED because {redundancy_reason} "
+                    f"The application is open and active. Proceed immediately to the NEXT unmet sub-goal "
+                    f"(e.g. TYPE_TEXT with the requested text). DO NOT emit LAUNCH_APPLICATION."
+                )
+
+                cycle_trace.dispatch_attempted = False
+                cycle_trace.dispatch_success = True
+                cycle_trace.expected_effect = "Reused existing verified application"
+                cycle_trace.observed_effect = redundancy_reason
+                cycle_trace.expected_effect_observed = True
+                cycle_trace.meaningful_state_change = False
+                cycle_trace.repeated_actions_count = consecutive_redundant_actions
+
+                exec_result = ActionExecutionResult(
+                    action_id=action.action_id,
+                    dispatch_success=True,
+                    expected_effect_observed=True,
+                    goal_satisfied=False,
+                    outcome_status=OutcomeStatus.REDUNDANT_BLOCKED,
+                    verification_strategy=VerificationStrategy.AUTO_ROUTED,
+                    verification_reason=redundancy_reason,
+                    observed_delta={"status": "REDUNDANT_BLOCKED", "reused_existing": True},
+                    duration_ms=50.0,
+                )
+                step_res = CognitiveStepResult(
+                    step_index=step_idx,
+                    decision=decision,
+                    action_dispatched=action,
+                    execution_result=exec_result,
+                    post_observation=current_obs,
+                    state_progress_detected=False,
+                    duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
+                    trace=cycle_trace,
+                )
+                step_history.append(step_res)
+                cycle_traces.append(cycle_trace)
+
+                sm.transition_to(
+                    AgentLoopState.EVALUATING_PROGRESS,
+                    cycle_number=step_idx,
+                    observation_id=current_obs.observation_id,
+                    action_id=action.action_id,
+                    action_type=action.action_type.value,
+                    expected_effect_observed=True,
+                )
+
+                logger.info("\n%s", format_cycle_trace_block(cycle_trace))
+                step_idx += 1
+                continue
+
+            consecutive_redundant_actions = 0
+
             # Repeated Action Stagnation Detection
             act_sig = f"{action.action_type.value}:{action.parameters}"
             if act_sig == last_action_signature:
@@ -636,8 +798,16 @@ class AgentExecutionLoop:
                 action_type=action.action_type.value,
             )
 
+            # Only pointer-based interaction actions require physical screen coordinate grounding
+            requires_coordinates = action.action_type in (
+                AbstractActionType.CLICK,
+                AbstractActionType.CLICK_ELEMENT,
+                AbstractActionType.DOUBLE_CLICK,
+                AbstractActionType.RIGHT_CLICK,
+            )
+
             resolved_coords = None
-            if action.target is not None:
+            if action.target is not None and requires_coordinates:
                 cycle_trace.semantic_target_name = action.target.name
                 cycle_trace.semantic_target_role = action.target.role
                 resolved_coords = await self._resolve_target_coordinates(action.target, observation=current_obs)
@@ -675,6 +845,13 @@ class AgentExecutionLoop:
                             cycle_traces=cycle_traces,
                             recovery_records=self._recovery_manager.get_history(),
                         )
+            elif action.target is not None:
+                # Target provided for semantic context (e.g. app name, window name, text field)
+                cycle_trace.semantic_target_name = action.target.name
+                cycle_trace.semantic_target_role = action.target.role
+                cycle_trace.grounding_resolved = True
+                cycle_trace.grounding_confidence = 1.0
+                cycle_trace.target_evidence_source = "SEMANTIC_TARGET_RESOLVED"
 
             # -------------------------------------------------------------
             # PHASE 6: EXECUTING (Physical Action Dispatch)
@@ -712,6 +889,26 @@ class AgentExecutionLoop:
             cycle_trace.post_observation_id = post_obs.observation_id
             cycle_trace.post_freshness_validated = (post_obs.observation_id != current_obs.observation_id)
 
+            obs_advanced = (post_obs.observation_id != current_obs.observation_id)
+            logger.info(
+                "\n[CYCLE %d OBSERVATION VALIDATION]\n"
+                "  Pre-Action Observation ID:  %s\n"
+                "  Post-Action Observation ID: %s\n"
+                "  Observation Advanced:       %s\n"
+                "  Foreground Window Before:   '%s'\n"
+                "  Foreground Window After:    '%s'\n"
+                "  Visible Windows Before:     %s\n"
+                "  Visible Windows After:      %s",
+                step_idx,
+                current_obs.observation_id,
+                post_obs.observation_id,
+                obs_advanced,
+                current_obs.active_window_title,
+                post_obs.active_window_title,
+                [w.get("title") for w in current_obs.visible_windows[:4] if w.get("title")],
+                [w.get("title") for w in post_obs.visible_windows[:4] if w.get("title")],
+            )
+
             # -------------------------------------------------------------
             # PHASE 8: VERIFYING_EFFECT (Immediate State Delta Verification)
             # -------------------------------------------------------------
@@ -725,6 +922,7 @@ class AgentExecutionLoop:
             )
 
             pre_state = DesktopStateSnapshot(
+                snapshot_id=current_obs.observation_id,
                 active_window_hwnd=current_obs.active_window_hwnd,
                 active_window_title=current_obs.active_window_title,
                 visible_windows=current_obs.visible_windows,
@@ -734,6 +932,7 @@ class AgentExecutionLoop:
                 ocr_tokens=current_obs.ocr_tokens,
             )
             post_state = DesktopStateSnapshot(
+                snapshot_id=post_obs.observation_id,
                 active_window_hwnd=post_obs.active_window_hwnd,
                 active_window_title=post_obs.active_window_title,
                 visible_windows=post_obs.visible_windows,
@@ -879,6 +1078,7 @@ class AgentExecutionLoop:
         post_obs = await self._observer.observe(objective)
 
         pre_state = DesktopStateSnapshot(
+            snapshot_id=pre_obs.observation_id,
             active_window_hwnd=pre_obs.active_window_hwnd,
             active_window_title=pre_obs.active_window_title,
             visible_windows=pre_obs.visible_windows,
@@ -888,6 +1088,7 @@ class AgentExecutionLoop:
             ocr_tokens=pre_obs.ocr_tokens,
         )
         post_state = DesktopStateSnapshot(
+            snapshot_id=post_obs.observation_id,
             active_window_hwnd=post_obs.active_window_hwnd,
             active_window_title=post_obs.active_window_title,
             visible_windows=post_obs.visible_windows,
@@ -946,7 +1147,37 @@ class AgentExecutionLoop:
                         "application_name",
                         params.get("app_name", action.target.name if action.target else "notepad"),
                     )
-                )
+                ).strip()
+
+                # IDEMPOTENT APPLICATION LAUNCH: Check if application is already open
+                already_open_hwnd = None
+                already_open_title = ""
+                for win in pre_obs.visible_windows:
+                    w_title = (win.get("title") or "").lower()
+                    w_proc = (win.get("process_name") or "").lower()
+                    if app_name.lower() in w_title or app_name.lower() in w_proc:
+                        already_open_hwnd = win.get("hwnd")
+                        already_open_title = win.get("title", "")
+                        break
+
+                if not already_open_hwnd and pre_obs.active_window_title and app_name.lower() in pre_obs.active_window_title.lower():
+                    already_open_hwnd = pre_obs.active_window_hwnd
+                    already_open_title = pre_obs.active_window_title
+
+                if already_open_hwnd:
+                    logger.info(
+                        "[IDEMPOTENT LAUNCH] Application '%s' is ALREADY OPEN in window '%s' (HWND: %s). Reusing existing window, skipping physical launch.",
+                        app_name,
+                        already_open_title,
+                        already_open_hwnd,
+                    )
+                    if sys.platform == "win32":
+                        from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                        EvidenceBasedTargetLocator._force_foreground_window(int(already_open_hwnd))
+                    await asyncio.sleep(0.3)
+                    dispatch_success = True
+                    return True, None
+
                 if self._workspace is not None and hasattr(self._workspace, "launch_process"):
                     raw_proc = self._workspace.launch_process(app_name)
                     if inspect.isawaitable(raw_proc):
@@ -961,10 +1192,10 @@ class AgentExecutionLoop:
                         if "paint" in app_name.lower():
                             try:
                                 ctypes.windll.shell32.ShellExecuteW(
-                                    None, "open", "explorer.exe", "shell:AppsFolder\\Microsoft.Paint_8wekyb3d8bbwe!App", None, 1
+                                    None, "open", "mspaint.exe", None, None, 1
                                 )
                             except Exception:
-                                subprocess.Popen(["explorer.exe", "shell:AppsFolder\\Microsoft.Paint_8wekyb3d8bbwe!App"])
+                                subprocess.Popen("mspaint.exe", shell=True)
                         elif "calc" in app_name.lower():
                             try:
                                 ctypes.windll.shell32.ShellExecuteW(
@@ -974,9 +1205,7 @@ class AgentExecutionLoop:
                                 subprocess.Popen("calc.exe", shell=True)
                         elif "notepad" in app_name.lower():
                             try:
-                                ctypes.windll.shell32.ShellExecuteW(
-                                    None, "open", "notepad.exe", None, None, 1
-                                )
+                                subprocess.Popen("cmd /c start notepad.exe", shell=True)
                             except Exception:
                                 subprocess.Popen("notepad.exe", shell=True)
                         else:
@@ -1018,23 +1247,11 @@ class AgentExecutionLoop:
             elif act_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE):
                 text = str(params.get("text", params.get("query", "")))
                 press_enter = bool(params.get("press_enter", False))
-                if self._keyboard is not None:
-                    for ch in text:
-                        if cancel_token and cancel_token.is_cancelled:
-                            return False, "Cancelled during typing"
-                        await self._keyboard.type_text(ch)
-                        await asyncio.sleep(0.02)
-                    if press_enter:
-                        await self._keyboard.press_key("Return")
-                    dispatch_success = True
-                elif sys.platform == "win32":
-                    import ctypes
-                    # Send input via user32 or simple key simulation
-                    for ch in text:
-                        await asyncio.sleep(0.01)
-                    dispatch_success = True
-                else:
-                    dispatch_success = True
+                dispatch_success, err_msg = await self._execute_deterministic_text_input(
+                    text=text,
+                    press_enter=press_enter,
+                    cancel_token=cancel_token,
+                )
 
             elif act_type in (AbstractActionType.CLICK, AbstractActionType.CLICK_ELEMENT):
                 coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
@@ -1357,3 +1574,158 @@ class AgentExecutionLoop:
                 (center_x + 50, center_y + 70),
             ]
             return [front_face, top_face, side_edge]
+
+    async def _execute_deterministic_text_input(
+        self,
+        text: str,
+        press_enter: bool = False,
+        cancel_token: Optional[CancellationToken] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """Production-hardened deterministic text entry with safe clipboard paste, modifier release, and Unicode injection."""
+        if cancel_token and cancel_token.is_cancelled:
+            return False, "Cancelled before typing"
+
+        logger.info("Executing deterministic text entry: len=%d, press_enter=%s", len(text), press_enter)
+
+        # 0. Clean any stuck hardware keys/modifiers prior to typing
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                u32 = ctypes.windll.user32
+                for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C, 0x33):  # SHIFT, CTRL, ALT, LWIN, RWIN, '3'
+                    u32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
+            except Exception:
+                pass
+
+        # Strategy A: Native adapter if configured and available
+        if self._keyboard is not None:
+            try:
+                await self._keyboard.type_text(text)
+                if press_enter:
+                    await self._keyboard.press_key("Return")
+                return True, None
+            except Exception as k_ex:
+                logger.warning("Keyboard adapter type_text failed (%s); switching to deterministic clipboard injection", k_ex)
+
+        # Strategy B: Deterministic Clipboard Injection (Fast, 100% preserves Unicode without auto-repeat)
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                user32 = ctypes.windll.user32
+                kernel32 = ctypes.windll.kernel32
+
+                user32.OpenClipboard.argtypes = [wintypes.HWND]
+                user32.OpenClipboard.restype = wintypes.BOOL
+                user32.CloseClipboard.argtypes = []
+                user32.CloseClipboard.restype = wintypes.BOOL
+                user32.EmptyClipboard.argtypes = []
+                user32.EmptyClipboard.restype = wintypes.BOOL
+                user32.GetClipboardData.argtypes = [wintypes.UINT]
+                user32.GetClipboardData.restype = wintypes.HANDLE
+                user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+                user32.SetClipboardData.restype = wintypes.HANDLE
+                kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+                kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+                kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+                kernel32.GlobalLock.restype = ctypes.c_void_p
+                kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+                kernel32.GlobalUnlock.restype = wintypes.BOOL
+
+                # Preserve prior clipboard content if text
+                prev_text = None
+                for _ in range(5):
+                    if user32.OpenClipboard(None):
+                        try:
+                            h_clip = user32.GetClipboardData(13)  # CF_UNICODETEXT
+                            if h_clip:
+                                p_data = kernel32.GlobalLock(h_clip)
+                                if p_data:
+                                    try:
+                                        prev_text = ctypes.wstring_at(p_data)
+                                    finally:
+                                        kernel32.GlobalUnlock(h_clip)
+                        finally:
+                            user32.CloseClipboard()
+                        break
+                    await asyncio.sleep(0.02)
+
+                # Set new clipboard content
+                encoded = text.encode("utf-16-le") + b"\x00\x00"
+                h_glob = kernel32.GlobalAlloc(0x0002, len(encoded))  # GMEM_MOVEABLE
+                if h_glob:
+                    p_glob = kernel32.GlobalLock(h_glob)
+                    if p_glob:
+                        ctypes.memmove(p_glob, encoded, len(encoded))
+                        kernel32.GlobalUnlock(h_glob)
+                        for _ in range(5):
+                            if user32.OpenClipboard(None):
+                                try:
+                                    user32.EmptyClipboard()
+                                    user32.SetClipboardData(13, h_glob)
+                                finally:
+                                    user32.CloseClipboard()
+                                break
+                            await asyncio.sleep(0.02)
+
+                # Send atomic Ctrl+V
+                await asyncio.sleep(0.05)
+                user32.keybd_event(0x11, 0, 0, 0)  # VK_CONTROL down
+                user32.keybd_event(0x56, 0, 0, 0)  # 'V' down
+                user32.keybd_event(0x56, 0, 2, 0)  # 'V' up
+                user32.keybd_event(0x11, 0, 2, 0)  # VK_CONTROL up
+                await asyncio.sleep(0.05)
+
+                if press_enter:
+                    user32.keybd_event(0x0D, 0, 0, 0)  # ENTER down
+                    user32.keybd_event(0x0D, 0, 2, 0)  # ENTER up
+                    await asyncio.sleep(0.02)
+
+                # Clear any lingering modifiers
+                for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C, 0x33):
+                    user32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
+
+                return True, None
+
+            except Exception as clip_ex:
+                logger.warning("Clipboard injection failed (%s); falling back to direct scan-code typing", clip_ex)
+
+        # Strategy C: Controlled per-character injection (with strict key-up guarantee)
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                user32 = ctypes.windll.user32
+                for ch in text:
+                    if cancel_token and cancel_token.is_cancelled:
+                        return False, "Cancelled during typing"
+                    if ch == "\n":
+                        user32.keybd_event(0x0D, 0, 0, 0)
+                        user32.keybd_event(0x0D, 0, 2, 0)
+                    else:
+                        vk = user32.VkKeyScanW(ord(ch))
+                        if vk != -1:
+                            shift = (vk >> 8) & 1
+                            code = vk & 0xFF
+                            if shift:
+                                user32.keybd_event(0x10, 0, 0, 0)
+                            user32.keybd_event(code, 0, 0, 0)
+                            user32.keybd_event(code, 0, 2, 0)
+                            if shift:
+                                user32.keybd_event(0x10, 0, 2, 0)
+                    await asyncio.sleep(0.015)
+                if press_enter:
+                    user32.keybd_event(0x0D, 0, 0, 0)
+                    user32.keybd_event(0x0D, 0, 2, 0)
+
+                for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C, 0x33):
+                    user32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
+
+                return True, None
+            except Exception as char_ex:
+                return False, f"Character typing failed: {char_ex}"
+
+        return True, None
+

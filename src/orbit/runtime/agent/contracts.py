@@ -81,6 +81,7 @@ class OutcomeStatus(str, Enum):
     EFFECT_UNVERIFIED = "EFFECT_UNVERIFIED"
     DISPATCH_FAILED = "DISPATCH_FAILED"
     RECOVERY_ATTEMPTED = "RECOVERY_ATTEMPTED"
+    REDUNDANT_BLOCKED = "REDUNDANT_BLOCKED"
 
 
 # ==============================================================================
@@ -415,6 +416,8 @@ class ActionExecutionOutcome(BaseModel):
     failure_code: Optional[str] = Field(default=None, description="Structured failure classification code")
     duration_ms: float = Field(default=0.0, ge=0.0, description="Elapsed verification time in milliseconds")
 
+    text_verification: Optional[TextVerificationResult] = Field(default=None, description="Detailed provenance and comparison for text entry verification")
+
     @model_validator(mode="after")
     def sync_verified_fields(self) -> ActionExecutionOutcome:
         # Keep verified and expected_effect_observed in sync
@@ -435,6 +438,20 @@ class ActionExecutionOutcome(BaseModel):
 
 # Backward compatibility alias
 ActionExecutionResult = ActionExecutionOutcome
+
+
+class TextVerificationResult(BaseModel):
+    """Detailed evidence-based verification result for text actions."""
+
+    expected_text: str = Field(..., description="Exact expected text string")
+    normalized_expected_text: str = Field(..., description="Normalized expected text for comparison")
+    observed_text_candidates: List[str] = Field(default_factory=list, description="Observed text strings from post-action perception")
+    evidence_sources: List[str] = Field(default_factory=list, description="Perception sources evaluated: UIA, OCR, etc.")
+    exact_match: bool = Field(default=False, description="Whether an exact match was observed")
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence of text match")
+    observation_id: str = Field(..., description="Provenance ID of the post-action observation")
+    primary_source: Optional[str] = Field(default=None, description="Source yielding the primary match/closest candidate")
+    observed_text: Optional[str] = Field(default=None, description="Actual observed text from primary source")
 
 
 # ==============================================================================

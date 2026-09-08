@@ -17,8 +17,14 @@ Verifies REAL desktop closed-loop execution without mocks:
 
 import asyncio
 import os
+import subprocess
 import sys
 import time
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 # Ensure src is on path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
@@ -42,12 +48,31 @@ from orbit.runtime.task_completion.goal_verifier import GoalVerifier
 
 
 async def run_real_notepad_validation():
-    print("=" * 70)
-    print("ORBIT STEP 5 — PRODUCTION CLOSED-LOOP REALITY VALIDATION: NOTEPAD")
-    print("=" * 70)
+    print("=" * 80)
+    print("ORBIT STEP 5 — AUTHORITATIVE PRODUCTION CLOSED-LOOP VALIDATION: NOTEPAD")
+    print("=" * 80)
     print("Prompt: 'Open Notepad and type ORBIT Vision Test 123'")
     print("Timestamp:", time.strftime("%Y-%m-%d %H:%M:%S"))
-    print("-" * 70)
+    print("-" * 80)
+
+    # 0. Safety Pre-Cleanup: Ensure clean baseline desktop (close existing notepad if any)
+    print("[SAFETY PRE-CLEANUP] Closing any existing Notepad processes for clean baseline...")
+    try:
+        subprocess.run("taskkill /f /im notepad.exe", shell=True, capture_output=True)
+        await asyncio.sleep(0.5)
+        # Clear any accumulated tab session restore files
+        local_state = os.path.expandvars(r"%LOCALAPPDATA%\Packages\Microsoft.WindowsNotepad_8wekyb3d8bbwe\LocalState")
+        for sub_dir in ["TabState", "WindowState"]:
+            p = os.path.join(local_state, sub_dir)
+            if os.path.isdir(p):
+                for f in os.listdir(p):
+                    try:
+                        os.remove(os.path.join(p, f))
+                    except Exception:
+                        pass
+        print("[SAFETY PRE-CLEANUP] Baseline desktop and Notepad session state clean.")
+    except Exception as ex:
+        print(f"[SAFETY PRE-CLEANUP] Notice: {ex}")
 
     # 1. Initialize Real Capabilities & EventBus
     event_bus = EventBus()
@@ -60,21 +85,28 @@ async def run_real_notepad_validation():
     keyboard_cap = registry.get_optional(CapabilityType.KEYBOARD)
     workspace_cap = registry.get_optional(CapabilityType.WORKSPACE)
 
-    # 2. Initialize Model Runtime Stack
+    # 2. Initialize Model Runtime Stack & Print Model Availability
+    print("\n" + "=" * 80)
+    print("A. MODEL AVAILABILITY & RUNTIME REGISTRATION AUDIT")
+    print("=" * 80)
     cloud_provs = [
         CloudModelProvider(cloud_kind=CloudProviderKind.OPENAI),
         CloudModelProvider(cloud_kind=CloudProviderKind.ANTHROPIC),
         CloudModelProvider(cloud_kind=CloudProviderKind.GEMINI),
     ]
+    ollama_prov = OllamaProvider()
+    lmstudio_prov = LMStudioProvider()
     model_mgr = ModelManager(
-        providers=[OllamaProvider(), LMStudioProvider()],
+        providers=[ollama_prov, lmstudio_prov],
         cloud_providers=cloud_provs,
         event_bus=event_bus,
     )
     inv = await model_mgr.refresh_inventory()
-    print(f"Discovered {len(inv.models)} available AI model runtimes across providers.")
-    for m in inv.models[:5]:
-        print(f"  - [{m.provider.value}] {m.model_id} (Capabilities={[c.value for c in m.capabilities]})")
+    print(f"Total Discovered Models in Inventory: {len(inv.models)}")
+    for m in inv.models:
+        caps_str = ", ".join(c.value for c in m.capabilities)
+        prov_ep = getattr(ollama_prov, "endpoint", "N/A") if m.provider.value == "ollama" else "Cloud/SDK"
+        print(f"  * Model ID: {m.model_id:<32} | Provider: {m.provider.value:<10} | Caps: [{caps_str}] | Endpoint: {prov_ep}")
 
     session_mgr = ModelSessionManager(
         registry=model_mgr.registry,
@@ -91,7 +123,18 @@ async def run_real_notepad_validation():
     target_locator = EvidenceBasedTargetLocator()
     goal_verifier = GoalVerifier()
 
-    # 3. Instantiate Authoritative Production AgentExecutionLoop
+    # Pre-test model resolution check
+    try:
+        resolved_rt = await router.resolve_runtime(RoutingPolicy())
+        print(f"\n[MODEL ROUTER RESOLUTION]")
+        print(f"  Selected Primary Runtime: {resolved_rt.model_id}")
+        print(f"  Provider:                 {resolved_rt.descriptor.provider.value}")
+        print(f"  Local / Cloud:            {'LOCAL' if resolved_rt.descriptor.provider.value in ('ollama', 'lm_studio') else 'CLOUD'}")
+        print(f"  Endpoint:                 {getattr(resolved_rt.provider, 'endpoint', 'N/A')}")
+    except Exception as r_err:
+        print(f"[MODEL ROUTER RESOLUTION ERROR] {r_err}")
+
+    # 3. Instantiate Authoritative Production AgentExecutionLoop with Strict Safety Budget
     loop = AgentExecutionLoop(
         router=router,
         model_session_manager=session_mgr,
@@ -105,25 +148,27 @@ async def run_real_notepad_validation():
         goal_verifier=goal_verifier,
         event_bus=event_bus,
         budget=ExecutionBudget(
-            max_total_actions=15,
-            max_repeated_actions_without_progress=3,
+            max_total_actions=6,
+            max_repeated_actions_without_progress=2,
             max_recoveries_per_transition=2,
-            no_progress_timeout_sec=240.0,
+            no_progress_timeout_sec=90.0,
         ),
     )
 
     # 4. Execute Natural Language Task on Real Desktop
-    print("\n[STARTING PRODUCTION AGENT EXECUTION LOOP]")
+    print("\n" + "=" * 80)
+    print("STARTING CONTROLLED CLOSED-LOOP PRODUCTION TASK EXECUTION")
+    print("=" * 80)
     t_start = time.perf_counter()
     res: AgentExecutionResult = await loop.run(
         prompt="Open Notepad and type ORBIT Vision Test 123",
-        task_id="real_notepad_val_01",
+        task_id="real_notepad_prod_01",
     )
     t_elapsed = time.perf_counter() - t_start
 
-    print("\n" + "=" * 70)
-    print("REAL TASK EXECUTION OUTCOME REPORT")
-    print("=" * 70)
+    print("\n" + "=" * 80)
+    print("FINAL REAL TASK EXECUTION OUTCOME REPORT")
+    print("=" * 80)
     print(f"Task ID:          {res.task_id}")
     print(f"User Goal:        {res.objective.user_goal}")
     print(f"Success:          {res.is_success}")
@@ -133,17 +178,21 @@ async def run_real_notepad_validation():
     if res.failure_reason:
         print(f"Failure Reason:   {res.failure_reason} (Code: {res.failure_code})")
 
-    print("\n" + "-" * 70)
+    print("\n" + "-" * 80)
     print(f"CHRONOLOGICAL STATE TRANSITIONS ({len(res.state_transitions)} total):")
-    print("-" * 70)
+    print("-" * 80)
     for tr in res.state_transitions:
         print(f"  [{tr.state_before.value} -> {tr.state_after.value}] (cycle={tr.cycle_number}, obs={tr.observation_id}, dur={tr.duration_ms:.1f}ms)")
 
-    print("\n" + "-" * 70)
-    print(f"STRUCTURED CYCLE EXECUTION TRACES ({len(res.cycle_traces)} total):")
-    print("-" * 70)
+    print("\n" + "-" * 80)
+    print(f"STRUCTURED CYCLE EXECUTION TRACES & AUDIT ({len(res.cycle_traces)} total):")
+    print("-" * 80)
     for ct in res.cycle_traces:
         print(format_cycle_trace_block(ct))
+        print("-" * 50)
+        if ct.raw_model_response:
+            print(f"RAW MODEL RESPONSE (Cycle {ct.cycle_number}):\n{ct.raw_model_response.strip()}")
+            print("-" * 50)
         print()
 
     # Shutdown adapters

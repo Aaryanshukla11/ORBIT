@@ -26,6 +26,7 @@ from orbit.runtime.agent.contracts import (
     AgentAction,
     ExpectedState,
     OutcomeStatus,
+    TextVerificationResult,
     VerificationStrategy,
 )
 from orbit.runtime.agent.perception_router import PerceptionLayer, PerceptionRouter
@@ -79,6 +80,23 @@ class AgentStateTransitionVerifier:
             if expected_contract
             else action.verification_strategy
         )
+
+        # STALE OBSERVATION REJECTION INVARIANT:
+        # Verification requires a fresh post-action observation that has advanced beyond pre-action state
+        pre_id = getattr(pre_state, "snapshot_id", None)
+        post_id = getattr(post_state, "snapshot_id", None)
+        if pre_id and post_id and pre_id == post_id:
+            return ActionExecutionOutcome(
+                action_id=action.action_id,
+                dispatch_success=True,
+                expected_effect_observed=False,
+                outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+                verified=False,
+                verification_strategy=strategy,
+                verification_reason=f"Stale observation rejected: post_action_id '{post_id}' equals pre_action_id",
+                error_message="Post-action observation failed to advance",
+                duration_ms=(time.perf_counter() - t_start) * 1000.0,
+            )
 
         # -------------------------------------------------------------
         # Action-Type Specific Semantic Verification Rules
@@ -212,10 +230,23 @@ class AgentStateTransitionVerifier:
                 reason = f"Click dispatched successfully on '{action.target.name if action.target else 'element'}'"
 
         elif act_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE):
-            text = str(action.parameters.get("text", ""))
-            verified = True
-            reason = f"Successfully typed text payload ({len(text)} chars)"
-            observed_delta["text_typed_length"] = len(text)
+            expected_text = str(action.parameters.get("text", action.parameters.get("query", "")))
+            ver_res = self._verify_text_in_state(
+                expected_text=expected_text,
+                post_state=post_state,
+                post_observation=post_observation,
+            )
+            verified = ver_res.exact_match or (ver_res.confidence >= 0.85)
+            if verified:
+                reason = f"Expected text '{expected_text}' verified via {ver_res.primary_source} (match confidence: {ver_res.confidence:.2f})"
+            else:
+                observed_sample = ver_res.observed_text or (ver_res.observed_text_candidates[0] if ver_res.observed_text_candidates else "NONE")
+                reason = f"Expected text '{expected_text}' NOT observed in post-action state. Observed: '{observed_sample}' (exact_match=False)"
+            
+            observed_delta["text_verification"] = ver_res.model_dump()
+            observed_delta["expected_text"] = expected_text
+            observed_delta["observed_text"] = ver_res.observed_text
+            observed_delta["exact_match"] = ver_res.exact_match
 
         elif act_type in (AbstractActionType.SEND_HOTKEY, AbstractActionType.HOTKEY):
             combo = str(action.parameters.get("hotkey", action.parameters.get("combination", "")))
@@ -262,4 +293,106 @@ class AgentStateTransitionVerifier:
             verification_reason=reason,
             observed_delta=observed_delta,
             duration_ms=duration_ms,
+        )
+
+    def _verify_text_in_state(
+        self,
+        expected_text: str,
+        post_state: DesktopStateSnapshot,
+        post_observation: Optional[ObservationSnapshot] = None,
+    ) -> TextVerificationResult:
+        """Inspect post-action perception evidence (UIA + OCR) to verify expected text."""
+        exp_clean = expected_text.strip().lower()
+        exp_words = exp_clean.split()
+        obs_id = getattr(post_observation, "observation_id", getattr(post_state, "observation_id", "obs_unknown"))
+
+        candidates: List[str] = []
+        sources: List[str] = []
+        exact_match = False
+        primary_source = None
+        best_observed_text = None
+        best_confidence = 0.0
+
+        # 1. Inspect Native UI Automation elements from post_observation
+        if post_observation:
+            uia_elements = getattr(post_observation, "uia_elements", None) or []
+            perceived_elements = getattr(post_observation, "perceived_elements", None) or []
+            for elem in list(uia_elements) + list(perceived_elements):
+                val = getattr(elem, "value", None) or ""
+                nm = getattr(elem, "name", None) or ""
+                for txt in (str(val).strip(), str(nm).strip()):
+                    if txt and txt not in candidates:
+                        candidates.append(txt)
+                        txt_lower = txt.lower()
+                        if "UIA" not in sources:
+                            sources.append("UIA")
+                        
+                        if exp_clean == txt_lower:
+                            exact_match = True
+                            primary_source = "UIA"
+                            best_observed_text = txt
+                            best_confidence = 1.0
+                            break
+                        elif exp_clean in txt_lower:
+                            exact_match = True
+                            primary_source = "UIA"
+                            best_observed_text = txt
+                            best_confidence = 1.0
+                            break
+                        elif exp_words and all(w in txt_lower for w in exp_words):
+                            if best_confidence < 0.90:
+                                best_confidence = 0.90
+                                primary_source = "UIA"
+                                best_observed_text = txt
+                if exact_match:
+                    break
+
+        # 2. Inspect OCR tokens from post_state or post_observation
+        if not exact_match:
+            ocr_tokens: List[str] = []
+            if hasattr(post_state, "ocr_tokens") and post_state.ocr_tokens:
+                ocr_tokens = [str(t) for t in post_state.ocr_tokens]
+            elif post_observation and getattr(post_observation, "ocr_tokens", None):
+                ocr_tokens = [t.text if hasattr(t, "text") else str(t) for t in post_observation.ocr_tokens]
+
+            if ocr_tokens:
+                if "OCR" not in sources:
+                    sources.append("OCR")
+                combined_ocr = " ".join(ocr_tokens)
+                candidates.append(combined_ocr)
+                combined_lower = combined_ocr.lower()
+
+                if exp_clean == combined_lower or exp_clean in combined_lower:
+                    exact_match = True
+                    primary_source = "OCR"
+                    best_observed_text = combined_ocr
+                    best_confidence = 1.0
+                elif exp_words and all(w in combined_lower for w in exp_words):
+                    exact_match = True
+                    primary_source = "OCR"
+                    best_observed_text = combined_ocr
+                    best_confidence = 0.95
+                else:
+                    # Partial / Levenshtein / character overlap check
+                    overlap = sum(1 for w in exp_words if w in combined_lower)
+                    conf = overlap / max(len(exp_words), 1)
+                    if conf > best_confidence:
+                        best_confidence = conf
+                        primary_source = "OCR"
+                        best_observed_text = combined_ocr
+
+        if not primary_source and candidates:
+            primary_source = sources[0] if sources else "PERCEPTION"
+            best_observed_text = candidates[0]
+
+        return TextVerificationResult(
+            expected_text=expected_text,
+            normalized_expected_text=exp_clean,
+            observed_text_candidates=candidates[:10],
+            evidence_sources=sources,
+            exact_match=exact_match,
+            confidence=best_confidence,
+            observation_id=str(obs_id),
+            primary_source=primary_source,
+            observed_text=best_observed_text,
         )
