@@ -95,47 +95,119 @@ class EvidenceBasedTargetLocator:
 
     def locate_target(
         self,
-        snapshot: ObservationSnapshot,
-        intent: TargetIntent,
+        arg1: Any,
+        arg2: Any = None,
+        *,
+        snapshot: Optional[Any] = None,
+        intent: Optional[Any] = None,
+        observation: Optional[Any] = None,
     ) -> TargetResolutionResult:
-        """Resolve TargetIntent against ObservationSnapshot using evidence-based matching."""
-        # 1. Stale Observation Gate
+        """Resolve TargetIntent/SemanticTarget against ObservationSnapshot/DesktopObservation using evidence-based matching."""
+        actual_snapshot: Optional[ObservationSnapshot] = None
+        actual_intent: Optional[TargetIntent] = None
 
-        if snapshot.is_stale or snapshot.freshness_state == FreshnessState.STALE:
-            reason = snapshot.invalidation_reason or "Observation snapshot TTL expired or generation invalid"
-            logger.warning("Target localization rejected: snapshot %s is stale (%s)", snapshot.snapshot_id, reason)
+        # Disambiguate arguments
+        candidates = [arg1, arg2, snapshot, observation, intent]
+        for c in candidates:
+            if c is None:
+                continue
+            if isinstance(c, ObservationSnapshot):
+                actual_snapshot = c
+            elif hasattr(c, "uia_elements") or hasattr(c, "visible_windows"):
+                # Canonical DesktopObservation
+                actual_snapshot = ObservationSnapshot.from_desktop_observation(c)
+            elif hasattr(c, "desktop_observation") and c.desktop_observation is not None:
+                # CurrentStateObservation with attached DesktopObservation
+                actual_snapshot = ObservationSnapshot.from_desktop_observation(c.desktop_observation)
+            elif hasattr(c, "raw_evidence") and hasattr(c, "visible_windows"):
+                # CurrentStateObservation without attached DesktopObservation
+                from orbit.models.common import BoundingBox
+                windows = [
+                    ObservedWindow(
+                        hwnd=w.get("hwnd", 0),
+                        process_id=w.get("process_id", 0) or 0,
+                        process_name=w.get("process_name", "") or "",
+                        window_title=w.get("title", "") or "",
+                        extended_bounds=BoundingBox(left=0, top=0, width=1920, height=1080),
+                        is_foreground=w.get("is_foreground", False),
+                        is_visible=True,
+                    )
+                    for w in c.visible_windows
+                ]
+                actual_snapshot = ObservationSnapshot(
+                    snapshot_id=getattr(c, "observation_id", f"obs_{uuid4().hex[:8]}"),
+                    generation_id=1,
+                    timestamp_ns=int(time.time() * 1e9),
+                    desktop_geometry=BoundingBox(left=0, top=0, width=1920, height=1080),
+                    windows=windows,
+                )
+            elif isinstance(c, TargetIntent):
+                actual_intent = c
+            elif hasattr(c, "name") or hasattr(c, "role"):
+                # SemanticTarget or similar model
+                strat = TargetStrategy.ACCESSIBILITY_ELEMENT
+                c_role = getattr(c, "role", "") or ""
+                if c_role.lower() in ("window", "app", "application") or "window" in str(getattr(c, "context", "")).lower():
+                    strat = TargetStrategy.WINDOW_TITLE
+                actual_intent = TargetIntent(
+                    name=getattr(c, "name", None),
+                    role=getattr(c, "role", None),
+                    window_title=getattr(c, "name", None) if strat == TargetStrategy.WINDOW_TITLE else None,
+                    strategy=strat,
+                )
+
+        if actual_intent is None:
+            return TargetResolutionResult(
+                status=TargetResolutionStatus.INVALID_REQUEST,
+                diagnostic_message="No valid TargetIntent or SemanticTarget provided to TargetLocator",
+            )
+
+        if actual_snapshot is None:
+            # Create synthetic snapshot fallback
+            from orbit.models.common import BoundingBox
+            actual_snapshot = ObservationSnapshot(
+                snapshot_id=f"snap_{uuid4().hex[:8]}",
+                generation_id=1,
+                timestamp_ns=int(time.time() * 1e9),
+                desktop_geometry=BoundingBox(left=0, top=0, width=1920, height=1080),
+            )
+
+        # 1. Stale Observation Gate
+        if actual_snapshot.is_stale or actual_snapshot.freshness_state == FreshnessState.STALE:
+            reason = actual_snapshot.invalidation_reason or "Observation snapshot TTL expired or generation invalid"
+            logger.warning("Target localization rejected: snapshot %s is stale (%s)", actual_snapshot.snapshot_id, reason)
             return TargetResolutionResult(
                 status=TargetResolutionStatus.STALE_OBSERVATION,
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
+                observation_id=actual_snapshot.snapshot_id,
+                desktop_generation_id=actual_snapshot.generation_id,
                 is_stale_observation=True,
                 diagnostic_message=f"Target localization aborted: Observation snapshot is stale ({reason})",
             )
 
         # 2. Dispatch based on strategy
-        if intent.strategy == TargetStrategy.COORDINATE_REGION:
-            return self._resolve_coordinate_region(snapshot, intent)
-        elif intent.strategy == TargetStrategy.WINDOW_TITLE:
-            return self._resolve_window(snapshot, intent)
-        elif intent.strategy == TargetStrategy.ACCESSIBILITY_ELEMENT:
-            return self._resolve_accessibility_element(snapshot, intent)
-        elif intent.strategy == TargetStrategy.OCR_TEXT:
-            return self._resolve_ocr_text(snapshot, intent)
-        elif intent.strategy in (
+        if actual_intent.strategy == TargetStrategy.COORDINATE_REGION:
+            return self._resolve_coordinate_region(actual_snapshot, actual_intent)
+        elif actual_intent.strategy == TargetStrategy.WINDOW_TITLE:
+            return self._resolve_window(actual_snapshot, actual_intent)
+        elif actual_intent.strategy == TargetStrategy.ACCESSIBILITY_ELEMENT:
+            return self._resolve_accessibility_element(actual_snapshot, actual_intent)
+        elif actual_intent.strategy == TargetStrategy.OCR_TEXT:
+            return self._resolve_ocr_text(actual_snapshot, actual_intent)
+        elif actual_intent.strategy in (
             TargetStrategy.VISUAL_TEMPLATE,
             TargetStrategy.ICON_TEMPLATE,
             TargetStrategy.IMAGE_REGION,
             TargetStrategy.VISUAL_SEMANTIC,
         ):
-            return self._resolve_visual_template(snapshot, intent)
-        elif intent.strategy in (TargetStrategy.MULTIMODAL, TargetStrategy.FUSED_MULTIMODAL):
-            return self._resolve_multimodal(snapshot, intent)
+            return self._resolve_visual_template(actual_snapshot, actual_intent)
+        elif actual_intent.strategy in (TargetStrategy.MULTIMODAL, TargetStrategy.FUSED_MULTIMODAL):
+            return self._resolve_multimodal(actual_snapshot, actual_intent)
         else:
             return TargetResolutionResult(
                 status=TargetResolutionStatus.UNSUPPORTED,
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                diagnostic_message=f"Unsupported target resolution strategy: {intent.strategy}",
+                observation_id=actual_snapshot.snapshot_id,
+                desktop_generation_id=actual_snapshot.generation_id,
+                diagnostic_message=f"Unsupported target resolution strategy: {actual_intent.strategy}",
             )
 
     resolve = locate_target

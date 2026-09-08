@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from orbit.models.common import BoundingBox, Resolution, ScreenPoint
@@ -105,3 +106,143 @@ class ObservationSnapshot(BaseModel):
     is_stale: bool = Field(default=False)
     invalidation_reason: Optional[str] = None
     telemetry: Dict[str, Any] = Field(default_factory=dict)
+
+    @classmethod
+    def from_desktop_observation(cls, obs: Any) -> ObservationSnapshot:
+        """Construct an ObservationSnapshot from a canonical DesktopObservation."""
+        windows: List[ObservedWindow] = []
+        for w in getattr(obs, "visible_windows", []):
+            if isinstance(w, dict):
+                hwnd = w.get("hwnd", 0)
+                pid = w.get("process_id", 0) or 0
+                pname = w.get("process_name", "") or ""
+                wtitle = w.get("title", "") or w.get("window_title", "") or ""
+                wb_raw = w.get("window_bounds")
+                wb = wb_raw if (wb_raw and hasattr(wb_raw, "width") and wb_raw.width > 0) else BoundingBox(left=0, top=0, width=1920, height=1080)
+                is_fg = w.get("is_foreground", False)
+                is_vis = w.get("is_visible", True)
+                cb_raw = w.get("client_bounds")
+                cb = cb_raw if (cb_raw and hasattr(cb_raw, "width") and cb_raw.width > 0) else None
+            else:
+                hwnd = getattr(w, "hwnd", 0)
+                pid = getattr(w, "process_id", 0) or 0
+                pname = getattr(w, "process_name", "") or ""
+                wtitle = getattr(w, "title", "") or getattr(w, "window_title", "") or ""
+                wb = w.window_bounds if (hasattr(w, "window_bounds") and w.window_bounds and w.window_bounds.width > 0 and w.window_bounds.height > 0) else BoundingBox(left=0, top=0, width=1920, height=1080)
+                is_fg = getattr(w, "is_foreground", False)
+                is_vis = getattr(w, "is_visible", True)
+                cb = w.client_bounds if (hasattr(w, "client_bounds") and w.client_bounds and w.client_bounds.width > 0 and w.client_bounds.height > 0) else None
+
+            windows.append(
+                ObservedWindow(
+                    hwnd=hwnd,
+                    process_id=pid,
+                    process_name=pname,
+                    window_title=wtitle,
+                    extended_bounds=wb,
+                    is_foreground=is_fg,
+                    is_visible=is_vis,
+                    dpi_scaling=1.0,
+                    client_bounds=cb,
+                )
+            )
+
+        fg_win: Optional[ObservedWindow] = None
+        fg_obs = getattr(obs, "foreground_window", None)
+        if fg_obs:
+            if isinstance(fg_obs, dict):
+                hwnd = fg_obs.get("hwnd", 0)
+                pid = fg_obs.get("process_id", 0) or 0
+                pname = fg_obs.get("process_name", "") or ""
+                wtitle = fg_obs.get("title", "") or fg_obs.get("window_title", "") or ""
+                wb_raw = fg_obs.get("window_bounds")
+                wb = wb_raw if (wb_raw and hasattr(wb_raw, "width") and wb_raw.width > 0) else BoundingBox(left=0, top=0, width=1920, height=1080)
+                is_vis = fg_obs.get("is_visible", True)
+                cb_raw = fg_obs.get("client_bounds")
+                cb = cb_raw if (cb_raw and hasattr(cb_raw, "width") and cb_raw.width > 0) else None
+            else:
+                hwnd = getattr(fg_obs, "hwnd", 0)
+                pid = getattr(fg_obs, "process_id", 0) or 0
+                pname = getattr(fg_obs, "process_name", "") or ""
+                wtitle = getattr(fg_obs, "title", "") or getattr(fg_obs, "window_title", "") or ""
+                wb = fg_obs.window_bounds if (hasattr(fg_obs, "window_bounds") and fg_obs.window_bounds and fg_obs.window_bounds.width > 0 and fg_obs.window_bounds.height > 0) else BoundingBox(left=0, top=0, width=1920, height=1080)
+                is_vis = getattr(fg_obs, "is_visible", True)
+                cb = fg_obs.client_bounds if (hasattr(fg_obs, "client_bounds") and fg_obs.client_bounds and fg_obs.client_bounds.width > 0 and fg_obs.client_bounds.height > 0) else None
+
+            fg_win = ObservedWindow(
+                hwnd=hwnd,
+                process_id=pid,
+                process_name=pname,
+                window_title=wtitle,
+                extended_bounds=wb,
+                is_foreground=True,
+                is_visible=is_vis,
+                dpi_scaling=1.0,
+                client_bounds=cb,
+            )
+
+        elements: List[ObservedElement] = []
+        for e in getattr(obs, "uia_elements", []):
+            if isinstance(e, dict):
+                el_id = e.get("element_id", f"el_{uuid4().hex[:6]}")
+                ename = e.get("name")
+                erole = e.get("role") or e.get("control_type") or "Unknown"
+                ectype = e.get("control_type") or "Unknown"
+                eautoid = e.get("automation_id")
+                ecls = e.get("class_name")
+                eb_raw = e.get("bounding_box")
+                eb = eb_raw if (eb_raw and hasattr(eb_raw, "width") and eb_raw.width > 0) else BoundingBox(left=0, top=0, width=1, height=1)
+                e_en = e.get("is_enabled", True)
+                e_foc = e.get("is_focused", False)
+                e_vis = e.get("is_visible", True)
+            else:
+                el_id = getattr(e, "element_id", f"el_{uuid4().hex[:6]}")
+                ename = getattr(e, "name", None)
+                erole = getattr(e, "control_type", "Unknown") or "Unknown"
+                ectype = getattr(e, "control_type", "Unknown") or "Unknown"
+                eautoid = getattr(e, "automation_id", None)
+                ecls = getattr(e, "class_name", None)
+                eb = e.bounding_box if (hasattr(e, "bounding_box") and e.bounding_box and e.bounding_box.width > 0 and e.bounding_box.height > 0) else BoundingBox(left=0, top=0, width=1, height=1)
+                e_en = getattr(e, "is_enabled", True)
+                e_foc = getattr(e, "has_keyboard_focus", False)
+                e_vis = getattr(e, "is_visible", True)
+
+            elements.append(
+                ObservedElement(
+                    element_id=el_id,
+                    source="UI_AUTOMATION",
+                    name=ename,
+                    role=erole,
+                    control_type=ectype,
+                    automation_id=eautoid,
+                    class_name=ecls,
+                    bounds=eb,
+                    is_enabled=e_en,
+                    is_focused=e_foc,
+                    is_offscreen=not e_vis,
+                    confidence=ObservationConfidence.CONFIRMED,
+                )
+            )
+
+        sw = getattr(obs, "screen_width", 1920) or 1920
+        sh = getattr(obs, "screen_height", 1080) or 1080
+        ts = getattr(obs, "timestamp", datetime.now(timezone.utc))
+        obs_id = getattr(obs, "observation_id", f"obs_{uuid4().hex[:8]}")
+        dur = getattr(obs, "capture_duration_ms", 0.0)
+
+        return cls(
+            snapshot_id=obs_id,
+            generation_id=1,
+            timestamp_ns=int(ts.timestamp() * 1e9),
+            timestamp_utc=ts,
+            capture_duration_ms=dur,
+            desktop_geometry=BoundingBox(left=0, top=0, width=sw, height=sh),
+            coordinate_space=CoordinateSpace.VIRTUAL_DESKTOP,
+            foreground_window=fg_win,
+            windows=windows,
+            detected_elements=elements,
+            confidence=ObservationConfidence.CONFIRMED,
+            freshness_state=FreshnessState.FRESH,
+            is_stale=False,
+            telemetry={"is_consistent": getattr(obs, "is_consistent", True)},
+        )

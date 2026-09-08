@@ -211,26 +211,30 @@ class PerceptionRouter:
             strategy=TargetStrategy.ACCESSIBILITY_ELEMENT,
         )
         try:
-            res: TargetResolutionResult = await self._target_locator.locate_target(target_intent, observation)
-            is_resolved = (
-                res.status == TargetResolutionStatus.RESOLVED
-                if hasattr(res, "status")
-                else getattr(res, "is_resolved", False)
-            )
-            resolved_tgt = getattr(res, "target", None) or getattr(res, "resolved_target", None)
-            if res and is_resolved and resolved_tgt:
-                coords = (int(resolved_tgt.safe_point.x), int(resolved_tgt.safe_point.y))
-                return PerceptionQueryResult(
-                    query=target.name or "",
-                    layer_used=PerceptionLayer.UIA,
-                    is_resolved=True,
-                    confidence=resolved_tgt.confidence,
-                    coordinates=coords,
-                    resolved_target=resolved_tgt,
-                    evidence=resolved_tgt.evidence.model_dump() if hasattr(resolved_tgt.evidence, "model_dump") else {},
-                    diagnostic_message=f"Resolved via UI Automation at ({coords[0]}, {coords[1]})",
-                    duration_ms=(time.perf_counter() - t_start) * 1000.0,
+            import inspect
+            locate_fn = getattr(self._target_locator, "locate_target", None) or getattr(self._target_locator, "resolve", None)
+            if locate_fn:
+                res_raw = locate_fn(target_intent, observation)
+                res = await res_raw if inspect.isawaitable(res_raw) else res_raw
+                is_resolved = (
+                    res.status == TargetResolutionStatus.RESOLVED
+                    if hasattr(res, "status")
+                    else getattr(res, "is_resolved", False)
                 )
+                resolved_tgt = getattr(res, "target", None) or getattr(res, "resolved_target", None)
+                if res and is_resolved and resolved_tgt:
+                    coords = (int(resolved_tgt.safe_point.x), int(resolved_tgt.safe_point.y))
+                    return PerceptionQueryResult(
+                        query=target.name or "",
+                        layer_used=PerceptionLayer.UIA,
+                        is_resolved=True,
+                        confidence=resolved_tgt.confidence,
+                        coordinates=coords,
+                        resolved_target=resolved_tgt,
+                        evidence=resolved_tgt.evidence.model_dump() if hasattr(resolved_tgt.evidence, "model_dump") else {},
+                        diagnostic_message=f"Resolved via UI Automation at ({coords[0]}, {coords[1]})",
+                        duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                    )
         except Exception as ex:
             logger.debug("UIA element query notice: %s", ex)
 
@@ -254,26 +258,30 @@ class PerceptionRouter:
             strategy=TargetStrategy.OCR_TEXT,
         )
         try:
-            res: TargetResolutionResult = await self._target_locator.locate_target(target_intent, observation)
-            is_resolved = (
-                res.status == TargetResolutionStatus.RESOLVED
-                if hasattr(res, "status")
-                else getattr(res, "is_resolved", False)
-            )
-            resolved_tgt = getattr(res, "target", None) or getattr(res, "resolved_target", None)
-            if res and is_resolved and resolved_tgt:
-                coords = (int(resolved_tgt.safe_point.x), int(resolved_tgt.safe_point.y))
-                return PerceptionQueryResult(
-                    query=target_text,
-                    layer_used=PerceptionLayer.OCR,
-                    is_resolved=True,
-                    confidence=resolved_tgt.confidence,
-                    coordinates=coords,
-                    resolved_target=resolved_tgt,
-                    evidence=resolved_tgt.evidence.model_dump() if hasattr(resolved_tgt.evidence, "model_dump") else {},
-                    diagnostic_message=f"Resolved via OCR at ({coords[0]}, {coords[1]})",
-                    duration_ms=(time.perf_counter() - t_start) * 1000.0,
+            import inspect
+            locate_fn = getattr(self._target_locator, "locate_target", None) or getattr(self._target_locator, "resolve", None)
+            if locate_fn:
+                res_raw = locate_fn(target_intent, observation)
+                res = await res_raw if inspect.isawaitable(res_raw) else res_raw
+                is_resolved = (
+                    res.status == TargetResolutionStatus.RESOLVED
+                    if hasattr(res, "status")
+                    else getattr(res, "is_resolved", False)
                 )
+                resolved_tgt = getattr(res, "target", None) or getattr(res, "resolved_target", None)
+                if res and is_resolved and resolved_tgt:
+                    coords = (int(resolved_tgt.safe_point.x), int(resolved_tgt.safe_point.y))
+                    return PerceptionQueryResult(
+                        query=target_text,
+                        layer_used=PerceptionLayer.OCR,
+                        is_resolved=True,
+                        confidence=resolved_tgt.confidence,
+                        coordinates=coords,
+                        resolved_target=resolved_tgt,
+                        evidence=resolved_tgt.evidence.model_dump() if hasattr(resolved_tgt.evidence, "model_dump") else {},
+                        diagnostic_message=f"Resolved via OCR at ({coords[0]}, {coords[1]})",
+                        duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                    )
         except Exception as ex:
             logger.debug("OCR text query notice: %s", ex)
 

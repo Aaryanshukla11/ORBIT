@@ -320,6 +320,11 @@ class DesktopObservation(BaseModel):
     desktop_summary: str = Field(default="", description="Concise structured summary formatted for LLM reasoning")
     canvas_status: Optional[str] = Field(default=None, description="Target canvas status: READY_FOR_DRAWING, MODIFIED, BLANK, UNKNOWN")
 
+    # Modality acquisition status telemetry
+    uia_status: str = Field(default="SUCCESS", description="UIA status: SUCCESS, EMPTY, UNAVAILABLE, FAILED")
+    ocr_status: str = Field(default="SUCCESS", description="OCR status: SUCCESS, EMPTY, UNAVAILABLE, FAILED")
+    screenshot_status: str = Field(default="SUCCESS", description="Screenshot status: SUCCESS, FALLBACK, FAILED")
+
     # Observation consistency & performance telemetry
     is_consistent: bool = Field(default=True, description="Whether observation maintained state consistency during capture")
     consistency_warnings: List[str] = Field(default_factory=list, description="Warnings if desktop state shifted during capture")

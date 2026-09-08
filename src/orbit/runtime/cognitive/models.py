@@ -43,6 +43,7 @@ from orbit.runtime.agent.contracts import (
     VerificationStrategy,
     WaitParams,
 )
+from orbit.runtime.perception.models import DesktopObservation
 from orbit.runtime.task_completion.models import TaskCompletionStatus
 
 
@@ -75,6 +76,13 @@ class CurrentStateObservation(BaseModel):
     canvas_status: Optional[str] = Field(default=None, description="Status of target canvas if applicable: BLANK, NON_BLANK, UNKNOWN")
     ocr_tokens: List[str] = Field(default_factory=list, description="OCR text tokens recognized on screen")
     raw_evidence: Dict[str, Any] = Field(default_factory=dict, description="Raw sensory and accessibility telemetry")
+
+    # Authoritative Canonical DesktopObservation snapshot & modality telemetry
+    desktop_observation: Optional[DesktopObservation] = Field(default=None, description="Underlying canonical multimodal DesktopObservation")
+    uia_status: Optional[str] = Field(default=None, description="UIA status: SUCCESS, EMPTY, UNAVAILABLE, FAILED")
+    ocr_status: Optional[str] = Field(default=None, description="OCR status: SUCCESS, EMPTY, UNAVAILABLE, FAILED")
+    screenshot_status: Optional[str] = Field(default=None, description="Screenshot status: SUCCESS, FALLBACK, FAILED")
+    perceived_elements_count: int = Field(default=0, description="Count of fused semantic elements in perception snapshot")
 
 
 class CognitiveDecision(BaseModel):

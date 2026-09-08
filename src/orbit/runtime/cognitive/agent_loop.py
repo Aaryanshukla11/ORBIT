@@ -370,14 +370,10 @@ class AgentExecutionLoop:
                 consecutive_identical_actions = 0
                 last_action_signature = act_sig
 
-            # 5. Target Resolution (AbstractAction -> ResolvedAction) & Physical Action Dispatch
-            exec_result = await self._execute_and_verify_action(action, observation, cancel_token)
+            # 5. Target Resolution (AbstractAction -> ResolvedAction) & Physical Action Dispatch + Immediate Fresh Post-Observation
+            exec_result, post_obs = await self._execute_and_verify_action(action, observation, objective, cancel_token)
 
-            # Settle window/state after action
-            await asyncio.sleep(0.3)
-
-            # 6. Immediate Post-Observation & Progress Detection
-            post_obs = await self._observer.observe(objective)
+            # 6. Immediate Progress Detection between Pre-Action and Fresh Post-Action Observation
             progress_detected = self._evaluate_state_progress(observation, post_obs, exec_result)
 
             if progress_detected:
@@ -413,9 +409,10 @@ class AgentExecutionLoop:
         self,
         action: AbstractAction,
         pre_obs: CurrentStateObservation,
+        objective: Optional[StructuredObjective] = None,
         cancel_token: Optional[CancellationToken] = None,
-    ) -> ActionExecutionResult:
-        """Translate SemanticTarget to ResolvedAction (coordinates) and dispatch low-level input."""
+    ) -> Tuple[ActionExecutionResult, CurrentStateObservation]:
+        """Translate SemanticTarget to ResolvedAction (coordinates), dispatch low-level input, and capture fresh post-observation."""
         act_type = action.action_type
         params = action.parameters
 
@@ -439,7 +436,7 @@ class AgentExecutionLoop:
         # 1. Target Resolution: AbstractAction -> ResolvedAction (Runtime Grounding)
         resolved_action: Optional[ResolvedAction] = None
         if action.target is not None:
-            resolved_coords = await self._resolve_target_coordinates(action.target)
+            resolved_coords = await self._resolve_target_coordinates(action.target, observation=pre_obs)
             if resolved_coords:
                 resolved_action = ResolvedAction(
                     action_id=action.action_id,
@@ -551,7 +548,7 @@ class AgentExecutionLoop:
                     dispatch_success = True
 
             elif act_type in (AbstractActionType.CLICK, AbstractActionType.CLICK_ELEMENT):
-                coords = await self._resolve_target_coordinates(action.target)
+                coords = await self._resolve_target_coordinates(action.target, observation=pre_obs)
                 if coords and self._pointer is not None:
                     await self._pointer.move_to(coords[0], coords[1])
                     await asyncio.sleep(0.05)
@@ -564,7 +561,7 @@ class AgentExecutionLoop:
                     dispatch_success = True
 
             elif act_type == AbstractActionType.DOUBLE_CLICK:
-                coords = await self._resolve_target_coordinates(action.target)
+                coords = await self._resolve_target_coordinates(action.target, observation=pre_obs)
                 if coords and self._pointer is not None:
                     await self._pointer.move_to(coords[0], coords[1])
                     await asyncio.sleep(0.05)
@@ -580,7 +577,7 @@ class AgentExecutionLoop:
                     dispatch_success = True
 
             elif act_type == AbstractActionType.RIGHT_CLICK:
-                coords = await self._resolve_target_coordinates(action.target)
+                coords = await self._resolve_target_coordinates(action.target, observation=pre_obs)
                 if coords and self._pointer is not None:
                     await self._pointer.move_to(coords[0], coords[1])
                     await asyncio.sleep(0.05)
@@ -627,7 +624,13 @@ class AgentExecutionLoop:
             err_msg = str(ex)
 
         # -------------------------------------------------------------
-        # Immediate State Transition Verification via AgentStateTransitionVerifier
+        # Immediate Fresh Post-Action Observation Capture
+        # -------------------------------------------------------------
+        await asyncio.sleep(0.3)
+        post_obs = await self._observer.observe(objective)
+
+        # -------------------------------------------------------------
+        # State Transition Verification via AgentStateTransitionVerifier
         # -------------------------------------------------------------
         pre_state = DesktopStateSnapshot(
             active_window_hwnd=pre_obs.active_window_hwnd,
@@ -638,16 +641,25 @@ class AgentExecutionLoop:
             canvas_status=pre_obs.canvas_status or "UNKNOWN",
             ocr_tokens=pre_obs.ocr_tokens,
         )
-        post_state = pre_state  # Pre-populated; verifier validates against fresh state deltas
+        post_state = DesktopStateSnapshot(
+            active_window_hwnd=post_obs.active_window_hwnd,
+            active_window_title=post_obs.active_window_title,
+            visible_windows=post_obs.visible_windows,
+            target_app_exists=post_obs.target_app_exists,
+            target_app_is_active=post_obs.target_app_is_active,
+            canvas_status=post_obs.canvas_status or "UNKNOWN",
+            ocr_tokens=post_obs.ocr_tokens,
+        )
 
         outcome = await self._transition_verifier.verify_action_outcome(
             action=action,
             dispatch_success=dispatch_success,
             pre_state=pre_state,
             post_state=post_state,
+            post_observation=post_obs.desktop_observation,
         )
 
-        return ActionExecutionResult(
+        exec_res = ActionExecutionResult(
             action_id=action.action_id,
             dispatch_success=outcome.dispatch_success,
             expected_effect_observed=outcome.expected_effect_observed,
@@ -660,7 +672,13 @@ class AgentExecutionLoop:
             duration_ms=outcome.duration_ms,
         )
 
-    async def _resolve_target_coordinates(self, target: Optional[SemanticTarget]) -> Optional[Tuple[int, int]]:
+        return exec_res, post_obs
+
+    async def _resolve_target_coordinates(
+        self,
+        target: Optional[SemanticTarget],
+        observation: Optional[Union[CurrentStateObservation, DesktopObservation]] = None,
+    ) -> Optional[Tuple[int, int]]:
         """Resolve semantic target to runtime physical screen coordinates."""
         if target is None:
             return None
@@ -672,9 +690,18 @@ class AgentExecutionLoop:
         )
         try:
             if self._target_locator is not None:
-                res = await self._target_locator.locate_target(target_intent)
-                if res and res.is_resolved and res.resolved_target:
-                    return (int(res.resolved_target.bounds.center_x), int(res.resolved_target.bounds.center_y))
+                locate_fn = getattr(self._target_locator, "locate_target", None) or getattr(self._target_locator, "resolve", None)
+                if locate_fn:
+                    res_raw = locate_fn(target_intent, observation)
+                    res = await res_raw if inspect.isawaitable(res_raw) else res_raw
+                    is_res = getattr(res, "is_resolved", False) or (getattr(res, "status", None) == TargetResolutionStatus.RESOLVED if hasattr(res, "status") else False)
+                    tgt = getattr(res, "target", None) or getattr(res, "resolved_target", None)
+                    if is_res and tgt and hasattr(tgt, "bounding_box"):
+                        return (int(tgt.bounding_box.center_x), int(tgt.bounding_box.center_y))
+                    elif is_res and tgt and hasattr(tgt, "bounds"):
+                        return (int(tgt.bounds.center_x), int(tgt.bounds.center_y))
+                    elif is_res and tgt and hasattr(tgt, "safe_point"):
+                        return (int(tgt.safe_point.x), int(tgt.safe_point.y))
         except Exception as ex:
             logger.debug("TargetLocator resolution notice: %s", ex)
 

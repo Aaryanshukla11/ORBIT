@@ -133,6 +133,11 @@ class CurrentStateObserver:
                 "consistency_warnings": desktop_obs.consistency_warnings,
                 "perceived_elements_count": len(desktop_obs.perceived_elements),
             },
+            desktop_observation=desktop_obs,
+            uia_status=desktop_obs.uia_status,
+            ocr_status=desktop_obs.ocr_status,
+            screenshot_status=desktop_obs.screenshot_status,
+            perceived_elements_count=len(desktop_obs.perceived_elements),
         )
 
     def _matches_app(self, title: Optional[str], class_name: Optional[str], target: str) -> bool:

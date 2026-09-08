@@ -102,14 +102,21 @@ class AgentStateTransitionVerifier:
 
             app_running = False
             for win in post_state.visible_windows:
-                title = (win.get("title") or "").lower()
-                cls = (win.get("class_name") or "").lower()
-                if target_clean and (target_clean in title or target_clean in cls):
+                if isinstance(win, dict):
+                    title = (win.get("title") or win.get("window_title") or "").lower()
+                    cls = (win.get("class_name") or "").lower()
+                    proc = (win.get("process_name") or "").lower()
+                else:
+                    title = (getattr(win, "title", None) or getattr(win, "window_title", "") or "").lower()
+                    cls = (getattr(win, "window_class", None) or getattr(win, "class_name", "") or "").lower()
+                    proc = (getattr(win, "process_name", "") or "").lower()
+
+                if target_clean and (target_clean in title or target_clean in cls or target_clean in proc):
                     app_running = True
                     observed_delta["matched_window"] = win
                     break
 
-            if app_running or (post_state.active_window_title and target_clean in post_state.active_window_title.lower()) or post_state.target_app_exists:
+            if app_running or (post_state.active_window_title and target_clean in post_state.active_window_title.lower()) or post_state.target_app_exists or post_state.target_app_is_active:
                 verified = True
                 reason = f"Application window for '{app_name}' verified visible and active"
             else:

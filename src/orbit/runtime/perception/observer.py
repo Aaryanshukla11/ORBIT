@@ -75,28 +75,39 @@ class DesktopObserver:
 
         # 2. Capture Visual Screenshot Frame
         screenshot_obs: Optional[ScreenshotObservation] = None
+        screenshot_status = "SUCCESS"
         try:
             screenshot_obs = await self._screenshot_observer.capture(include_base64=include_screenshot_base64)
+            if screenshot_obs and screenshot_obs.capture_method == "SYNTHETIC_FALLBACK":
+                screenshot_status = "FALLBACK"
         except Exception as ss_err:
             logger.debug("Screenshot observation capture notice: %s", ss_err)
             consistency_warnings.append(f"Screenshot capture failed: {ss_err}")
+            screenshot_status = "FAILED"
 
         # 3. Interrogate UIA Accessibility Elements (scoped to foreground/target window)
         scoped_hwnd = target_hwnd or (fg_pre.hwnd if fg_pre else None)
         focused_element: Optional[UIElementObservation] = None
         uia_elements: List[UIElementObservation] = []
+        uia_status = "SUCCESS"
         if include_uia:
             try:
                 focused_element, uia_elements = self._uia_observer.observe_elements(
                     target_hwnd=scoped_hwnd,
                     max_elements=40,
                 )
+                if not uia_elements:
+                    uia_status = "EMPTY"
             except Exception as uia_err:
                 logger.debug("UIA elements observation notice: %s", uia_err)
                 consistency_warnings.append(f"UIA element interrogation notice: {uia_err}")
+                uia_status = "FAILED"
+        else:
+            uia_status = "UNAVAILABLE"
 
         # 4. Extract OCR Tokens from Visual Frame
         ocr_tokens: List[OCRToken] = []
+        ocr_status = "SUCCESS"
         if include_ocr and screenshot_obs and screenshot_obs.raw_bytes:
             try:
                 import io
@@ -120,8 +131,17 @@ class DesktopObserver:
                                 source="WINDOWS_OCR",
                             )
                         )
+                    if not ocr_tokens:
+                        ocr_status = "EMPTY"
+                elif ocr_res and ocr_res.status == OCRStatus.UNAVAILABLE:
+                    ocr_status = "UNAVAILABLE"
+                else:
+                    ocr_status = "EMPTY"
             except Exception as ocr_err:
                 logger.debug("OCR extraction notice during desktop observation: %s", ocr_err)
+                ocr_status = "FAILED"
+        else:
+            ocr_status = "UNAVAILABLE"
 
         # 5. Detect Visual Regions (e.g. Canvas, Application Window Bounds)
         visual_regions: List[VisualRegion] = []
@@ -189,6 +209,9 @@ class DesktopObserver:
             visual_regions=visual_regions,
             focused_element=focused_element,
             canvas_status=canvas_status,
+            uia_status=uia_status,
+            ocr_status=ocr_status,
+            screenshot_status=screenshot_status,
             is_consistent=is_consistent,
             consistency_warnings=consistency_warnings,
             capture_started_at=t_start_utc,
