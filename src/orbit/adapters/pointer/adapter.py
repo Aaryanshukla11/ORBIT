@@ -77,13 +77,23 @@ class ProductionPointerAdapter(BaseCapabilityAdapter, PointerCapability):
     async def _on_initialize(self) -> None:
         """Initialize DPI awareness, enforce Win32 C ABI gate, and verify display topology."""
         try:
-            # 1. Initialize DPI awareness if available
+            # 1. Initialize DPI awareness & attach to interactive desktop
             if sys.platform == "win32":
                 try:
                     import ctypes
                     ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
                 except Exception as ex:
                     logger.debug("SetProcessDpiAwarenessContext notice: %s", ex)
+                try:
+                    u32 = ctypes.windll.user32
+                    hwinsta = u32.OpenWindowStationW("WinSta0", False, 0x37F)
+                    if hwinsta:
+                        u32.SetProcessWindowStation(hwinsta)
+                    hdesk = u32.OpenDesktopW("Default", 0, False, 0x1FF)
+                    if hdesk:
+                        u32.SetThreadDesktop(hdesk)
+                except Exception as ex:
+                    logger.debug("Desktop station attachment notice: %s", ex)
 
             # 2. Enforce Win32 SendInput C ABI Layout
             abi_res = validate_runtime_abi(simulated_override=self._abi_override)

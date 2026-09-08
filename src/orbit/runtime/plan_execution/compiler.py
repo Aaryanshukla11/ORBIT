@@ -518,6 +518,57 @@ class PlanStepCompiler:
             metadata={"navigation_direction": direction},
         )
 
+    def _compile_draw_strokes(self, step: PlanStep) -> CompiledRuntimeAction:
+        subject = str(step.metadata.get("subject", "cube")).lower()
+        intent = self._build_target_intent_from_step(step, default_strategy=TargetStrategy.ACCESSIBILITY_ELEMENT)
+        if not intent.role:
+            intent.role = "canvas"
+
+        strokes: List[List[Dict[str, float]]] = []
+        if "cube" in subject or "box" in subject:
+            # 3D Cube strokes: front square (4 edges), back square (4 edges), 4 connecting edges
+            # Normalized relative canvas coordinates (0.0 to 1.0)
+            front_sq = [{"x": 0.3, "y": 0.4}, {"x": 0.6, "y": 0.4}, {"x": 0.6, "y": 0.7}, {"x": 0.3, "y": 0.7}, {"x": 0.3, "y": 0.4}]
+            back_sq = [{"x": 0.45, "y": 0.25}, {"x": 0.75, "y": 0.25}, {"x": 0.75, "y": 0.55}, {"x": 0.45, "y": 0.55}, {"x": 0.45, "y": 0.25}]
+            e1 = [{"x": 0.3, "y": 0.4}, {"x": 0.45, "y": 0.25}]
+            e2 = [{"x": 0.6, "y": 0.4}, {"x": 0.75, "y": 0.25}]
+            e3 = [{"x": 0.6, "y": 0.7}, {"x": 0.75, "y": 0.55}]
+            e4 = [{"x": 0.3, "y": 0.7}, {"x": 0.45, "y": 0.55}]
+            strokes = [front_sq, back_sq, e1, e2, e3, e4]
+        elif "stickman" in subject or "person" in subject:
+            # Stickman: head (circle/loop), body, left leg, right leg, arms
+            head = [{"x": 0.5, "y": 0.2}, {"x": 0.55, "y": 0.25}, {"x": 0.5, "y": 0.3}, {"x": 0.45, "y": 0.25}, {"x": 0.5, "y": 0.2}]
+            body = [{"x": 0.5, "y": 0.3}, {"x": 0.5, "y": 0.6}]
+            left_leg = [{"x": 0.5, "y": 0.6}, {"x": 0.4, "y": 0.8}]
+            right_leg = [{"x": 0.5, "y": 0.6}, {"x": 0.6, "y": 0.8}]
+            arms = [{"x": 0.35, "y": 0.45}, {"x": 0.65, "y": 0.45}]
+            strokes = [head, body, left_leg, right_leg, arms]
+        elif "circle" in subject:
+            circle_pts = []
+            for deg in range(0, 365, 30):
+                rad = math.radians(deg)
+                circle_pts.append({"x": 0.5 + 0.2 * math.cos(rad), "y": 0.5 + 0.2 * math.sin(rad)})
+            strokes = [circle_pts]
+        elif "triangle" in subject:
+            tri = [{"x": 0.5, "y": 0.3}, {"x": 0.7, "y": 0.7}, {"x": 0.3, "y": 0.7}, {"x": 0.5, "y": 0.3}]
+            strokes = [tri]
+        else:
+            sq = [{"x": 0.3, "y": 0.3}, {"x": 0.7, "y": 0.3}, {"x": 0.7, "y": 0.7}, {"x": 0.3, "y": 0.7}, {"x": 0.3, "y": 0.3}]
+            strokes = [sq]
+
+        return CompiledRuntimeAction(
+            step_id=step.step_id,
+            action_type="draw_strokes",
+            target_intent=intent,
+            action_parameters={"strokes": strokes, "shape": subject, "subject": subject},
+            expected_outcome=ExpectedOutcome(
+                outcome_type=ExpectedOutcomeType.ELEMENT_STATE_CHANGED,
+                strategy=VerificationStrategy.ACCESSIBILITY_STATE_CHANGE,
+            ),
+            is_supported=True,
+            metadata={"subject": subject},
+        )
+
     def _compile_unsupported_action(self, step: PlanStep) -> CompiledRuntimeAction:
         return CompiledRuntimeAction(
             step_id=step.step_id,
@@ -526,4 +577,5 @@ class PlanStepCompiler:
             rejection_reason=f"Step declared as UNSUPPORTED_ACTION: {step.description}",
             metadata={"step_action_type": step.action_type.value},
         )
+
 

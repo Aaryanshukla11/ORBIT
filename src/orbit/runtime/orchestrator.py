@@ -101,6 +101,10 @@ from orbit.runtime.task_completion import (
     TaskCompletionEngine,
     TaskExecutionResult,
 )
+from orbit.runtime.cognitive import (
+    CognitiveExecutionLoop,
+    CognitiveExecutionResult,
+)
 from orbit.runtime.models import (
     ActiveModelSession,
     InventoryReport,
@@ -239,6 +243,14 @@ class OrbitOrchestrator:
             perception_engine=self._perception_engine,
             model_session_manager=self._model_session_manager,
         )
+        self._cognitive_loop = CognitiveExecutionLoop(
+            workspace=self.workspace,
+            pointer=self.pointer,
+            keyboard=self.keyboard,
+            observation=self.observation,
+            goal_verifier=self._task_completion_engine.goal_verifier,
+            model_session_manager=self._model_session_manager,
+        )
         self._history_store = history_store or ExecutionHistoryStore()
         self._diagnostic_service = DiagnosticService(orchestrator=self)
         self._active_cancellation_sources: Dict[str, CancellationSource] = {}
@@ -304,6 +316,10 @@ class OrbitOrchestrator:
     @property
     def plan_executor(self) -> PlanExecutor:
         return self._plan_executor
+
+    @property
+    def cognitive_loop(self) -> CognitiveExecutionLoop:
+        return self._cognitive_loop
 
     @property
     def task_completion_engine(self) -> TaskCompletionEngine:
@@ -605,9 +621,9 @@ class OrbitOrchestrator:
                 tkv.state_manager.transition_to(TakeoverState.TAKEOVER_ACTIVE, reason=reason, evidence=evidence)
         elif tkv:
             if hasattr(tkv, "_takeover_active"):
-                tkv._takeover_active = True
+                setattr(tkv, "_takeover_active", True)
             if hasattr(tkv, "_is_active"):
-                tkv._is_active = True
+                setattr(tkv, "_is_active", True)
 
         async with self._lock:
             if self._system_sm.can_transition_to(SystemState.HUMAN_TAKEOVER_ACTIVE):
@@ -735,6 +751,23 @@ class OrbitOrchestrator:
             session_id=session_id,
             task_id=task_id,
             policy=policy,
+            cancel_token=cancel_token,
+        )
+
+    async def execute_cognitive_task(
+        self,
+        prompt: str,
+        session_id: str = "default_session",
+        task_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        cancel_token: Optional[CancellationToken] = None,
+    ) -> CognitiveExecutionResult:
+        """Execute a user prompt directly through the closed-loop Cognitive Intent & Decision Engine."""
+        return await self._cognitive_loop.run(
+            prompt=prompt,
+            session_id=session_id,
+            task_id=task_id,
+            context=context,
             cancel_token=cancel_token,
         )
 
