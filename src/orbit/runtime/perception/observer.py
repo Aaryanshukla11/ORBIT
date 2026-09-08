@@ -218,3 +218,6 @@ class DesktopObserver:
             capture_completed_at=t_completed_utc,
             capture_duration_ms=duration_ms,
         )
+
+    # Alias for uniform interface
+    observe = observe_desktop

@@ -259,10 +259,20 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
                 return await self._provider.chat(self._descriptor.provider_model_name, request)
 
             client = await self._get_client()
-            messages = [
-                {"role": m.role, "content": m.content}
-                for m in request.messages
-            ]
+            messages = []
+            for m in request.messages:
+                if m.images and len(m.images) > 0:
+                    content_parts = [{"type": "text", "text": m.content}]
+                    for img in m.images:
+                        if img.startswith("data:image"):
+                            url = img
+                        else:
+                            url = f"data:image/png;base64,{img}"
+                        content_parts.append({"type": "image_url", "image_url": {"url": url}})
+                    messages.append({"role": m.role, "content": content_parts})
+                else:
+                    messages.append({"role": m.role, "content": m.content})
+
             payload: Dict[str, Any] = {
                 "model": self._descriptor.provider_model_name,
                 "messages": messages,

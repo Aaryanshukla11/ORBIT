@@ -233,14 +233,24 @@ class AgentExecutionLoop:
                 except Exception as gv_err:
                     logger.debug("GoalVerifier evaluation notice: %s", gv_err)
 
-            # 3. Cognitive Decision Engine Reasoning (Deterministic -> Recovery -> LLM)
+            # 3. Cognitive Decision Engine Reasoning (Deterministic -> Recovery -> LLM / Vision)
             decide_fn = getattr(self._decision_engine, "decide_next_step", None) or getattr(self._decision_engine, "decide_next_action", None)
-            decision = await decide_fn(
-                objective=objective,
-                observation=observation,
-                step_history=step_history,
-                step_index=step_idx,
-            )
+            decide_kwargs = {
+                "objective": objective,
+                "observation": observation,
+                "step_history": step_history,
+                "step_index": step_idx,
+            }
+            try:
+                sig = inspect.signature(decide_fn)
+                if "routing_policy" in sig.parameters:
+                    decide_kwargs["routing_policy"] = routing_policy
+                if "task_context" in sig.parameters:
+                    decide_kwargs["task_context"] = context
+            except Exception:
+                pass
+
+            decision = await decide_fn(**decide_kwargs)
 
             # Publish step event
             if self._event_bus:

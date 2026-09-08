@@ -140,12 +140,18 @@ class ModelRouter:
             except Exception as ex:
                 logger.debug("Preferred model %s unavailable: %s", effective_policy.preferred_model_id, ex)
 
-        # 2. Check current active model in ModelSessionManager
+        # 2. Check current active model in ModelSessionManager if it matches tier preference
         active_runtime = self._session_manager.get_active_runtime()
         if active_runtime is not None and active_runtime.is_initialized:
             desc = active_runtime.descriptor
-            if self._is_candidate_compliant(desc, effective_policy):
-                self._record_resolution(active_runtime, effective_policy, "Active model satisfies requirements", is_fallback=False)
+            is_local = desc.provider in {ModelProviderKind.OLLAMA, ModelProviderKind.LM_STUDIO, ModelProviderKind.LOCAL_FILE}
+            tier_matches = (
+                (effective_policy.tier == ModelRoutingTier.PREFER_LOCAL and is_local)
+                or (effective_policy.tier == ModelRoutingTier.PERFORMANCE_CLOUD and not is_local)
+                or (effective_policy.tier == ModelRoutingTier.BALANCED)
+            )
+            if tier_matches and self._is_candidate_compliant(desc, effective_policy):
+                self._record_resolution(active_runtime, effective_policy, "Active model satisfies requirements and tier", is_fallback=False)
                 return active_runtime
 
         # 3. Discover candidates from ModelRegistry & Providers

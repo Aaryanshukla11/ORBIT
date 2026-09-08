@@ -114,81 +114,28 @@ class CognitiveDecisionEngine:
                 )
                 if active_ctx:
                     logger.info("Escalating decision to active LLM model (%s)", active_ctx.model_id)
-                    prompt_payload = {
-                        "objective": objective.model_dump(mode="json"),
-                        "observation": {
-                            "active_window_title": observation.active_window_title,
-                            "active_window_class": observation.active_window_class,
-                            "target_app_exists": observation.target_app_exists,
-                            "target_app_is_active": observation.target_app_is_active,
-                            "canvas_status": observation.canvas_status,
-                            "screen_summary": observation.screen_summary,
-                            "ocr_tokens": observation.ocr_tokens[:20],
-                        },
-                        "missing_aspects": delta.missing_aspects,
-                        "step_index": step_index,
-                        "history_count": len(history),
-                    }
+                    from orbit.runtime.cognitive.output_parser import StructuredDecisionParser
+                    from orbit.runtime.cognitive.context_builder import AgentReasoningContextBuilder, DECISION_SYSTEM_PROMPT
+
+                    prompt_text = AgentReasoningContextBuilder.build_prompt_text(
+                        objective=objective,
+                        observation=observation,
+                        step_history=history,
+                        step_index=step_index,
+                    )
                     gen_req = ModelGenerateRequest(
-                        prompt=f"Cognitive State:\n{json.dumps(prompt_payload, indent=2)}",
+                        prompt=prompt_text,
                         system_prompt=DECISION_SYSTEM_PROMPT,
                         temperature=0.0,
                     )
                     resp = await self._model_session_manager.generate(gen_req)
                     content = resp.content.strip()
-                    if content.startswith("```"):
-                        content = re.sub(r"^```(?:json)?\s*", "", content)
-                        content = re.sub(r"\s*```$", "", content)
-                    parsed = json.loads(content)
-                    if isinstance(parsed, dict) and "decision_summary" in parsed:
-                        is_sat = bool(parsed.get("is_goal_satisfied", False))
-                        act_data = parsed.get("next_action")
-                        action_obj = None
-                        if act_data and isinstance(act_data, dict):
-                            act_type_str = act_data.get("action_type", "COMPLETE_GOAL")
-                            try:
-                                act_type = AbstractActionType(act_type_str)
-                            except Exception:
-                                act_type = AbstractActionType.COMPLETE_GOAL
-
-                            target_data = act_data.get("target") or {}
-                            sem_target = None
-                            if target_data and isinstance(target_data, dict):
-                                sem_target = SemanticTarget(
-                                    name=target_data.get("name"),
-                                    role=target_data.get("role"),
-                                    context=target_data.get("context"),
-                                )
-
-                            # Clean parameters: ensure no physical coordinates leaked
-                            raw_params = act_data.get("parameters", {})
-                            clean_params = {k: v for k, v in raw_params.items() if k.lower() not in {"x", "y", "screen_x", "screen_y"}}
-
-                            exp_trans = str(parsed.get("expected_state_transition", act_data.get("expected_effect", "")))
-
-                            action_obj = AbstractAction(
-                                action_type=act_type,
-                                target=sem_target,
-                                parameters=clean_params,
-                                outcome_contract=ActionOutcomeContract(
-                                    expected_state_transition=exp_trans or "state_progress",
-                                    target_role=sem_target.role if sem_target else None,
-                                    target_name=sem_target.name if sem_target else None,
-                                ),
-                                expected_effect=exp_trans,
-                                rationale=str(parsed.get("reason_summary", "")),
-                            )
-                        return CognitiveDecision(
-                            step_index=step_index,
-                            decision_summary=str(parsed.get("decision_summary", "LLM decision")),
-                            decision_confidence=float(parsed.get("decision_confidence", 0.9)),
-                            evidence_used=list(parsed.get("evidence_used", [observation.screen_summary])),
-                            expected_state_transition=str(parsed.get("expected_state_transition", "")),
-                            reason_summary=str(parsed.get("reason_summary", "")),
-                            is_goal_satisfied=is_sat,
-                            escalated_to_llm=True,
-                            next_action=action_obj,
-                        )
+                    return StructuredDecisionParser.parse_decision(
+                        raw_text=content,
+                        step_index=step_index,
+                        model_id=active_ctx.model_id,
+                        latency_ms=resp.total_duration_ms,
+                    )
             except Exception as ex:
                 logger.warning("LLM Cognitive Decision escalation error: %s", ex)
 
