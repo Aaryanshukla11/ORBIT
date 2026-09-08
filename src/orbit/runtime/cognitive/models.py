@@ -47,6 +47,25 @@ from orbit.runtime.perception.models import DesktopObservation
 from orbit.runtime.task_completion.models import TaskCompletionStatus
 
 
+from orbit.runtime.cognitive.recovery import (
+    AgentRecoveryManager,
+    RecoveryRecord,
+    RecoveryStrategy,
+)
+from orbit.runtime.cognitive.state_machine import (
+    AgentLoopState,
+    AgentLoopStateMachine,
+    AgentStateTransitionRecord,
+    InvalidStateTransitionError,
+    LEGAL_STATE_TRANSITIONS,
+    TERMINAL_STATES,
+)
+from orbit.runtime.cognitive.trace import (
+    CycleExecutionTrace,
+    format_cycle_trace_block,
+)
+
+
 class StructuredObjective(BaseModel):
     """Structured, epistemically grounded representation of user intent."""
 
@@ -109,6 +128,7 @@ class ExecutionBudget(BaseModel):
     max_total_actions: int = Field(default=50, description="Hard upper bound on total actions dispatched")
     max_repeated_actions_without_progress: int = Field(default=3, description="Max consecutive identical actions without state progress")
     max_recoveries_per_transition: int = Field(default=2, description="Max recovery attempts for a single state transition")
+    max_target_resolution_failures: int = Field(default=3, description="Max target grounding failures before aborting")
     max_llm_escalations: int = Field(default=5, description="Max times LLM can be invoked for decision escalation")
     no_progress_timeout_sec: float = Field(default=30.0, description="Timeout if no forward state progress is made")
 
@@ -123,6 +143,7 @@ class CognitiveStepResult(BaseModel):
     post_observation: Optional[CurrentStateObservation] = Field(default=None, description="State observed after action execution")
     state_progress_detected: bool = Field(default=False, description="Whether this step moved the system state closer to the goal")
     duration_ms: float = Field(default=0.0, description="Execution duration of this step in milliseconds")
+    trace: Optional[CycleExecutionTrace] = Field(default=None, description="Diagnostic cycle execution trace")
 
     @property
     def action_success(self) -> bool:
@@ -145,6 +166,9 @@ class CognitiveExecutionResult(BaseModel):
     failure_reason: Optional[str] = Field(default=None, description="Explanation of failure if not successful")
     failure_code: Optional[str] = Field(default=None, description="Error code if failed")
     elapsed_duration_ms: float = Field(default=0.0, description="Total wall-clock duration in milliseconds")
+    state_transitions: List[AgentStateTransitionRecord] = Field(default_factory=list, description="Auditable state machine transitions")
+    cycle_traces: List[CycleExecutionTrace] = Field(default_factory=list, description="Structured cycle execution traces")
+    recovery_records: List[RecoveryRecord] = Field(default_factory=list, description="Recovery records executed during task")
 
 
 __all__ = [
@@ -160,20 +184,29 @@ __all__ = [
     "ActionValidationResult",
     "AgentAction",
     "AgentActionValidator",
+    "AgentLoopState",
+    "AgentLoopStateMachine",
+    "AgentRecoveryManager",
+    "AgentStateTransitionRecord",
     "ClickParams",
     "CognitiveDecision",
     "CognitiveExecutionResult",
     "CognitiveStepResult",
     "CompleteGoalParams",
     "CurrentStateObservation",
+    "CycleExecutionTrace",
     "DoubleClickParams",
     "DragParams",
     "DrawStrokesParams",
     "ExecutionBudget",
     "ExpectedState",
     "FocusWindowParams",
+    "InvalidStateTransitionError",
+    "LEGAL_STATE_TRANSITIONS",
     "LaunchApplicationParams",
     "OutcomeStatus",
+    "RecoveryRecord",
+    "RecoveryStrategy",
     "ResolvedAction",
     "RightClickParams",
     "ScrollParams",
@@ -181,7 +214,9 @@ __all__ = [
     "SemanticTarget",
     "SendHotkeyParams",
     "StructuredObjective",
+    "TERMINAL_STATES",
     "TypeTextParams",
     "VerificationStrategy",
     "WaitParams",
+    "format_cycle_trace_block",
 ]

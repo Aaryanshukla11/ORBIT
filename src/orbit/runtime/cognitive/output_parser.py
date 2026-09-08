@@ -189,6 +189,42 @@ class StructuredDecisionParser:
                 )
 
             raw_params = act_data.get("parameters", {}) or {}
+            if not isinstance(raw_params, dict):
+                raw_params = {}
+
+            # Merge any direct keys from act_data
+            for direct_k in (
+                "application_name",
+                "app_name",
+                "app",
+                "name",
+                "text",
+                "query",
+                "hotkey",
+                "keys",
+                "key",
+                "direction",
+                "shape",
+                "color",
+                "duration",
+            ):
+                if direct_k in act_data and direct_k not in raw_params:
+                    raw_params[direct_k] = act_data[direct_k]
+
+            # Normalize type-specific parameters from target if missing
+            if act_type == AbstractActionType.LAUNCH_APPLICATION:
+                if not raw_params.get("application_name") and not raw_params.get("app_name") and not raw_params.get("name"):
+                    if sem_target and sem_target.name:
+                        raw_params["application_name"] = sem_target.name
+                    elif isinstance(target_data, str):
+                        raw_params["application_name"] = target_data
+            elif act_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE):
+                if "text" not in raw_params and "query" not in raw_params:
+                    if sem_target and sem_target.text_hint:
+                        raw_params["text"] = sem_target.text_hint
+                    elif "text" in act_data:
+                        raw_params["text"] = act_data["text"]
+
             clean_params = {
                 k: v for k, v in raw_params.items()
                 if k.lower() not in FORBIDDEN_COORDINATE_KEYS

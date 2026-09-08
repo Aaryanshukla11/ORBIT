@@ -55,8 +55,8 @@ class UIAElementObserver:
             # 1. Try pywinauto.uia backend if available
             try:
                 import pywinauto
-                from pywinauto import Desktop
-                desktop = Desktop(backend="uia")
+                from pywinauto import Desktop  
+                desktop = Desktop(backend="uia") 
                 if target_hwnd:
                     app_win = desktop.window(handle=target_hwnd)
                 else:

@@ -117,9 +117,20 @@ class ModelSessionManager:
         """Register a model descriptor in the local registry."""
         await self._registry.register_model(descriptor)
 
-    # =========================================================================
-    # Query API
-    # =========================================================================
+    async def list_all_descriptors(self) -> List[ModelDescriptor]:
+        """Return list of all registered model descriptors across providers."""
+        if hasattr(self._registry, "list_models"):
+            return await self._registry.list_models()
+        return []
+
+    async def get_or_create_runtime(self, model_id: str) -> BaseModelRuntime:
+        """Get existing active runtime or create runtime adapter for model."""
+        if self._active_runtime is not None and self._active_runtime.model_id == model_id:
+            return self._active_runtime
+        desc = await self._registry.get_model(model_id) if hasattr(self._registry, "get_model") else None
+        if desc is None:
+            raise ModelNotFoundError(f"Model '{model_id}' not found in registry")
+        return self._factory.create_runtime(descriptor=desc)
 
     def get_active_model(self) -> Optional[ActiveModelContext]:
         """Return the current active model context snapshot, or None."""

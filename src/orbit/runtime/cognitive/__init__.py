@@ -9,14 +9,23 @@ from orbit.runtime.cognitive.models import (
     AbstractActionType,
     ActionExecutionResult,
     ActionOutcomeContract,
+    AgentLoopState,
+    AgentLoopStateMachine,
+    AgentRecoveryManager,
+    AgentStateTransitionRecord,
     CognitiveDecision,
     CognitiveExecutionResult,
     CognitiveStepResult,
     CurrentStateObservation,
+    CycleExecutionTrace,
     ExecutionBudget,
+    InvalidStateTransitionError,
     OutcomeStatus,
+    RecoveryRecord,
+    RecoveryStrategy,
     SemanticTarget,
     StructuredObjective,
+    format_cycle_trace_block,
 )
 from orbit.runtime.cognitive.observer import CurrentStateObserver
 from orbit.runtime.cognitive.output_parser import (
@@ -24,6 +33,14 @@ from orbit.runtime.cognitive.output_parser import (
     StructuredDecisionParser,
     StructuredOutputParserError,
 )
+from orbit.runtime.cognitive.recovery import AgentRecoveryManager, RecoveryRecord, RecoveryStrategy
+from orbit.runtime.cognitive.state_machine import (
+    AgentLoopState,
+    AgentLoopStateMachine,
+    AgentStateTransitionRecord,
+    InvalidStateTransitionError,
+)
+from orbit.runtime.cognitive.trace import CycleExecutionTrace, format_cycle_trace_block
 
 __all__ = [
     "AbstractAction",
@@ -34,6 +51,10 @@ __all__ = [
     "AgentDecisionTrace",
     "AgentExecutionLoop",
     "AgentExecutionResult",
+    "AgentLoopState",
+    "AgentLoopStateMachine",
+    "AgentRecoveryManager",
+    "AgentStateTransitionRecord",
     "AgentReasoningContextBuilder",
     "CognitiveDecision",
     "CognitiveDecisionEngine",
@@ -43,13 +64,18 @@ __all__ = [
     "CoordinateSecurityViolation",
     "CurrentStateObservation",
     "CurrentStateObserver",
+    "CycleExecutionTrace",
     "DECISION_SYSTEM_PROMPT",
     "ExecutionBudget",
+    "InvalidStateTransitionError",
     "LLMIntentInterpreter",
     "OutcomeStatus",
+    "RecoveryRecord",
+    "RecoveryStrategy",
     "SemanticTarget",
     "StateGoalDelta",
     "StructuredDecisionParser",
     "StructuredObjective",
     "StructuredOutputParserError",
+    "format_cycle_trace_block",
 ]

@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434"
 DEFAULT_CONNECT_TIMEOUT_SEC = 5.0
-DEFAULT_READ_TIMEOUT_SEC = 60.0
+DEFAULT_READ_TIMEOUT_SEC = 120.0
 
 
 class OllamaProviderError(Exception):

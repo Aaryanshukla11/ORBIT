@@ -348,3 +348,7 @@ class DesktopObservation(BaseModel):
     @property
     def target_app_is_active(self) -> bool:
         return self.foreground_window is not None
+
+    @property
+    def screenshot(self) -> Optional[ScreenshotObservation]:
+        return self.screenshot_reference
