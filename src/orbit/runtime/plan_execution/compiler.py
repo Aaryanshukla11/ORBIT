@@ -10,6 +10,7 @@ SAFETY INVARIANTS:
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Optional
 
 from orbit.runtime.plan_execution.models import CompiledRuntimeAction
@@ -238,6 +239,92 @@ class PlanStepCompiler:
             metadata={"button": button, "count": count},
         )
 
+    def _compile_draw_strokes(self, step: PlanStep) -> CompiledRuntimeAction:
+        """Compile abstract drawing step into structured geometric stroke series."""
+        intent = self._build_target_intent_from_step(step, default_strategy=TargetStrategy.ACCESSIBILITY_ELEMENT)
+        if not intent.role:
+            intent.role = "canvas"
+
+        subject = (step.metadata.get("subject") or (step.description or "")).lower()
+
+        strokes: List[List[Tuple[int, int]]] = []
+
+        if "cube" in subject or "box" in subject or "3d" in subject:
+            # 3D isometric/perspective cube
+            strokes = [
+                # Front square
+                [(-60, -40), (40, -40), (40, 60), (-60, 60), (-60, -40)],
+                # Back square
+                [(-20, -80), (80, -80), (80, 20), (-20, 20), (-20, -80)],
+                # 4 Connecting edges
+                [(-60, -40), (-20, -80)],
+                [(40, -40), (80, -80)],
+                [(40, 60), (80, 20)],
+                [(-60, 60), (-20, 20)],
+            ]
+        elif "stickman" in subject or "person" in subject or "figure" in subject:
+            # Stickman with head, body, arms, legs
+            head_pts = [
+                (int(30 * math.cos(math.radians(deg))), int(30 * math.sin(math.radians(deg))) - 60)
+                for deg in range(0, 361, 30)
+            ]
+            strokes = [
+                head_pts,
+                [(0, -30), (0, 45)],  # Body
+                [(0, 45), (-40, 110)],  # Left leg
+                [(0, 45), (40, 110)],  # Right leg
+                [(-45, 5), (0, -5), (45, 5)],  # Arms
+            ]
+            if "gun" in subject or "weapon" in subject:
+                # Gun in right hand
+                strokes.append([(45, 5), (75, 5), (75, 18), (68, 18), (68, 9)])
+        elif "circle" in subject or "ellipse" in subject:
+            circle_pts = [
+                (int(60 * math.cos(math.radians(deg))), int(60 * math.sin(math.radians(deg))))
+                for deg in range(0, 361, 20)
+            ]
+            strokes = [circle_pts]
+        elif "triangle" in subject:
+            strokes = [[(0, -65), (65, 45), (-65, 45), (0, -65)]]
+        elif "star" in subject:
+            star_pts = []
+            for i in range(11):
+                r = 60 if i % 2 == 0 else 25
+                ang = -math.pi / 2 + i * math.pi / 5
+                star_pts.append((int(r * math.cos(ang)), int(r * math.sin(ang))))
+            strokes = [star_pts]
+        elif "house" in subject:
+            strokes = [
+                [(-60, -10), (60, -10), (60, 70), (-60, 70), (-60, -10)],  # Walls
+                [(-70, -10), (0, -75), (70, -10)],  # Roof
+                [(-18, 70), (-18, 30), (18, 30), (18, 70)],  # Door
+            ]
+        elif "square" in subject or "rectangle" in subject:
+            strokes = [[(-60, -50), (60, -50), (60, 50), (-60, 50), (-60, -50)]]
+        else:
+            # Default rich recognizable figure (geometric diamond-framed figure)
+            strokes = [
+                [(-50, -50), (50, -50), (50, 50), (-50, 50), (-50, -50)],
+                [(-50, 0), (0, -50), (50, 0), (0, 50), (-50, 0)],
+            ]
+
+        return CompiledRuntimeAction(
+            step_id=step.step_id,
+            action_type="draw_strokes",
+            target_intent=intent,
+            action_parameters={
+                "subject": subject,
+                "strokes": strokes,
+            },
+            expected_outcome=ExpectedOutcome(
+                outcome_type=ExpectedOutcomeType.ELEMENT_STATE_CHANGED,
+                strategy=VerificationStrategy.OBSERVATION_STATE_DELTA,
+                target_role="canvas",
+            ),
+            is_supported=True,
+            metadata={"subject": subject, "stroke_count": len(strokes)},
+        )
+
     def _compile_save_document(self, step: PlanStep) -> CompiledRuntimeAction:
         # Check explicit negative save constraint
         allow_save = getattr(step.constraints, "allow_save", None)
@@ -381,6 +468,56 @@ class PlanStepCompiler:
             metadata={"purpose": "verify_clipboard_state"},
         )
 
+    def _compile_search_query(self, step: PlanStep) -> CompiledRuntimeAction:
+        query = step.constraints.content or step.metadata.get("query", "")
+        intent = self._build_target_intent_from_step(step, default_strategy=TargetStrategy.ACCESSIBILITY_ELEMENT)
+        if not intent.role:
+            intent.role = "edit"
+        return CompiledRuntimeAction(
+            step_id=step.step_id,
+            action_type="type_text",
+            target_intent=intent,
+            action_parameters={"text": query},
+            expected_outcome=ExpectedOutcome(
+                outcome_type=ExpectedOutcomeType.ELEMENT_STATE_CHANGED,
+                strategy=VerificationStrategy.ACCESSIBILITY_STATE_CHANGE,
+                target_role=intent.role or "edit",
+            ),
+            is_supported=True,
+            metadata={"search_query": query},
+        )
+
+    def _compile_select_option(self, step: PlanStep) -> CompiledRuntimeAction:
+        intent = self._build_target_intent_from_step(step, default_strategy=TargetStrategy.ACCESSIBILITY_ELEMENT)
+        return CompiledRuntimeAction(
+            step_id=step.step_id,
+            action_type="pointer_click",
+            target_intent=intent,
+            action_parameters={"button": "left", "count": 1},
+            expected_outcome=ExpectedOutcome(
+                outcome_type=ExpectedOutcomeType.ELEMENT_STATE_CHANGED,
+                strategy=VerificationStrategy.ACCESSIBILITY_STATE_CHANGE,
+            ),
+            is_supported=True,
+            metadata={"option_name": intent.name or intent.text},
+        )
+
+    def _compile_navigate_view(self, step: PlanStep) -> CompiledRuntimeAction:
+        direction = step.metadata.get("direction", "down")
+        intent = self._build_target_intent_from_step(step, default_strategy=TargetStrategy.WINDOW_TITLE)
+        return CompiledRuntimeAction(
+            step_id=step.step_id,
+            action_type="shortcut",
+            target_intent=intent,
+            action_parameters={"combination": "pgdn" if direction == "down" else "pgup"},
+            expected_outcome=ExpectedOutcome(
+                outcome_type=ExpectedOutcomeType.ANY_OBSERVABLE_CHANGE,
+                strategy=VerificationStrategy.WINDOW_STATE_CHANGE,
+            ),
+            is_supported=True,
+            metadata={"navigation_direction": direction},
+        )
+
     def _compile_unsupported_action(self, step: PlanStep) -> CompiledRuntimeAction:
         return CompiledRuntimeAction(
             step_id=step.step_id,
@@ -389,3 +526,4 @@ class PlanStepCompiler:
             rejection_reason=f"Step declared as UNSUPPORTED_ACTION: {step.description}",
             metadata={"step_action_type": step.action_type.value},
         )
+

@@ -695,6 +695,75 @@ class ClosedLoopExecutionEngine:
                         target_hwnd=target_hwnd,
                         cancellation_token=context.token,
                     )
+                elif action_type == "draw_strokes":
+                    ptr = self.pointer
+                    if ptr is None:
+                        msg = "Pointer capability is not available for draw_strokes dispatch"
+                        sm.transition_to(ExecutionState.FAILED, msg)
+                        return ClosedLoopExecutionResult(
+                            final_state=ExecutionState.FAILED,
+                            is_success=False,
+                            failure_code="CAPABILITY_UNAVAILABLE",
+                            failure_reason=msg,
+                            dispatch_stage=DispatchStage.NOT_DISPATCHED,
+                            total_attempts=coordinator.total_attempts,
+                            total_recoveries=coordinator.recovery_attempts,
+                            total_verification_attempts=coordinator.total_attempts,
+                            elapsed_duration_ms=coordinator.elapsed_seconds * 1000.0,
+                            attempts=attempts,
+                            transition_history=sm.transition_history,
+                            verification_result=last_verification_result,
+                            resolved_target=target,
+                        )
+                    target_hwnd = action_params.get("target_hwnd", target_intent.target_hwnd) or target.target_hwnd or (target.evidence.raw_metadata.get("hwnd") if target.evidence else None)
+                    if target_hwnd and sys.platform == "win32":
+                        try:
+                            from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                            EvidenceBasedTargetLocator._force_foreground_window(int(target_hwnd))
+                        except Exception:
+                            pass
+
+                    strokes = action_params.get("strokes", [])
+
+                    async def _execute_all_strokes(strokes_list: list, center_x: int, center_y: int, cancellation_token=None) -> bool:
+                        for stroke in strokes_list:
+                            if not stroke:
+                                continue
+                            if context.is_cancelled or (cancellation_token and cancellation_token.is_cancelled):
+                                break
+                            start_x = center_x + stroke[0][0]
+                            start_y = center_y + stroke[0][1]
+                            await ptr.move_to(int(start_x), int(start_y))
+                            await asyncio.sleep(0.02)
+                            await ptr.press_down(button="left")
+                            await asyncio.sleep(0.02)
+
+                            for pt in stroke[1:]:
+                                if context.is_cancelled or (cancellation_token and cancellation_token.is_cancelled):
+                                    break
+                                wx = center_x + pt[0]
+                                wy = center_y + pt[1]
+                                await ptr.move_to(int(wx), int(wy))
+                                await asyncio.sleep(0.03)
+
+                            await ptr.release_up(button="left")
+                            await asyncio.sleep(0.03)
+                        return True
+
+                    last_dispatch_stage, _ = await self._dispatch_gate.execute_guarded(
+                        "draw_strokes",
+                        context,
+                        _execute_all_strokes,
+                        sm.current_state.value,
+                        attempt_idx,
+                        coordinator.recovery_attempts,
+                        expected_gen,
+                        target.target_id,
+                        strokes,
+                        int(x),
+                        int(y),
+                        cancellation_token=context.token,
+                    )
                 elif action_type == "observe":
                     last_dispatch_stage = DispatchStage.NOT_DISPATCHED
                     target_hwnd = action_params.get("target_hwnd", target_intent.target_hwnd) or target.target_hwnd or (target.evidence.raw_metadata.get("hwnd") if target.evidence else None)

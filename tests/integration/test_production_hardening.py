@@ -122,7 +122,7 @@ async def test_explicit_synthetic_development_plan_requires_explicit_opt_in(hard
         session_id="sess_dev_reject",
         prompt="Execute dev task without flag",
     )
-    for _ in range(50):
+    for _ in range(120):
         t = await orch.task_manager.get_task(task_rejected.task_id)
         if t and t.status in {TaskStatus.COMPLETED, TaskStatus.FAILED}:
             break

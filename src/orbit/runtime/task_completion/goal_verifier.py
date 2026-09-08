@@ -11,7 +11,7 @@ import ctypes
 import logging
 import sys
 from typing import Any, Dict, List, Optional
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageStat
 
 from orbit.adapters.observation.snapshot import ObservationSnapshot, ObservedElement, ObservedWindow
 from orbit.runtime.perception import SemanticPerceptionEngine
@@ -535,16 +535,14 @@ class GoalVerifier:
             and all(getattr(res.status, "value", str(res.status)) == "SUCCEEDED" for res in plan_result.step_results)
         )
 
-        # Evaluate Grounding Evidence (Strict Invariant: Requires real OCR, UIA, Win32, or verified typing dispatch evidence)
+        # Evaluate Grounding Evidence (Strict Invariant: Requires real OCR, UIA, or Window text evidence)
         is_acc_verified = len(acc_matched_elements) > 0
         is_ocr_verified = len(matching_regions) > 0 or (
             ocr_result is not None
             and ocr_result.is_success
             and _text_matches(ocr_result.full_text, expected_text)
         )
-        is_text_verified = is_ocr_verified or is_acc_verified or win32_verified or (
-            typing_steps_succeeded and post_snapshot is not None
-        )
+        is_text_verified = is_ocr_verified or is_acc_verified or win32_verified
 
         evidence = self._evidence_collector.build_evidence(
             snapshot=post_snapshot,
@@ -665,8 +663,8 @@ class GoalVerifier:
         pre_image: Optional[Image.Image] = None,
         post_image: Optional[Image.Image] = None,
     ) -> GoalVerificationResult:
-        """Verify drawing / creative canvas changes by computing pixel differences."""
-        if pre_image is None or post_image is None:
+        """Verify drawing / creative canvas changes by isolating the canvas region and validating stroke pixels."""
+        if post_image is None and pre_image is None:
             evidence = self._evidence_collector.build_evidence(
                 snapshot=post_snapshot,
                 plan_result=plan_result,
@@ -675,66 +673,115 @@ class GoalVerifier:
             return GoalVerificationResult(
                 status=TaskCompletionStatus.PARTIALLY_COMPLETED,
                 is_completed=False,
-                failure_reason="Drawing actions succeeded, but pre/post image frames were not provided for pixel verification",
+                failure_reason="Drawing actions dispatched, but image frames were not provided for pixel verification",
                 failure_code="MISSING_VISUAL_FRAMES",
                 evidence=evidence,
             )
 
-        try:
-            # Ensure images match size
-            img1 = pre_image.convert("RGB")
-            img2 = post_image.convert("RGB")
-            if img1.size != img2.size:
-                img2 = img2.resize(img1.size)
+        effective_post = post_image or pre_image
+        assert effective_post is not None
 
-            diff = ImageChops.difference(img1, img2)
-            stat = diff.getbbox()
-            if stat is None:
-                # Zero pixel change
+        try:
+            # 1. Locate the Paint / Canvas window to isolate the canvas viewport
+            target_win = next(
+                (w for w in post_snapshot.windows if "paint" in (w.window_title or "").lower() or "paint" in (w.process_name or "").lower()),
+                post_snapshot.foreground_window,
+            )
+
+            # Determine whether images are full desktop captures or pre-cropped canvas images
+            cropped_post = effective_post.convert("RGB")
+            cropped_pre = pre_image.convert("RGB") if pre_image is not None else None
+
+            if target_win and target_win.extended_bounds:
+                wb = target_win.extended_bounds
+                # If image is larger than window bounds, crop specifically to the Paint drawing area
+                if effective_post.width >= (wb.left + wb.width) and effective_post.height >= (wb.top + wb.height) and wb.width > 150 and wb.height > 200:
+                    c_left = max(0, int(wb.left + 15))
+                    c_top = max(0, int(wb.top + 140))
+                    c_right = min(effective_post.width, int(wb.left + wb.width - 20))
+                    c_bottom = min(effective_post.height, int(wb.top + wb.height - 40))
+                    if c_right > c_left + 50 and c_bottom > c_top + 50:
+                        cropped_post = effective_post.crop((c_left, c_top, c_right, c_bottom)).convert("RGB")
+                        if pre_image is not None and pre_image.width >= c_right and pre_image.height >= c_bottom:
+                            cropped_pre = pre_image.crop((c_left, c_top, c_right, c_bottom)).convert("RGB")
+
+            # 2. Blank Canvas Verification Gate (Layer 1)
+            # Analyze pixel distribution in the post-action canvas
+            stat = ImageStat.Stat(cropped_post)
+            is_uniform_blank = False
+            if hasattr(stat, "stddev") and stat.stddev:
+                max_stddev = max(stat.stddev)
+                mean_val = sum(stat.mean) / len(stat.mean) if stat.mean else 255.0
+                # If stddev is nearly zero and the background is white/light (mean > 220) or dark (mean < 35)
+                if max_stddev < 2.5 and (mean_val > 220.0 or mean_val < 35.0):
+                    is_uniform_blank = True
+
+            if is_uniform_blank:
                 evidence = self._evidence_collector.build_evidence(
                     snapshot=post_snapshot,
                     plan_result=plan_result,
                     target_app=target_app,
                     canvas_pixel_diff_ratio=0.0,
+                    diagnostics={"canvas_blank": True, "pixel_stddev": stat.stddev if hasattr(stat, "stddev") else None},
                 )
+                logger.warning("Goal verification FAILED: Paint canvas is completely blank (stddev: %s)", stat.stddev if hasattr(stat, "stddev") else "0")
                 return GoalVerificationResult(
-                    status=TaskCompletionStatus.UNVERIFIABLE,
+                    status=TaskCompletionStatus.FAILED,
                     is_completed=False,
-                    failure_reason="Drawing actions were dispatched, but zero canvas pixel differences were detected from initial state",
-                    failure_code="ZERO_PIXEL_CHANGE",
+                    failure_reason="Drawing action was dispatched, but the target Paint canvas remains completely blank (no strokes rendered).",
+                    failure_code="CANVAS_REMAINS_BLANK",
                     evidence=evidence,
                 )
 
-            # Compute non-zero pixel count
-            # Use grayscale difference histogram
-            diff_gray = diff.convert("L")
-            hist = diff_gray.histogram()
-            non_zero_pixels = sum(hist[10:])  # ignore minor compression noise below 10
-            total_pixels = img1.width * img1.height
-            change_ratio = non_zero_pixels / max(total_pixels, 1)
+            # 3. Canvas Pixel Differential (when valid pre-image is available)
+            if cropped_pre is not None:
+                if cropped_pre.size != cropped_post.size:
+                    cropped_pre = cropped_pre.resize(cropped_post.size)
 
-            evidence = self._evidence_collector.build_evidence(
-                snapshot=post_snapshot,
-                plan_result=plan_result,
-                target_app=target_app,
-                canvas_pixel_diff_ratio=round(change_ratio, 6),
-                visual_changes=[f"Detected {non_zero_pixels} changed pixels ({change_ratio*100:.3f}% of canvas)"],
-            )
+                diff = ImageChops.difference(cropped_pre, cropped_post)
+                diff_gray = diff.convert("L")
+                hist = diff_gray.histogram()
+                non_zero_pixels = sum(hist[12:])  # ignore minor compression noise
+                total_pixels = cropped_post.width * cropped_post.height
+                change_ratio = non_zero_pixels / max(total_pixels, 1)
 
-            if change_ratio >= 0.0001:  # At least 0.01% pixel delta
+                evidence = self._evidence_collector.build_evidence(
+                    snapshot=post_snapshot,
+                    plan_result=plan_result,
+                    target_app=target_app,
+                    canvas_pixel_diff_ratio=round(change_ratio, 6),
+                    visual_changes=[f"Detected {non_zero_pixels} changed pixels ({change_ratio*100:.3f}% of canvas)"],
+                )
+
+                if change_ratio < 0.0001:
+                    logger.warning("Goal verification FAILED: Canvas pixel delta ratio %s is below threshold", change_ratio)
+                    return GoalVerificationResult(
+                        status=TaskCompletionStatus.FAILED,
+                        is_completed=False,
+                        failure_reason=f"Drawing actions were dispatched, but zero or negligible canvas pixel differences ({change_ratio*100:.4f}%) were detected.",
+                        failure_code="ZERO_PIXEL_CHANGE",
+                        evidence=evidence,
+                    )
+
                 return GoalVerificationResult(
                     status=TaskCompletionStatus.COMPLETED,
                     is_completed=True,
                     evidence=evidence,
                 )
-            else:
-                return GoalVerificationResult(
-                    status=TaskCompletionStatus.UNVERIFIABLE,
-                    is_completed=False,
-                    failure_reason=f"Pixel difference ({change_ratio*100:.4f}%) is below minimum verifiable visual drawing threshold",
-                    failure_code="INSUFFICIENT_PIXEL_DELTA",
-                    evidence=evidence,
-                )
+
+            # If no pre-image was provided, but canvas is confirmed non-blank with stroke variance
+            evidence = self._evidence_collector.build_evidence(
+                snapshot=post_snapshot,
+                plan_result=plan_result,
+                target_app=target_app,
+                visual_changes=["Canvas contains verified non-blank drawing strokes"],
+            )
+            return GoalVerificationResult(
+                status=TaskCompletionStatus.COMPLETED,
+                is_completed=True,
+                evidence=evidence,
+            )
+
         except Exception as ex:
             logger.error("Visual diff computation failed: %s", ex)
             evidence = self._evidence_collector.build_evidence(

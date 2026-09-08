@@ -77,6 +77,14 @@ class TaskCompletionEngine:
             evidence_collector=self._evidence_collector,
         )
         self._model_session_manager = model_session_manager
+        if model_session_manager is not None:
+            self._sync_model_session_manager(model_session_manager)
+
+    def _sync_model_session_manager(self, msm: Any) -> None:
+        if hasattr(self._task_understanding, "set_model_session_manager"):
+            self._task_understanding.set_model_session_manager(msm)
+        if hasattr(self._task_planning, "set_model_session_manager"):
+            self._task_planning.set_model_session_manager(msm)
 
     @property
     def model_session_manager(self) -> Optional[Any]:
@@ -84,6 +92,7 @@ class TaskCompletionEngine:
 
     def set_model_session_manager(self, msm: Any) -> None:
         self._model_session_manager = msm
+        self._sync_model_session_manager(msm)
 
     @property
     def plan_executor(self) -> PlanExecutor:
@@ -140,13 +149,64 @@ class TaskCompletionEngine:
             except Exception as ex:
                 logger.debug("Initial pre-execution observation capture notice: %s", ex)
 
-        # 1. Phase 1: Task Understanding
-        understanding: TaskUnderstandingResult = self._task_understanding.understand(
-            request=goal,
-            metadata=context or {},
-        )
+        # 1. Phase 1: Task Understanding (Hybrid Fast-Path + Cognitive LLM Fallback)
+        if hasattr(self._task_understanding, "understand_async"):
+            understanding: TaskUnderstandingResult = await self._task_understanding.understand_async(
+                request=goal,
+                metadata=context or {},
+                snapshot=pre_snapshot,
+            )
+        else:
+            understanding = self._task_understanding.understand(
+                request=goal,
+                metadata=context or {},
+            )
 
-        if understanding.status in {TaskUnderstandingStatus.INVALID, TaskUnderstandingStatus.FAILED}:
+
+        if understanding.status == TaskUnderstandingStatus.AMBIGUOUS:
+            if hasattr(self._task_planning, "plan_task_async"):
+                plan = await self._task_planning.plan_task_async(
+                    understanding=understanding,
+                    task_id=effective_task_id,
+                    snapshot=pre_snapshot,
+                )
+            else:
+                plan = self._task_planning.plan_task(
+                    understanding=understanding,
+                    task_id=effective_task_id,
+                )
+            err_msg = (
+                "; ".join(understanding.diagnostic_messages)
+                if understanding.diagnostic_messages
+                else "Task understanding contains unresolved ambiguity"
+            )
+            evidence = self._evidence_collector.build_evidence(
+                snapshot=pre_snapshot,
+                diagnostics={"understanding_status": understanding.status.value, "plan_status": plan.status.value, "error": err_msg},
+            )
+            verif_res = GoalVerificationResult(
+                status=TaskCompletionStatus.FAILED,
+                is_completed=False,
+                failure_reason=err_msg,
+                failure_code="PLANNING_AMBIGUOUS",
+                evidence=evidence,
+            )
+            return self._build_result(
+                task_id=effective_task_id,
+                session_id=session_id,
+                goal=goal,
+                understanding=understanding,
+                plan=plan,
+                plan_result=None,
+                verification_result=verif_res,
+                start_utc=start_utc,
+                t_start=t_start,
+            )
+
+        if understanding.status in {
+            TaskUnderstandingStatus.INVALID,
+            TaskUnderstandingStatus.FAILED,
+        }:
             err_msg = (
                 "; ".join(understanding.diagnostic_messages)
                 if understanding.diagnostic_messages
@@ -174,6 +234,7 @@ class TaskCompletionEngine:
                 start_utc=start_utc,
                 t_start=t_start,
             )
+
 
         if understanding.status == TaskUnderstandingStatus.UNSUPPORTED:
             err_msg = (
@@ -313,11 +374,19 @@ class TaskCompletionEngine:
                         t_start=t_start,
                     )
 
-        # 2. Phase 2: Task Planning
-        plan: ExecutableTaskPlan = self._task_planning.plan_task(
-            understanding=understanding,
-            task_id=effective_task_id,
-        )
+        # 2. Phase 2: Task Planning (Deterministic + Cognitive LLM Synthesis Fallback)
+        if hasattr(self._task_planning, "plan_task_async"):
+            plan: ExecutableTaskPlan = await self._task_planning.plan_task_async(
+                understanding=understanding,
+                task_id=effective_task_id,
+                snapshot=pre_snapshot,
+            )
+        else:
+            plan = self._task_planning.plan_task(
+                understanding=understanding,
+                task_id=effective_task_id,
+            )
+
 
         if not plan.is_valid or plan.status.value in {"UNSUPPORTED", "INVALID", "FAILED", "AMBIGUOUS"}:
             err_msg = (

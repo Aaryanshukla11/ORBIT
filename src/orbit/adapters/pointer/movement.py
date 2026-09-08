@@ -229,26 +229,23 @@ class NativeDispatchGateway:
         with attached_to_input_desktop():
             if self._sendinput_override is not None:
                 accepted = self._sendinput_override(1, input_packet, ctypes.sizeof(INPUT))
+                win32_err = 0 if accepted > 0 else 5
             elif user32 is not None:
                 accepted = user32.SendInput(1, ctypes.byref(input_packet), ctypes.sizeof(INPUT))
-                if input_packet.type == INPUT_MOUSE and sys.platform == "win32":
-                    mi = input_packet.union.mi
-                    if mi.dwFlags & (MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_LEFTUP | MOUSEEVENTF_RIGHTDOWN | MOUSEEVENTF_RIGHTUP | MOUSEEVENTF_MIDDLEDOWN | MOUSEEVENTF_MIDDLEUP):
+                if accepted == 0:
+                    win32_err = ctypes.get_last_error()
+                    if input_packet.type == INPUT_MOUSE:
+                        mi = input_packet.union.mi
                         try:
                             user32.mouse_event(mi.dwFlags, mi.dx, mi.dy, mi.mouseData, mi.dwExtraInfo)
+                            accepted = 1
+                            win32_err = 0
                         except Exception:
                             pass
-            else:
-                accepted = 0
-
-            if accepted == 0:
-                win32_err = ctypes.get_last_error()
-                if win32_err == 5 and user32 is not None and input_packet.type == INPUT_MOUSE:
-                    mi = input_packet.union.mi
-                    user32.mouse_event(mi.dwFlags, mi.dx, mi.dy, mi.mouseData, mi.dwExtraInfo)
-                    accepted = 1
+                else:
                     win32_err = 0
             else:
+                accepted = 0
                 win32_err = 0
 
         duration_us = (time.perf_counter_ns() - start_ns) / 1000.0

@@ -347,3 +347,56 @@ async def test_goal_verifier_drawing_visual_pixel_diff():
     assert res.status == TaskCompletionStatus.COMPLETED
     assert res.is_completed is True
     assert res.evidence.canvas_pixel_difference_ratio > 0.0001
+
+
+@pytest.mark.asyncio
+async def test_goal_verifier_drawing_blank_canvas_fails():
+    """Verify that if Paint is open but the canvas remains completely blank, verification fails."""
+    verifier = GoalVerifier()
+    und = _make_understanding(TaskGoal.DRAW, "Paint", "draw a cube")
+    plan = _make_plan()
+    plan_res = PlanExecutionResult(
+        plan_id="p1",
+        task_id="t1",
+        final_status=PlanExecutionStatus.SUCCEEDED,
+        is_success=True,
+    )
+
+    # Blank canvas (pure white 400x400)
+    pre_img = Image.new("RGB", (400, 400), (255, 255, 255))
+    post_img = Image.new("RGB", (400, 400), (255, 255, 255))  # canvas remained blank!
+
+    paint_win = ObservedWindow(
+        hwnd=9999,
+        window_title="Untitled - Paint",
+        process_name="mspaint.exe",
+        process_id=3333,
+        extended_bounds=BoundingBox(left=50, top=50, width=500, height=500),
+        is_visible=True,
+        is_foreground=True,
+        dpi_scaling=1.0,
+    )
+    snap = ObservationSnapshot(
+        snapshot_id="snap_paint",
+        generation_id=1,
+        timestamp_ns=100000,
+        desktop_geometry=BoundingBox(left=0, top=0, width=1920, height=1080),
+        coordinate_space=CoordinateSpace.VIRTUAL_DESKTOP,
+        foreground_window=paint_win,
+        windows=[paint_win],
+        detected_elements=[],
+    )
+
+    res = await verifier.verify_goal(
+        understanding=und,
+        plan=plan,
+        plan_result=plan_res,
+        post_snapshot=snap,
+        pre_image=pre_img,
+        post_image=post_img,
+    )
+
+    assert res.status == TaskCompletionStatus.FAILED
+    assert res.is_completed is False
+    assert res.failure_code == "CANVAS_REMAINS_BLANK"
+    assert "remains completely blank" in res.failure_reason.lower()

@@ -99,13 +99,22 @@ async def test_diagnostic_scenarios():
     )
 
     from orbit.models.common import BoundingBox
+    from orbit.adapters.observation.snapshot import ObservedElement
     dummy_snapshot = ObservationSnapshot(
         snapshot_id="snap_test_verif",
         timestamp_ns=time.time_ns(),
         generation_id=1,
         desktop_geometry=BoundingBox(left=0, top=0, right=2880, bottom=1800, width=2880, height=1800),
         windows=[],
-        detected_elements=[],
+        detected_elements=[
+            ObservedElement(
+                element_id="el_doc_text",
+                source="UI_AUTOMATION",
+                name="ChatGPT is an advanced natural language processing model developed by OpenAI...",
+                control_type="Edit",
+                bounds=BoundingBox(left=100, top=100, right=500, bottom=500, width=400, height=400),
+            )
+        ],
     )
 
     verifier = GoalVerifier()

@@ -199,3 +199,38 @@ def test_compiler_generates_zero_coordinates(compiler: PlanStepCompiler):
     # Invariant: coordinates must never be fabricated at compile time
     assert "x" not in compiled.action_parameters
     assert "y" not in compiled.action_parameters
+
+
+def test_compile_draw_strokes_cube(compiler: PlanStepCompiler):
+    step = PlanStep(
+        step_id="step_cube",
+        action_type=PlanActionType.DRAW_STROKES,
+        description="Execute drawing strokes for 'a cube' on canvas",
+        target=TargetReference(semantic_type="canvas", identifier="Paint"),
+        metadata={"subject": "a cube", "application_name": "Paint"},
+    )
+    compiled = compiler.compile(step)
+
+    assert compiled.is_supported is True
+    assert compiled.action_type == "draw_strokes"
+    assert "strokes" in compiled.action_parameters
+    strokes = compiled.action_parameters["strokes"]
+    assert len(strokes) >= 6  # 3D cube has front square, back square, and connecting edges
+    assert compiled.target_intent.role == "canvas"
+
+
+def test_compile_draw_strokes_stickman(compiler: PlanStepCompiler):
+    step = PlanStep(
+        step_id="step_stickman",
+        action_type=PlanActionType.DRAW_STROKES,
+        description="Execute drawing strokes for 'a stickman' on canvas",
+        target=TargetReference(semantic_type="canvas", identifier="Paint"),
+        metadata={"subject": "a stickman", "application_name": "Paint"},
+    )
+    compiled = compiler.compile(step)
+
+    assert compiled.is_supported is True
+    assert compiled.action_type == "draw_strokes"
+    assert "strokes" in compiled.action_parameters
+    strokes = compiled.action_parameters["strokes"]
+    assert len(strokes) >= 5  # head, body, left leg, right leg, arms

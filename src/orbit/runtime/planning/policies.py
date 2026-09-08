@@ -49,7 +49,7 @@ class PlanningRuleRegistry:
             return self._plan_paste_content(intent, preceding_step_id, context_app)
         elif intent.goal == TaskGoal.SEARCH:
             return self._plan_search(intent, preceding_step_id, context_app)
-        elif intent.goal in (TaskGoal.DRAW, TaskGoal.CREATE_DOCUMENT, TaskGoal.INTERACT):
+        elif intent.goal == TaskGoal.DRAW:
             return self._plan_draw(intent, preceding_step_id, context_app)
         else:
             return self._plan_unsupported(intent, preceding_step_id)
@@ -810,9 +810,9 @@ class PlanningRuleRegistry:
         step_3_id = f"step_{uuid4().hex[:6]}"
         step_3 = PlanStep(
             step_id=step_3_id,
-            action_type=PlanActionType.ACTIVATE_CONTROL,
+            action_type=PlanActionType.DRAW_STROKES,
             description=f"Execute drawing strokes for '{subject}' on canvas",
-            target=TargetReference(semantic_type="canvas", identifier=app_name),
+            target=TargetReference(semantic_type="canvas", identifier=app_name, role="drawing_canvas"),
             constraints=intent.constraints,
             preconditions=[
                 Precondition(
@@ -839,9 +839,24 @@ class PlanningRuleRegistry:
                 "planning_rule: EXECUTE_DRAW_STROKES_RULE",
                 f"subject: '{subject}'",
             ],
+            metadata={"subject": subject, "application_name": app_name},
             is_ambiguous=is_ambig,
         )
         steps.append(step_3)
+
+        # Step 4: Verify Canvas Visual Modification
+        step_4_id = f"step_{uuid4().hex[:6]}"
+        step_4 = PlanStep(
+            step_id=step_4_id,
+            action_type=PlanActionType.VERIFY_TARGET_EFFECT,
+            description=f"Verify canvas visual state modified with '{subject}' drawing",
+            target=TargetReference(semantic_type="canvas", identifier=app_name),
+            constraints=intent.constraints,
+            dependencies=[step_3_id],
+            evidence=[f"source_goal: {intent.goal.value}", "planning_rule: VERIFY_DRAW_EFFECT_RULE"],
+            is_ambiguous=is_ambig,
+        )
+        steps.append(step_4)
 
         return steps
 

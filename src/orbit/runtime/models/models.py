@@ -274,6 +274,15 @@ class ModelGenerateRequest(BaseModel):
     options: Dict[str, Any] = Field(default_factory=dict, description="Provider-specific generation parameters")
 
 
+class ModelRole(str, Enum):
+    """Enumeration of message roles in a structured multi-turn conversation."""
+
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
 class ModelChatMessage(BaseModel):
     """Single turn in a structured multi-turn conversation."""
 
@@ -322,6 +331,11 @@ class ModelGenerateResponse(BaseModel):
     def text(self) -> str:
         """Alias for content."""
         return self.content
+
+
+# Canonical alias for chat response envelopes
+ModelChatResponse = ModelGenerateResponse
+
 
 
 class LocalModelFileDescriptor(BaseModel):

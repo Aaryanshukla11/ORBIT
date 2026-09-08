@@ -400,7 +400,7 @@ class OllamaProvider(ModelProvider):
         try:
             # An empty generate request with stream: False triggers loading without streaming overhead
             payload = {"model": provider_model_name, "prompt": "", "stream": False, "keep_alive": "5m"}
-            response = await client.post("/api/generate", json=payload, timeout=15.0)
+            response = await client.post("/api/generate", json=payload, timeout=3.0)
             return response.status_code == 200
         except Exception as ex:
             logger.warning("Failed to preload model %s on Ollama: %s", provider_model_name, ex)

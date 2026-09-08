@@ -221,9 +221,12 @@ class ProductionPointerAdapter(BaseCapabilityAdapter, PointerCapability):
         # Step 1: Move to target coordinates if supplied
         if x is not None and y is not None:
             await self.move_to(x, y, cancellation_token=cancellation_token)
+            await asyncio.sleep(0.015)
 
         # Step 2: Execute atomic clicks
-        for _ in range(count):
+        for i in range(count):
+            if i > 0:
+                await asyncio.sleep(0.030)
             res = await asyncio.to_thread(
                 self._button_executor.execute_click,
                 button=btn,
