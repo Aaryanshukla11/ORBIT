@@ -142,16 +142,40 @@ const DEFAULT_CLOUD_PROVIDERS: CloudProviderItem[] = [
   },
 ];
 
+import { loadStoredSettings, saveStoredSettings } from './SettingsContext';
+
 const ModelManagerContext = createContext<ModelManagerContextType | undefined>(undefined);
 
 export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { connectionState } = useOrbit();
+  const initialSettings = loadStoredSettings();
+
   const [models, setModels] = useState<ModelItem[]>(DEFAULT_LOCAL_MODELS);
-  const [cloudProviders, setCloudProviders] = useState<CloudProviderItem[]>(DEFAULT_CLOUD_PROVIDERS);
-  const [activeModelId, setActiveModelId] = useState<string>('ollama:qwen2.5:latest');
+  const [cloudProviders, setCloudProviders] = useState<CloudProviderItem[]>(() => {
+    const keys = initialSettings.providerKeys || {};
+    return DEFAULT_CLOUD_PROVIDERS.map((cp) => {
+      const keyVal = keys[cp.id.toLowerCase()] || keys[cp.providerCode?.toLowerCase() || ''];
+      if (keyVal) {
+        return {
+          ...cp,
+          hasKey: true,
+          status: 'CONFIGURED',
+        };
+      }
+      return cp;
+    });
+  });
+
+  const [activeModelId, setActiveModelIdState] = useState<string>(() => initialSettings.activeModelId || 'ollama:qwen2.5:latest');
   const [switchingModelId, setSwitchingModelId] = useState<string | null>(null);
   const [switchingError, setSwitchingError] = useState<string | null>(null);
   const [sourceTab, setSourceTab] = useState<ModelSourceType>('local');
+
+  const setActiveModelId = useCallback((mId: string) => {
+    setActiveModelIdState(mId);
+    const curr = loadStoredSettings();
+    saveStoredSettings({ ...curr, activeModelId: mId });
+  }, []);
 
   const [systemStatus, setSystemStatus] = useState<SystemRuntimeStatus>({
     runtimeState: 'READY',
@@ -339,6 +363,16 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   const saveProviderKey = useCallback((providerId: string, apiKey: string): boolean => {
     if (!apiKey.trim()) return false;
+
+    // Persist provider API key to localStorage so it is retained across reloads
+    const curr = loadStoredSettings();
+    saveStoredSettings({
+      ...curr,
+      providerKeys: {
+        ...curr.providerKeys,
+        [providerId.toLowerCase()]: apiKey.trim(),
+      },
+    });
 
     // Transition to AUTHENTICATING status while backend validates credentials
     setCloudProviders((prev) =>

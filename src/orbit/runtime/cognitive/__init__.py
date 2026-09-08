@@ -1,5 +1,4 @@
-"""ORBIT Cognitive Intent & Decision Engine package."""
-
+from orbit.runtime.cognitive.agent_loop import AgentExecutionLoop, AgentExecutionResult
 from orbit.runtime.cognitive.engine import CognitiveDecisionEngine, StateGoalDelta
 from orbit.runtime.cognitive.interpreter import LLMIntentInterpreter
 from orbit.runtime.cognitive.loop import CognitiveExecutionLoop
@@ -24,6 +23,8 @@ __all__ = [
     "AbstractActionType",
     "ActionExecutionResult",
     "ActionOutcomeContract",
+    "AgentExecutionLoop",
+    "AgentExecutionResult",
     "CognitiveDecision",
     "CognitiveDecisionEngine",
     "CognitiveExecutionLoop",

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { SettingsProvider } from './context/SettingsContext';
 import { OrbitProvider } from './context/OrbitContext';
 import { ModelManagerProvider } from './context/ModelManagerContext';
 import { SystemProvider } from './context/SystemContext';
@@ -51,39 +52,41 @@ export const App: React.FC = () => {
   };
 
   return (
-    <OrbitProvider>
-      <ModelManagerProvider>
-        <SystemProvider>
-          <SecurityProvider>
-            <TaskConsoleProvider>
-              <ActivityHistoryProvider>
-                <SystemOverviewProvider>
-                  <DiagnosticsProvider>
-                    <div style={styles.appContainer}>
-                      {/* 1. Header (Brand + Window Controls) */}
-                      <Header onNavigateToChat={() => setActiveTab('chat')} />
+    <SettingsProvider>
+      <OrbitProvider>
+        <ModelManagerProvider>
+          <SystemProvider>
+            <SecurityProvider>
+              <TaskConsoleProvider>
+                <ActivityHistoryProvider>
+                  <SystemOverviewProvider>
+                    <DiagnosticsProvider>
+                      <div style={styles.appContainer}>
+                        {/* 1. Header (Brand + Window Controls) */}
+                        <Header onNavigateToChat={() => setActiveTab('chat')} />
 
-                      {/* 2. Mode Switch (Chatbot vs Assistant) */}
-                      <div style={styles.modeSwitchBar}>
-                        <ModeSwitch />
+                        {/* 2. Mode Switch (Chatbot vs Assistant) */}
+                        <div style={styles.modeSwitchBar}>
+                          <ModeSwitch />
+                        </div>
+
+                        {/* 3. Horizontal Navigation Tabs (Overview | Chat | Models | Health | System | Security | Activity | Apps | Settings) */}
+                        <HorizontalNav activeTab={activeTab} onSelectTab={setActiveTab} />
+
+                        {/* 4. Active View Content Area */}
+                        <main style={styles.mainContent}>
+                          {renderActiveView()}
+                        </main>
                       </div>
-
-                      {/* 3. Horizontal Navigation Tabs (Overview | Chat | Models | Health | System | Security | Activity | Apps | Settings) */}
-                      <HorizontalNav activeTab={activeTab} onSelectTab={setActiveTab} />
-
-                      {/* 4. Active View Content Area */}
-                      <main style={styles.mainContent}>
-                        {renderActiveView()}
-                      </main>
-                    </div>
-                  </DiagnosticsProvider>
-                </SystemOverviewProvider>
-              </ActivityHistoryProvider>
-            </TaskConsoleProvider>
-          </SecurityProvider>
-        </SystemProvider>
-      </ModelManagerProvider>
-    </OrbitProvider>
+                    </DiagnosticsProvider>
+                  </SystemOverviewProvider>
+                </ActivityHistoryProvider>
+              </TaskConsoleProvider>
+            </SecurityProvider>
+          </SystemProvider>
+        </ModelManagerProvider>
+      </OrbitProvider>
+    </SettingsProvider>
   );
 };
 

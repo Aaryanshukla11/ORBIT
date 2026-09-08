@@ -102,6 +102,8 @@ from orbit.runtime.task_completion import (
     TaskExecutionResult,
 )
 from orbit.runtime.cognitive import (
+    AgentExecutionLoop,
+    AgentExecutionResult,
     CognitiveExecutionLoop,
     CognitiveExecutionResult,
 )
@@ -119,7 +121,9 @@ from orbit.runtime.models.models import (
 from orbit.runtime.model_runtime import (
     ActiveModelContext,
     ModelActivationRequest,
+    ModelRouter,
     ModelSessionManager,
+    RoutingPolicy,
 )
 from orbit.runtime.model_providers import (
     OllamaProvider,
@@ -243,14 +247,19 @@ class OrbitOrchestrator:
             perception_engine=self._perception_engine,
             model_session_manager=self._model_session_manager,
         )
-        self._cognitive_loop = CognitiveExecutionLoop(
+        self._model_router = ModelRouter(session_manager=self._model_session_manager)
+        self._agent_loop = AgentExecutionLoop(
+            router=self._model_router,
+            model_session_manager=self._model_session_manager,
             workspace=self.workspace,
             pointer=self.pointer,
             keyboard=self.keyboard,
             observation=self.observation,
             goal_verifier=self._task_completion_engine.goal_verifier,
-            model_session_manager=self._model_session_manager,
+            target_locator=self._target_locator,
+            event_bus=self._event_bus,
         )
+        self._cognitive_loop = self._agent_loop
         self._history_store = history_store or ExecutionHistoryStore()
         self._diagnostic_service = DiagnosticService(orchestrator=self)
         self._active_cancellation_sources: Dict[str, CancellationSource] = {}
@@ -316,6 +325,14 @@ class OrbitOrchestrator:
     @property
     def plan_executor(self) -> PlanExecutor:
         return self._plan_executor
+
+    @property
+    def agent_loop(self) -> AgentExecutionLoop:
+        return self._agent_loop
+
+    @property
+    def model_router(self) -> ModelRouter:
+        return self._model_router
 
     @property
     def cognitive_loop(self) -> CognitiveExecutionLoop:
@@ -754,6 +771,25 @@ class OrbitOrchestrator:
             cancel_token=cancel_token,
         )
 
+    async def execute_agent_task(
+        self,
+        prompt: str,
+        session_id: str = "default_session",
+        task_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        routing_policy: Optional[RoutingPolicy] = None,
+        cancel_token: Optional[CancellationToken] = None,
+    ) -> AgentExecutionResult:
+        """Execute a user prompt directly through the unified AI-native Agent Execution Loop."""
+        return await self._agent_loop.run(
+            prompt=prompt,
+            session_id=session_id,
+            task_id=task_id,
+            context=context,
+            routing_policy=routing_policy,
+            cancel_token=cancel_token,
+        )
+
     async def execute_cognitive_task(
         self,
         prompt: str,
@@ -763,7 +799,7 @@ class OrbitOrchestrator:
         cancel_token: Optional[CancellationToken] = None,
     ) -> CognitiveExecutionResult:
         """Execute a user prompt directly through the closed-loop Cognitive Intent & Decision Engine."""
-        return await self._cognitive_loop.run(
+        return await self._agent_loop.run(
             prompt=prompt,
             session_id=session_id,
             task_id=task_id,
@@ -1289,39 +1325,33 @@ class OrbitOrchestrator:
                         except Exception as gen_err:
                             logger.warning("Conversational model turn exception: %s", gen_err)
 
-                # M1.8: Execute Natural Language Autonomous Task end-to-end via TaskCompletionEngine
-                logger.info("Executing natural language task %s: '%s'", task_id, task.prompt)
-                task_exec_res: TaskExecutionResult = await self._task_completion_engine.execute_task(
-                    goal=task.prompt,
+                # Production Path: Execute Natural Language Autonomous Task end-to-end via unified AgentExecutionLoop
+                logger.info("Executing autonomous task %s via AgentExecutionLoop: '%s'", task_id, task.prompt)
+                agent_res: AgentExecutionResult = await self._agent_loop.run(
+                    prompt=task.prompt,
                     session_id=session_id,
                     task_id=task_id,
                     context=task.metadata,
-                    policy=task.metadata.get("execution_policy"),
                     cancel_token=cancel_token,
                 )
 
-                task.metadata["task_execution_result"] = task_exec_res.model_dump()
-                if task_exec_res.understanding:
-                    task.metadata["task_understanding"] = task_exec_res.understanding.model_dump()
-                if task_exec_res.plan:
-                    task.metadata["task_plan"] = task_exec_res.plan.model_dump()
-                if task_exec_res.plan_execution_result:
-                    task.metadata["plan_execution_result"] = task_exec_res.plan_execution_result.model_dump()
+                task.metadata["agent_execution_result"] = agent_res.model_dump()
+                task.metadata["task_understanding"] = agent_res.objective.model_dump()
 
-                # Emit Plan if formulated
-                if task_exec_res.plan:
+                # Emit Plan if formulated from step history
+                if agent_res.step_history:
                     try:
                         ui_plan = ExecutionPlan(
-                            plan_id=task_exec_res.plan.plan_id,
+                            plan_id=agent_res.objective.objective_id,
                             task_id=task_id,
-                            description=task_exec_res.plan.description or task.prompt,
+                            description=agent_res.objective.user_goal or task.prompt,
                             steps=[
                                 Step(
-                                    step_id=s.step_id,
-                                    step_index=idx,
-                                    description=s.description or f"Step {idx + 1}",
+                                    step_id=f"step_{s.step_index}",
+                                    step_index=s.step_index,
+                                    description=s.decision.decision_summary or f"Step {s.step_index + 1}",
                                 )
-                                for idx, s in enumerate(task_exec_res.plan.steps)
+                                for s in agent_res.step_history
                             ],
                         )
                         await self._task_manager.set_plan(task_id, ui_plan)
@@ -1336,20 +1366,19 @@ class OrbitOrchestrator:
 
                 # Update history store record
                 rec = await self._history_store.get_record_by_task_id(task_id)
-                is_successful = getattr(task_exec_res, "is_success", False)
-                comp_status = getattr(task_exec_res, "completion_status", None)
+                is_successful = agent_res.is_success
+                comp_status = agent_res.final_status
                 if rec:
                     if comp_status and comp_status.value in ExecutionStatus.__members__:
                         rec.status = ExecutionStatus[comp_status.value]
                     else:
                         rec.status = ExecutionStatus.COMPLETED if is_successful else ExecutionStatus.FAILED
                     rec.completed_at = datetime.now(timezone.utc)
-                    rec.duration_ms = getattr(task_exec_res, "elapsed_duration_ms", 0.0)
-                    rec.failure_reason = getattr(task_exec_res, "failure_reason", None)
-                    rec.failure_code = getattr(task_exec_res, "failure_code", None)
-                    if task_exec_res.plan:
-                        rec.total_steps = len(task_exec_res.plan.steps)
-                        rec.steps_completed = len(task_exec_res.plan.steps) if is_successful else 0
+                    rec.duration_ms = agent_res.elapsed_duration_ms
+                    rec.failure_reason = agent_res.failure_reason
+                    rec.failure_code = agent_res.failure_code
+                    rec.total_steps = len(agent_res.step_history)
+                    rec.steps_completed = len(agent_res.step_history) if is_successful else max(0, len(agent_res.step_history) - 1)
                     await self._history_store.save_record(rec)
                     await self._emit_event(
                         EventType.EXECUTION_RECORD_UPDATED,
@@ -1364,8 +1393,8 @@ class OrbitOrchestrator:
                     await self._task_manager.update_status(task_id, TaskStatus.COMPLETED, metadata=task.metadata)
                     await self._emit_task_event(task_id, TaskStatus.COMPLETED)
                 else:
-                    err_code = getattr(task_exec_res, "failure_code", "TASK_EXECUTION_FAILED") or "TASK_EXECUTION_FAILED"
-                    err_msg = getattr(task_exec_res, "failure_reason", "Task goal could not be verified or completed") or "Task goal could not be verified or completed"
+                    err_code = agent_res.failure_code or "TASK_EXECUTION_FAILED"
+                    err_msg = agent_res.failure_reason or "Task goal could not be verified or completed"
                     logger.warning("Task %s failed physical execution: [%s] %s", task_id, err_code, err_msg)
                     err_detail = ErrorDetail(
                         code=err_code,

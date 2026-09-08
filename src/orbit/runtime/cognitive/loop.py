@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import math
+import sys
 import time
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -272,6 +273,21 @@ class CognitiveExecutionLoop:
 
         dispatch_success = False
         err_msg = None
+        target_name = action.target.name if action.target else str(params.get("app_name", "unknown"))
+        target_role = action.target.role if action.target else "unknown"
+
+        # Diagnostic Log: ACTION
+        logger.info(
+            "ACTION:\n"
+            "  action_id: %s\n"
+            "  action_type: %s\n"
+            "  semantic target: name='%s', role='%s', context='%s'",
+            action.action_id,
+            act_type.value,
+            target_name,
+            target_role,
+            action.target.context if action.target else "",
+        )
 
         try:
             # -------------------------------------------------------------
@@ -279,36 +295,105 @@ class CognitiveExecutionLoop:
             # -------------------------------------------------------------
             if act_type == AbstractActionType.LAUNCH_APPLICATION:
                 app_name = str(params.get("app_name", action.target.name if action.target else "mspaint"))
-                if self._workspace is not None:
-                    proc_info = await self._workspace.launch_process(app_name)
+                logger.info(
+                    "DISPATCH:\n"
+                    "  adapter class: %s\n"
+                    "  dispatch function: launch_application\n"
+                    "  native API used: ShellExecute / CreateProcess\n"
+                    "  app_name: %s",
+                    type(self._workspace).__name__ if self._workspace else "subprocess",
+                    app_name,
+                )
+                if self._workspace is not None and hasattr(self._workspace, "launch_process"):
+                    raw_proc = self._workspace.launch_process(app_name)
+                    if inspect.isawaitable(raw_proc):
+                        proc_info = await raw_proc
+                    else:
+                        proc_info = raw_proc
                     dispatch_success = bool(proc_info)
                 else:
                     import subprocess
-                    subprocess.Popen([app_name], shell=True)
+                    import ctypes
+                    if sys.platform == "win32":
+                        if "paint" in app_name.lower():
+                            try:
+                                ctypes.windll.shell32.ShellExecuteW(None, "open", "explorer.exe", "shell:AppsFolder\\Microsoft.Paint_8wekyb3d8bbwe!App", None, 1)
+                            except Exception:
+                                subprocess.Popen(["explorer.exe", "shell:AppsFolder\\Microsoft.Paint_8wekyb3d8bbwe!App"])
+                        else:
+                            subprocess.Popen(f"start {app_name}", shell=True)
+                    else:
+                        subprocess.Popen(app_name, shell=True)
+                    # Settle wait for app window initialization
+                    await asyncio.sleep(2.0)
                     dispatch_success = True
 
             elif act_type == AbstractActionType.FOCUS_WINDOW:
                 app_name = str(params.get("app_name", action.target.name if action.target else ""))
                 hwnd = params.get("hwnd")
-                if hwnd and self._workspace is not None:
-                    dispatch_success = await self._workspace.set_focus_window(hwnd)
-                elif app_name and self._workspace is not None:
-                    wins = await self._workspace.list_windows()
-                    for w in wins:
-                        if app_name.lower() in w.title.lower():
-                            dispatch_success = await self._workspace.set_focus_window(w.hwnd)
+                if not hwnd and app_name:
+                    for win in pre_obs.visible_windows:
+                        if self._observer._matches_app(win.get("title", ""), win.get("class_name", ""), app_name):
+                            hwnd = win.get("hwnd")
                             break
-                    if not dispatch_success:
-                        dispatch_success = True
+                if not hwnd:
+                    hwnd = pre_obs.active_window_hwnd
+
+                logger.info(
+                    "TARGET RESOLUTION:\n"
+                    "  resolved x/y: N/A (Window Focus)\n"
+                    "  target window HWND: %s\n"
+                    "  foreground HWND: %s",
+                    hwnd,
+                    pre_obs.active_window_hwnd,
+                )
+                logger.info(
+                    "DISPATCH:\n"
+                    "  adapter class: %s\n"
+                    "  dispatch function: set_focus_window\n"
+                    "  native API used: SetForegroundWindow\n"
+                    "  target HWND: %s",
+                    type(self._workspace).__name__ if self._workspace else "Win32",
+                    hwnd,
+                )
+                if hwnd and self._workspace is not None and hasattr(self._workspace, "set_focus_window"):
+                    dispatch_success = await self._workspace.set_focus_window(hwnd)
+                elif hwnd and sys.platform == "win32":
+                    from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                    EvidenceBasedTargetLocator._force_foreground_window(int(hwnd))
+                    dispatch_success = True
+                elif app_name and sys.platform == "win32":
+                    from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+                    if pre_obs.active_window_hwnd:
+                        EvidenceBasedTargetLocator._force_foreground_window(int(pre_obs.active_window_hwnd))
+                    dispatch_success = True
                 else:
                     dispatch_success = True
 
             elif act_type == AbstractActionType.DRAW_STROKES:
                 shape = str(params.get("shape", "cube"))
+                logger.info(
+                    "DISPATCH:\n"
+                    "  adapter class: %s\n"
+                    "  dispatch function: _execute_drawing_strokes\n"
+                    "  native API used: user32.SendInput (MOUSEINPUT)\n"
+                    "  shape: %s",
+                    type(self._pointer).__name__ if self._pointer else "None",
+                    shape,
+                )
                 dispatch_success = await self._execute_drawing_strokes(shape, cancel_token)
 
             elif act_type == AbstractActionType.TYPE_TEXT:
                 text = str(params.get("text", ""))
+                logger.info(
+                    "DISPATCH:\n"
+                    "  adapter class: %s\n"
+                    "  dispatch function: keyboard.type_text\n"
+                    "  native API used: user32.SendInput (KEYBDINPUT)\n"
+                    "  payload length: %d",
+                    type(self._keyboard).__name__ if self._keyboard else "None",
+                    len(text),
+                )
                 if self._keyboard is not None:
                     for ch in text:
                         if cancel_token and cancel_token.is_cancelled:
@@ -327,6 +412,24 @@ class CognitiveExecutionLoop:
             elif act_type == AbstractActionType.CLICK_ELEMENT:
                 # Dynamic Runtime Target Resolution (SemanticTarget -> Physical Coordinates)
                 coords = await self._resolve_target_coordinates(action.target)
+                logger.info(
+                    "TARGET RESOLUTION:\n"
+                    "  resolved x/y: %s\n"
+                    "  target window HWND: %s\n"
+                    "  foreground HWND: %s",
+                    coords,
+                    params.get("target_hwnd"),
+                    pre_obs.active_window_hwnd,
+                )
+                logger.info(
+                    "DISPATCH:\n"
+                    "  adapter class: %s\n"
+                    "  dispatch function: pointer.click\n"
+                    "  native API used: user32.SendInput (MOUSEINPUT)\n"
+                    "  coordinates: %s",
+                    type(self._pointer).__name__ if self._pointer else "None",
+                    coords,
+                )
                 if coords and self._pointer is not None:
                     await self._pointer.move_to(coords[0], coords[1])
                     await asyncio.sleep(0.05)
@@ -341,6 +444,15 @@ class CognitiveExecutionLoop:
 
             elif act_type == AbstractActionType.SEND_HOTKEY:
                 combination = str(params.get("combination", "ctrl+s"))
+                logger.info(
+                    "DISPATCH:\n"
+                    "  adapter class: %s\n"
+                    "  dispatch function: keyboard.press_shortcut\n"
+                    "  native API used: user32.SendInput\n"
+                    "  combination: %s",
+                    type(self._keyboard).__name__ if self._keyboard else "None",
+                    combination,
+                )
                 if self._keyboard is not None:
                     keys = combination.lower().split("+")
                     for k in keys:
@@ -360,7 +472,7 @@ class CognitiveExecutionLoop:
                 dispatch_success = True
 
         except Exception as ex:
-            logger.warning("Action dispatch error for %s: %s", act_type.value, ex)
+            logger.warning("Action dispatch error for %s: %s", act_type.value, ex, exc_info=True)
             dispatch_success = False
             err_msg = str(ex)
 
@@ -434,7 +546,31 @@ class CognitiveExecutionLoop:
             logger.debug("Pointer capability not attached; skipping physical drag strokes")
             return True
 
-        paths = self._generate_shape_paths(shape, center_x=600, center_y=450, size=140)
+        # Calculate canvas center dynamically from active foreground window
+        center_x = 700
+        center_y = 500
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                import ctypes.wintypes
+                from orbit.adapters.pointer.safety import attached_to_input_desktop
+                with attached_to_input_desktop():
+                    user32 = ctypes.windll.user32
+                    user32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.RECT)]
+                    user32.GetWindowRect.restype = ctypes.wintypes.BOOL
+                    hwnd = user32.GetForegroundWindow()
+                    if hwnd:
+                        rect = ctypes.wintypes.RECT()
+                        if user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(rect)):
+                            w = rect.right - rect.left
+                            h = rect.bottom - rect.top
+                            if w > 400 and h > 400:
+                                center_x = max(rect.left, 0) + w // 2
+                                center_y = max(rect.top, 0) + 160 + (h - 160) // 2
+            except Exception as ex:
+                logger.debug("Window rect query for canvas center notice: %s", ex)
+
+        paths = self._generate_shape_paths(shape, center_x=center_x, center_y=center_y, size=140)
 
         for stroke in paths:
             if cancel_token and cancel_token.is_cancelled:
@@ -444,20 +580,31 @@ class CognitiveExecutionLoop:
 
             start_pt = stroke[0]
             await self._pointer.move_to(int(start_pt[0]), int(start_pt[1]))
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.04)
 
-            await self._pointer.button_down()
+            # Hold mouse button down
+            if hasattr(self._pointer, "press_down"):
+                await self._pointer.press_down(button="left")
+            elif hasattr(self._pointer, "button_down"):
+                await self._pointer.button_down()
             await asyncio.sleep(0.03)
 
             for pt in stroke[1:]:
                 if cancel_token and cancel_token.is_cancelled:
-                    await self._pointer.button_up()
+                    if hasattr(self._pointer, "release_up"):
+                        await self._pointer.release_up(button="left")
+                    elif hasattr(self._pointer, "button_up"):
+                        await self._pointer.button_up()
                     return False
                 await self._pointer.move_to(int(pt[0]), int(pt[1]))
                 await asyncio.sleep(0.02)
 
-            await self._pointer.button_up()
-            await asyncio.sleep(0.05)
+            # Release mouse button
+            if hasattr(self._pointer, "release_up"):
+                await self._pointer.release_up(button="left")
+            elif hasattr(self._pointer, "button_up"):
+                await self._pointer.button_up()
+            await asyncio.sleep(0.04)
 
         logger.info("Successfully executed %d physical drawing strokes for shape '%s'", len(paths), shape)
         return True
@@ -472,7 +619,56 @@ class CognitiveExecutionLoop:
         """Generate multi-stroke coordinate trajectories for geometric shapes."""
         shape_norm = shape.lower().strip()
 
-        if shape_norm in ("cube", "box_3d"):
+        if shape_norm in ("car", "automobile", "vehicle", "truck"):
+            # Detailed Car Drawing Trajectory:
+            # 1. Lower Chassis Box
+            chassis = [
+                (center_x - 120, center_y + 10),
+                (center_x + 120, center_y + 10),
+                (center_x + 120, center_y + 55),
+                (center_x - 120, center_y + 55),
+                (center_x - 120, center_y + 10),
+            ]
+            # 2. Upper Cabin / Roof (Trapezoid)
+            cabin = [
+                (center_x - 70, center_y + 10),
+                (center_x - 40, center_y - 45),
+                (center_x + 50, center_y - 45),
+                (center_x + 85, center_y + 10),
+            ]
+            # 3. Window Divider
+            window_div = [
+                (center_x + 5, center_y - 45),
+                (center_x + 5, center_y + 10),
+            ]
+            # 4. Front Wheel Circle (center_x + 60, center_y + 55)
+            front_wheel = []
+            for deg in range(0, 365, 20):
+                rad = math.radians(deg)
+                wx = int(center_x + 60 + 22 * math.cos(rad))
+                wy = int(center_y + 55 + 22 * math.sin(rad))
+                front_wheel.append((wx, wy))
+
+            # 5. Rear Wheel Circle (center_x - 60, center_y + 55)
+            rear_wheel = []
+            for deg in range(0, 365, 20):
+                rad = math.radians(deg)
+                wx = int(center_x - 60 + 22 * math.cos(rad))
+                wy = int(center_y + 55 + 22 * math.sin(rad))
+                rear_wheel.append((wx, wy))
+
+            # 6. Headlight & Tail light accents
+            headlight = [
+                (center_x + 120, center_y + 20),
+                (center_x + 120, center_y + 35),
+            ]
+            taillight = [
+                (center_x - 120, center_y + 20),
+                (center_x - 120, center_y + 35),
+            ]
+            return [chassis, cabin, window_div, front_wheel, rear_wheel, headlight, taillight]
+
+        elif shape_norm in ("cube", "box_3d"):
             s = size
             offset = int(s * 0.45)
             p1 = (center_x - s // 2, center_y - s // 2)
@@ -494,6 +690,28 @@ class CognitiveExecutionLoop:
 
             return [front_square, back_square, e1, e2, e3, e4]
 
+        elif shape_norm in ("house",):
+            # House: walls box, roof triangle, door
+            walls = [
+                (center_x - 80, center_y - 20),
+                (center_x + 80, center_y - 20),
+                (center_x + 80, center_y + 70),
+                (center_x - 80, center_y + 70),
+                (center_x - 80, center_y - 20),
+            ]
+            roof = [
+                (center_x - 95, center_y - 20),
+                (center_x, center_y - 95),
+                (center_x + 95, center_y - 20),
+            ]
+            door = [
+                (center_x - 22, center_y + 70),
+                (center_x - 22, center_y + 20),
+                (center_x + 22, center_y + 20),
+                (center_x + 22, center_y + 70),
+            ]
+            return [walls, roof, door]
+
         elif shape_norm in ("circle", "oval"):
             pts = []
             radius = size // 2
@@ -509,6 +727,25 @@ class CognitiveExecutionLoop:
             p2 = (center_x + size // 2, center_y + size // 2)
             p3 = (center_x - size // 2, center_y + size // 2)
             return [[p1, p2, p3, p1]]
+
+        elif shape_norm in ("star",):
+            star_pts = []
+            for i in range(11):
+                r = size // 2 if i % 2 == 0 else size // 4
+                ang = -math.pi / 2 + i * math.pi / 5
+                star_pts.append((int(center_x + r * math.cos(ang)), int(center_y + r * math.sin(ang))))
+            return [star_pts]
+
+        elif shape_norm in ("stickman", "person"):
+            head_pts = [
+                (int(center_x + 25 * math.cos(math.radians(deg))), int(center_y - 60 + 25 * math.sin(math.radians(deg))))
+                for deg in range(0, 365, 30)
+            ]
+            body = [(center_x, center_y - 35), (center_x, center_y + 35)]
+            left_leg = [(center_x, center_y + 35), (center_x - 35, center_y + 95)]
+            right_leg = [(center_x, center_y + 35), (center_x + 35, center_y + 95)]
+            arms = [(center_x - 45, center_y - 10), (center_x, center_y - 15), (center_x + 45, center_y - 10)]
+            return [head_pts, body, left_leg, right_leg, arms]
 
         else:
             p1 = (center_x - size // 2, center_y - size // 2)

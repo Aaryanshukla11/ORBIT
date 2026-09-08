@@ -1,17 +1,19 @@
-"""Current State Observer for cognitive runtime perception."""
+"""Current State Observer for cognitive runtime perception (Step 3).
+
+Integrates DesktopPerceptionEngine to provide fresh multimodal desktop observations
+(Win32, UIA, OCR, Visual regions) to the AgentExecutionLoop and Decision Engine.
+"""
 
 from __future__ import annotations
 
-import ctypes
 import logging
-import os
-import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from orbit.contracts.capabilities import ObservationCapability
 from orbit.runtime.cognitive.models import CurrentStateObservation, StructuredObjective
-from orbit.runtime.perception import SemanticPerceptionEngine
+from orbit.runtime.perception.engine import DesktopPerceptionEngine
+from orbit.runtime.perception.models import DesktopObservation
 
 logger = logging.getLogger(__name__)
 
@@ -22,26 +24,40 @@ class CurrentStateObserver:
     def __init__(
         self,
         observation: Optional[ObservationCapability] = None,
-        perception_engine: Optional[SemanticPerceptionEngine] = None,
+        perception_engine: Optional[DesktopPerceptionEngine] = None,
     ) -> None:
         self._observation = observation
-        self._perception_engine = perception_engine or SemanticPerceptionEngine()
+        self._perception_engine = perception_engine or DesktopPerceptionEngine(observation_capability=observation)
 
     @property
     def observation(self) -> Optional[ObservationCapability]:
         return self._observation
 
+    @property
+    def perception_engine(self) -> DesktopPerceptionEngine:
+        return self._perception_engine
+
     def set_observation(self, observation: ObservationCapability) -> None:
         self._observation = observation
+        self._perception_engine.set_observation_capability(observation)
+
+    async def observe_canonical(
+        self,
+        target_hwnd: Optional[int] = None,
+        include_base64: bool = True,
+    ) -> DesktopObservation:
+        """Capture canonical, multimodal DesktopObservation snapshot."""
+        return await self._perception_engine.observe(
+            target_hwnd=target_hwnd,
+            include_screenshot_base64=include_base64,
+        )
 
     async def observe(
         self,
         objective: Optional[StructuredObjective] = None,
     ) -> CurrentStateObservation:
         """Capture live state observation relative to the current objective."""
-        now = datetime.now(timezone.utc)
-        active_hwnd, active_title, active_class = self._get_foreground_window_info()
-        visible_windows = self._enumerate_visible_windows()
+        desktop_obs = await self.observe_canonical()
 
         target_app_name = ""
         if objective and objective.parameters:
@@ -49,47 +65,45 @@ class CurrentStateObserver:
         if not target_app_name and objective and objective.target_entities:
             target_app_name = str(objective.target_entities[0]).lower()
 
-        # Check if target app exists and is active
+        active_hwnd = desktop_obs.foreground_window.hwnd if desktop_obs.foreground_window else None
+        active_title = desktop_obs.foreground_window.title if desktop_obs.foreground_window else ""
+        active_class = desktop_obs.foreground_window.window_class if desktop_obs.foreground_window else ""
+
+        visible_windows = [
+            {
+                "hwnd": w.hwnd,
+                "title": w.title,
+                "class_name": w.window_class,
+                "process_id": w.process_id,
+                "process_name": w.process_name,
+                "is_foreground": w.is_foreground,
+            }
+            for w in desktop_obs.visible_windows
+        ]
+
+        logger.info(
+            "OBSERVE: target_app='%s', active_hwnd=%s, active_title='%s', active_class='%s', visible_count=%d",
+            target_app_name, active_hwnd, active_title, active_class, len(visible_windows)
+        )
+
         target_app_exists = False
         target_app_is_active = False
 
         if target_app_name:
-            # Check active window match
             if self._matches_app(active_title, active_class, target_app_name):
                 target_app_exists = True
                 target_app_is_active = True
+                logger.info("OBSERVE: Target app '%s' IS ACTIVE FOREGROUND (HWND: %s)", target_app_name, active_hwnd)
             else:
-                # Check visible windows
                 for win in visible_windows:
                     if self._matches_app(win.get("title", ""), win.get("class_name", ""), target_app_name):
                         target_app_exists = True
+                        logger.info("OBSERVE: Target app '%s' FOUND IN VISIBLE WINDOWS (HWND: %s, Title: '%s')", target_app_name, win.get("hwnd"), win.get("title"))
                         break
 
-        # Capture OCR / Perceptual Screen Frame if Observation Capability is present
-        ocr_tokens: List[str] = []
-        canvas_status = None
-        screen_summary = ""
-
-        if self._observation is not None:
-            try:
-                frame = await self._observation.capture_screen(display_index=0)
-                if frame:
-                    screen_summary = f"Screen captured ({getattr(frame.resolution, 'width', 1920)}x{getattr(frame.resolution, 'height', 1080)})"
-                    # Run perception if needed
-                    if self._perception_engine and hasattr(frame, "data") and frame.data:
-                        try:
-                            perception_res = await self._perception_engine.perceive(frame)
-                            if perception_res:
-                                for elem in getattr(perception_res, "elements", []):
-                                    if getattr(elem, "text", None):
-                                        ocr_tokens.append(elem.text)
-                        except Exception as p_ex:
-                            logger.debug("Perception engine notice: %s", p_ex)
-            except Exception as ex:
-                logger.debug("Perceptual observation capture skipped: %s", ex)
-
-        # Infer Canvas Status if objective is drawing
-        if objective and "draw" in str(objective.parameters.get("action_type", "")).lower():
+        # Canvas status evaluation
+        canvas_status = desktop_obs.canvas_status
+        if not canvas_status and objective and "draw" in str(objective.parameters.get("action_type", "")).lower():
             if target_app_is_active:
                 canvas_status = "READY_FOR_DRAWING"
             elif target_app_exists:
@@ -97,20 +111,27 @@ class CurrentStateObserver:
             else:
                 canvas_status = "TARGET_NOT_OPEN"
 
+        ocr_token_texts = [t.text for t in desktop_obs.ocr_tokens]
+
         return CurrentStateObservation(
-            timestamp_utc=now,
+            observation_id=desktop_obs.observation_id,
+            timestamp_utc=desktop_obs.timestamp,
             active_window_hwnd=active_hwnd,
             active_window_title=active_title,
             active_window_class=active_class,
+            active_process_name=desktop_obs.foreground_window.process_name if desktop_obs.foreground_window else None,
             visible_windows=visible_windows,
             target_app_exists=target_app_exists,
             target_app_is_active=target_app_is_active,
-            screen_summary=screen_summary or f"Active: '{active_title}' (HWND: {active_hwnd})",
+            screen_summary=desktop_obs.desktop_summary or f"Active: '{active_title}' (HWND: {active_hwnd})",
             canvas_status=canvas_status,
-            ocr_tokens=ocr_tokens,
+            ocr_tokens=ocr_token_texts,
             raw_evidence={
                 "target_app_name": target_app_name,
                 "visible_window_count": len(visible_windows),
+                "is_consistent": desktop_obs.is_consistent,
+                "consistency_warnings": desktop_obs.consistency_warnings,
+                "perceived_elements_count": len(desktop_obs.perceived_elements),
             },
         )
 
@@ -120,75 +141,18 @@ class CurrentStateObserver:
         c_low = (class_name or "").lower()
         tgt_low = target.lower()
 
+        # Ignore IDE / code editor windows that merely display file names in tabs
+        if "antigravity" in t_low or "visual studio code" in t_low or "cursor" in t_low:
+            return False
+
         if tgt_low in ("paint", "mspaint"):
-            return "paint" in t_low or "mspaintapp" in c_low or "msppaint" in c_low
+            return (("paint" in t_low and not t_low.endswith(".py") and not t_low.endswith(".ts") and not t_low.endswith(".js")) 
+                    or "mspaintapp" in c_low or "msppaint" in c_low)
         if tgt_low in ("notepad", "notepad.exe"):
             return "notepad" in t_low or "notepad" in c_low
         if tgt_low in ("calculator", "calc"):
-            return "calc" in t_low or "calculator" in t_low or "applicationframewindow" in c_low and "calculator" in t_low
-        if tgt_low in ("edge", "msedge"):
-            return "edge" in t_low or "edge" in c_low
-        if tgt_low in ("chrome", "google-chrome"):
+            return "calculator" in t_low or "calc" in t_low
+        if tgt_low in ("chrome", "google chrome"):
             return "chrome" in t_low or "chrome" in c_low
 
         return tgt_low in t_low or tgt_low in c_low
-
-    def _get_foreground_window_info(self) -> tuple[Optional[int], Optional[str], Optional[str]]:
-        """Query the current Win32 foreground window HWND, title, and class."""
-        if sys.platform != "win32":
-            return 1001, "Mock Desktop Active Window", "MockWindowClass"
-
-        try:
-            user32 = ctypes.windll.user32
-            hwnd = user32.GetForegroundWindow()
-            if not hwnd:
-                return None, None, None
-
-            # Get title
-            length = user32.GetWindowTextLengthW(hwnd)
-            buf = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(hwnd, buf, length + 1)
-            title = buf.value
-
-            # Get class name
-            cls_buf = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(hwnd, cls_buf, 256)
-            cls_name = cls_buf.value
-
-            return hwnd, title, cls_name
-        except Exception as ex:
-            logger.debug("Win32 foreground window query notice: %s", ex)
-            return None, None, None
-
-    def _enumerate_visible_windows(self) -> List[Dict[str, Any]]:
-        """Enumerate visible top-level windows on the desktop."""
-        if sys.platform != "win32":
-            return [{"hwnd": 1001, "title": "Mock Desktop Window", "class_name": "MockWindowClass"}]
-
-        windows: List[Dict[str, Any]] = []
-        try:
-            user32 = ctypes.windll.user32
-            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-
-            def enum_proc(hwnd: Any, lparam: Any) -> bool:
-                if user32.IsWindowVisible(hwnd):
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, buf, length + 1)
-                        title = buf.value
-                        cls_buf = ctypes.create_unicode_buffer(256)
-                        user32.GetClassNameW(hwnd, cls_buf, 256)
-                        windows.append({
-                            "hwnd": hwnd,
-                            "title": title,
-                            "class_name": cls_buf.value,
-                        })
-                return True
-
-            cb = WNDENUMPROC(enum_proc)
-            user32.EnumWindows(cb, 0)
-        except Exception as ex:
-            logger.debug("Win32 EnumWindows notice: %s", ex)
-
-        return windows

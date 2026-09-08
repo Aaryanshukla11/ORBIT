@@ -26,8 +26,9 @@ from orbit.runtime.task_understanding.models import (
 class TaskPlanningEngine:
     """Core facade for ORBIT Task Planning (M1.8 Step 2).
 
-    Transforms structured intent sequences into validated, dependency-aware execution plans.
-    Operates 100% locally and deterministically with optional Cognitive LLM Synthesis for complex workflows.
+    .. deprecated::
+        Superseded in production by the unified AI-native `AgentExecutionLoop` and `ModelRouter`.
+        Retained for backward compatibility, testing, and legacy deterministic DAG plan inspection.
     """
 
     def __init__(

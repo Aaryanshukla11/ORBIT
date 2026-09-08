@@ -134,11 +134,19 @@ class LLMIntentInterpreter:
         if app_name:
             parameters["app_name"] = app_name
 
-        # Drawing Intent (e.g. "open paint and draw a cube", "draw a square")
-        if "draw" in lower or "sketch" in lower or "cube" in lower:
+        # Drawing Intent (e.g. "open paint and draw a car", "draw a cube", "draw a square")
+        if "draw" in lower or "sketch" in lower or "cube" in lower or ("paint" in lower and any(w in lower for w in ("car", "house", "tree", "box", "circle", "square", "triangle", "star"))):
             parameters["action_type"] = "draw"
             shape = "cube"
-            if "cube" in lower:
+            # Extract requested shape/subject from prompt
+            shape_match = re.search(r'(?:draw|sketch)\s+(?:a\s+|an\s+)?([a-zA-Z0-9_\-]+)', prompt, re.IGNORECASE)
+            if shape_match:
+                extracted = shape_match.group(1).lower().strip()
+                if extracted not in {"in", "on", "using", "with", "the", "paint", "mspaint", "canvas"}:
+                    shape = extracted
+            if "car" in lower or "automobile" in lower or "vehicle" in lower:
+                shape = "car"
+            elif "cube" in lower:
                 shape = "cube"
             elif "square" in lower:
                 shape = "square"
@@ -150,6 +158,12 @@ class LLMIntentInterpreter:
                 shape = "triangle"
             elif "star" in lower:
                 shape = "star"
+            elif "house" in lower:
+                shape = "house"
+            elif "tree" in lower:
+                shape = "tree"
+            elif "stickman" in lower or "person" in lower:
+                shape = "stickman"
             parameters["shape"] = shape
             end_condition = f"canvas_has_{shape}_drawing"
             user_goal = f"Open Paint and draw a {shape} on the canvas"

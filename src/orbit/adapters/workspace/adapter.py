@@ -306,6 +306,74 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
             expected_generation=expected_generation,
         )
 
+    async def launch_process(self, app_name: str) -> Optional[Dict[str, Any]]:
+        """Launch a Windows desktop application process."""
+        try:
+            import subprocess
+            import ctypes
+            clean_name = app_name.strip().lower()
+
+            # Map known Windows 10/11 Packaged / Modern Apps to their AppsFolder AUMIDs
+            known_aumids = {
+                "mspaint": "Microsoft.Paint_8wekyb3d8bbwe!App",
+                "paint": "Microsoft.Paint_8wekyb3d8bbwe!App",
+                "notepad": "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+                "calc": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+                "calculator": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
+                "terminal": "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App",
+                "photos": "Microsoft.Windows.Photos_8wekyb3d8bbwe!App",
+            }
+
+            logger.info("WORKSPACE LAUNCH_PROCESS: app_name='%s'", clean_name)
+
+            if sys.platform == "win32":
+                lookup_key = clean_name.replace(".exe", "")
+                aumid = known_aumids.get(lookup_key)
+                if aumid:
+                    # Launch modern Packaged/AppX Windows App via explorer.exe shell:AppsFolder
+                    try:
+                        ctypes.windll.shell32.ShellExecuteW(None, "open", "explorer.exe", f"shell:AppsFolder\\{aumid}", None, 1)
+                    except Exception:
+                        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{aumid}"])
+                else:
+                    exe_name = clean_name if clean_name.endswith(".exe") else f"{clean_name}.exe"
+                    res = ctypes.windll.shell32.ShellExecuteW(None, "open", exe_name, None, None, 1)
+                    if res <= 32:
+                        subprocess.Popen(["cmd.exe", "/c", "start", "", exe_name])
+            else:
+                subprocess.Popen(clean_name, shell=True)
+
+            await asyncio.sleep(2.5)
+            return {"app_name": app_name}
+        except Exception as ex:
+            logger.warning("launch_process error for %s: %s", app_name, ex, exc_info=True)
+            return None
+
+    async def set_focus_window(self, hwnd: int) -> bool:
+        """Set foreground window focus via Win32."""
+        if sys.platform != "win32":
+            return True
+        try:
+            from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
+            EvidenceBasedTargetLocator._force_foreground_window(int(hwnd))
+            await asyncio.sleep(0.3)
+            return True
+        except Exception as ex:
+            logger.warning("set_focus_window error for HWND %s: %s", hwnd, ex)
+            return False
+
+    async def list_windows(self) -> List[Any]:
+        """List top-level visible desktop windows."""
+        from orbit.runtime.cognitive.observer import CurrentStateObserver
+        obs = CurrentStateObserver()
+        raw_wins = obs._enumerate_visible_windows()
+        class WinInfo:
+            def __init__(self, hwnd: int, title: str, class_name: str):
+                self.hwnd = hwnd
+                self.title = title
+                self.class_name = class_name
+        return [WinInfo(w["hwnd"], w["title"], w.get("class_name", "")) for w in raw_wins]
+
     async def recover_workspace(self, recovery_token: Optional[str] = None) -> bool:
         """Attempt recovery from degraded or failed workspace states."""
         async with self._lock:

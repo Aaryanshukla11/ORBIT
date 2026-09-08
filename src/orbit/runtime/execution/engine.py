@@ -731,22 +731,33 @@ class ClosedLoopExecutionEngine:
                                 continue
                             if context.is_cancelled or (cancellation_token and cancellation_token.is_cancelled):
                                 break
-                            start_x = center_x + stroke[0][0]
-                            start_y = center_y + stroke[0][1]
+                            pt0 = stroke[0]
+                            sx = (pt0.get("x", 0) if isinstance(pt0, dict) else pt0[0])
+                            sy = (pt0.get("y", 0) if isinstance(pt0, dict) else pt0[1])
+                            start_x = center_x + sx
+                            start_y = center_y + sy
                             await ptr.move_to(int(start_x), int(start_y))
-                            await asyncio.sleep(0.02)
-                            await ptr.press_down(button="left")
+                            await asyncio.sleep(0.03)
+                            if hasattr(ptr, "press_down"):
+                                await ptr.press_down(button="left")
+                            elif hasattr(ptr, "button_down"):
+                                await ptr.button_down()
                             await asyncio.sleep(0.02)
 
                             for pt in stroke[1:]:
                                 if context.is_cancelled or (cancellation_token and cancellation_token.is_cancelled):
                                     break
-                                wx = center_x + pt[0]
-                                wy = center_y + pt[1]
+                                px = (pt.get("x", 0) if isinstance(pt, dict) else pt[0])
+                                py = (pt.get("y", 0) if isinstance(pt, dict) else pt[1])
+                                wx = center_x + px
+                                wy = center_y + py
                                 await ptr.move_to(int(wx), int(wy))
-                                await asyncio.sleep(0.03)
+                                await asyncio.sleep(0.02)
 
-                            await ptr.release_up(button="left")
+                            if hasattr(ptr, "release_up"):
+                                await ptr.release_up(button="left")
+                            elif hasattr(ptr, "button_up"):
+                                await ptr.button_up()
                             await asyncio.sleep(0.03)
                         return True
 

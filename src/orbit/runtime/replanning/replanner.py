@@ -47,7 +47,12 @@ logger = logging.getLogger(__name__)
 
 
 class DynamicReplanner:
-    """Coordinates failure analysis, state validation, policy decisions, checkpointing, repair, and backtracking."""
+    """Coordinates failure analysis, state validation, policy decisions, checkpointing, repair, and backtracking.
+
+    .. deprecated::
+        Superseded in production by the unified AI-native `AgentExecutionLoop` and `ModelRouter`.
+        Retained for backward compatibility, testing, and legacy failure classification.
+    """
 
     def __init__(
         self,

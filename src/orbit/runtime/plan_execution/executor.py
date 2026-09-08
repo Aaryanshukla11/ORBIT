@@ -45,7 +45,12 @@ logger = logging.getLogger(__name__)
 
 
 class PlanExecutor:
-    """Orchestrates multi-step ExecutableTaskPlans through closed-loop execution."""
+    """Orchestrates multi-step ExecutableTaskPlans through closed-loop execution.
+
+    .. deprecated::
+        Superseded in production by the unified AI-native `AgentExecutionLoop` and `ModelRouter`.
+        Retained for backward compatibility, testing, and legacy DAG step execution.
+    """
 
     def __init__(
         self,

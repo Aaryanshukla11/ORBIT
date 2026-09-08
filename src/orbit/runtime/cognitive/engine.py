@@ -360,6 +360,24 @@ class CognitiveDecisionEngine:
 
         # Rule 3: App Running but Not Focused -> Focus Window
         if not delta.app_focused:
+            target_hwnd = None
+            for win in observation.visible_windows:
+                w_title = (win.get("title") or "").lower()
+                w_cls = (win.get("class_name") or "").lower()
+                t_low = target_app.lower()
+                if t_low in ("paint", "mspaint") and ("paint" in w_title or "mspaintapp" in w_cls):
+                    target_hwnd = win.get("hwnd")
+                    break
+                elif t_low in ("notepad", "notepad.exe") and ("notepad" in w_title or "notepad" in w_cls):
+                    target_hwnd = win.get("hwnd")
+                    break
+                elif t_low in ("calculator", "calc") and ("calc" in w_title or "calculator" in w_title):
+                    target_hwnd = win.get("hwnd")
+                    break
+                elif t_low in w_title or t_low in w_cls:
+                    target_hwnd = win.get("hwnd")
+                    break
+
             return CognitiveDecision(
                 step_index=step_index,
                 decision_summary=f"'{target_app}' is running but active foreground is '{observation.active_window_title}'. Must focus {target_app}.",
@@ -372,7 +390,7 @@ class CognitiveDecisionEngine:
                 next_action=AbstractAction(
                     action_type=AbstractActionType.FOCUS_WINDOW,
                     target=SemanticTarget(name=target_app, role="window", context=target_app),
-                    parameters={"app_name": target_app, "hwnd": observation.active_window_hwnd},
+                    parameters={"app_name": target_app, "hwnd": target_hwnd or observation.active_window_hwnd},
                     outcome_contract=ActionOutcomeContract(
                         expected_state_transition=f"{target_app}_focused",
                         verification_strategy="WINDOW_FOCUS_OR_STATE",

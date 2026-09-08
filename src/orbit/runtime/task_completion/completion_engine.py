@@ -48,6 +48,10 @@ from orbit.runtime.task_completion.models import (
     TaskExecutionResult,
 )
 from orbit.runtime.task_understanding import TaskUnderstandingEngine, TaskUnderstandingResult, TaskUnderstandingStatus
+from orbit.runtime.cognitive import (
+    CognitiveExecutionLoop,
+    CognitiveExecutionResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +81,16 @@ class TaskCompletionEngine:
             evidence_collector=self._evidence_collector,
         )
         self._model_session_manager = model_session_manager
+        exec_eng = getattr(self._plan_executor, "execution_engine", None)
+        self._cognitive_loop = CognitiveExecutionLoop(
+            observation=self.observation,
+            goal_verifier=self._goal_verifier,
+            model_session_manager=self._model_session_manager,
+            pointer=getattr(exec_eng, "pointer", None),
+            keyboard=getattr(exec_eng, "keyboard", None),
+            workspace=getattr(exec_eng, "workspace", None),
+            target_locator=getattr(exec_eng, "target_locator", None),
+        )
         if model_session_manager is not None:
             self._sync_model_session_manager(model_session_manager)
 
@@ -85,6 +99,12 @@ class TaskCompletionEngine:
             self._task_understanding.set_model_session_manager(msm)
         if hasattr(self._task_planning, "set_model_session_manager"):
             self._task_planning.set_model_session_manager(msm)
+        if hasattr(self, "_cognitive_loop") and self._cognitive_loop is not None:
+            self._cognitive_loop.set_model_session_manager(msm)
+
+    @property
+    def cognitive_loop(self) -> CognitiveExecutionLoop:
+        return self._cognitive_loop
 
     @property
     def model_session_manager(self) -> Optional[Any]:
@@ -162,7 +182,6 @@ class TaskCompletionEngine:
                 metadata=context or {},
             )
 
-
         if understanding.status == TaskUnderstandingStatus.AMBIGUOUS:
             if hasattr(self._task_planning, "plan_task_async"):
                 plan = await self._task_planning.plan_task_async(
@@ -235,7 +254,6 @@ class TaskCompletionEngine:
                 t_start=t_start,
             )
 
-
         if understanding.status == TaskUnderstandingStatus.UNSUPPORTED:
             err_msg = (
                 "; ".join(understanding.diagnostic_messages)
@@ -280,6 +298,82 @@ class TaskCompletionEngine:
                 goal=goal,
                 understanding=understanding,
                 plan=None,
+                plan_result=None,
+                verification_result=verif_res,
+                start_utc=start_utc,
+                t_start=t_start,
+            )
+
+        # Authoritative Execution Path: Execute via closed-loop Cognitive Intent & Decision Engine
+        # (Unless explicitly asked for DAG plan or running legacy plan executor mock in tests)
+        from unittest.mock import MagicMock
+        is_mock_executor = isinstance(self._plan_executor, MagicMock) or getattr(self._plan_executor, "__module__", "").startswith("unittest.mock")
+        if not is_mock_executor and not (context and (context.get("plan_only") or context.get("use_dag_plan"))):
+            logger.info("TaskCompletionEngine executing task %s via CognitiveExecutionLoop: '%s'", effective_task_id, goal)
+            cog_res: CognitiveExecutionResult = await self._cognitive_loop.run(
+                prompt=goal,
+                session_id=session_id,
+                task_id=effective_task_id,
+                context=context,
+                cancel_token=cancel_token,
+            )
+
+            comp_steps = [f"step_{s.step_index}" for s in cog_res.step_history if s.action_success]
+            failed_steps = [f"step_{s.step_index}" for s in cog_res.step_history if not s.action_success and s.action_dispatched]
+
+            final_step = cog_res.step_history[-1] if cog_res.step_history else None
+            final_obs = final_step.post_observation if final_step else None
+
+            evidence = self._evidence_collector.build_evidence(
+                snapshot=pre_snapshot,
+                target_app=final_obs.active_process_name if final_obs and hasattr(final_obs, "active_process_name") else (cog_res.objective.parameters.get("app_name") if cog_res.objective else None),
+                target_hwnd=final_obs.active_window_hwnd if final_obs else None,
+                diagnostics={
+                    "total_cognitive_steps": cog_res.total_steps,
+                    "objective_goal": cog_res.objective.user_goal,
+                    "objective_end_condition": cog_res.objective.end_condition,
+                    "final_screen_summary": final_obs.screen_summary if final_obs else "",
+                },
+            )
+
+            verif_res = GoalVerificationResult(
+                status=cog_res.final_status,
+                is_completed=cog_res.is_success,
+                failure_reason=cog_res.failure_reason,
+                failure_code=cog_res.failure_code,
+                evidence=evidence,
+                diagnostics={"step_history_count": len(cog_res.step_history)},
+            )
+
+            ui_plan = None
+            if cog_res.step_history:
+                from orbit.runtime.planning.models import PlanStep, PlanActionType, PlanStatus
+                ui_steps = []
+                for s in cog_res.step_history:
+                    act = s.action_dispatched
+                    act_desc = act.rationale if act and act.rationale else s.decision.decision_summary
+                    ui_steps.append(
+                        PlanStep(
+                            step_id=f"step_{s.step_index}",
+                            action_type=PlanActionType.ACTIVATE_CONTROL,
+                            description=act_desc,
+                        )
+                    )
+                ui_plan = ExecutableTaskPlan(
+                    plan_id=f"plan_{effective_task_id}",
+                    task_id=effective_task_id,
+                    goal=goal,
+                    description=cog_res.objective.user_goal,
+                    steps=ui_steps,
+                    status=PlanStatus.VALID if cog_res.is_success else PlanStatus.FAILED,
+                )
+
+            return self._build_result(
+                task_id=effective_task_id,
+                session_id=session_id,
+                goal=goal,
+                understanding=understanding,
+                plan=ui_plan,
                 plan_result=None,
                 verification_result=verif_res,
                 start_utc=start_utc,

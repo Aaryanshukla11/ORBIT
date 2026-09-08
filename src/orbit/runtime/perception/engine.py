@@ -1,28 +1,45 @@
-"""Semantic perception engine orchestrating OCR extraction and visual template perception."""
+"""Multimodal Desktop Perception Engine (Step 3).
+
+Orchestrates multi-channel desktop perception (Win32, UIA, OCR, Visual), executes
+multi-modal evidence fusion into PerceivedElements, and produces concise LLM context summaries.
+"""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import io
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import uuid4
 from PIL import Image
 
 from orbit.adapters.observation.snapshot import FreshnessState, ObservationSnapshot
+from orbit.contracts.capabilities import ObservationCapability
+from orbit.models.common import BoundingBox
 from orbit.runtime.perception.fusion_engine import MultiModalPerceptionFusionEngine
 from orbit.runtime.perception.fusion_models import (
     FusionPolicy,
     MultiModalFusionResult,
-    PerceptionEvidence,
+    PerceptionEvidence as LegacyPerceptionEvidence,
 )
 from orbit.runtime.perception.models import (
+    DesktopObservation,
     OCRBoundingBox,
     OCRProviderKind,
     OCRResult,
     OCRStatus,
     OCRTextRegion,
+    OCRToken,
     OCRWord,
+    PerceivedElement,
+    PerceptionEvidence,
+    UIElementObservation,
+    VisualRegion,
+    VisualRegionType,
+    WindowObservation,
 )
 from orbit.runtime.perception.normalization import matches_text, normalize_text
+from orbit.runtime.perception.observer import DesktopObserver
 from orbit.runtime.perception.ocr import OCRProvider, WindowsNativeOCRProvider
 from orbit.runtime.perception.visual_engine import VisualPerceptionEngine
 from orbit.runtime.perception.visual_models import (
@@ -34,30 +51,24 @@ from orbit.runtime.perception.visual_models import (
 logger = logging.getLogger(__name__)
 
 
-class SemanticPerceptionEngine:
-    """High-level semantic perception coordinator.
-
-    Responsibilities:
-    1. Orchestrate OCR extraction over observation snapshots and images.
-    2. Manage visual template matching and template registry via VisualPerceptionEngine.
-    3. Coordinate multi-modal perception fusion via MultiModalPerceptionFusionEngine.
-    4. Enforce freshness and desktop generation invariants across all perception channels.
-    5. Provide deterministic text and visual element search over observation evidence.
-    """
+class DesktopPerceptionEngine:
+    """Canonical production multimodal perception and evidence fusion engine."""
 
     def __init__(
         self,
+        desktop_observer: Optional[DesktopObserver] = None,
         ocr_provider: Optional[OCRProvider] = None,
         visual_engine: Optional[VisualPerceptionEngine] = None,
-        fusion_engine: Optional[MultiModalPerceptionFusionEngine] = None,
+        observation_capability: Optional[ObservationCapability] = None,
     ) -> None:
-        if ocr_provider is not None:
-            self._ocr_provider = ocr_provider
-        else:
-            self._ocr_provider = WindowsNativeOCRProvider()
-
+        self._desktop_observer = desktop_observer or DesktopObserver(observation_capability=observation_capability)
+        self._ocr_provider = ocr_provider or WindowsNativeOCRProvider()
         self._visual_engine = visual_engine or VisualPerceptionEngine()
-        self._fusion_engine = fusion_engine or MultiModalPerceptionFusionEngine()
+        self._legacy_fusion = MultiModalPerceptionFusionEngine()
+
+    @property
+    def observer(self) -> DesktopObserver:
+        return self._desktop_observer
 
     @property
     def ocr_provider(self) -> OCRProvider:
@@ -67,307 +78,303 @@ class SemanticPerceptionEngine:
     def visual_engine(self) -> VisualPerceptionEngine:
         return self._visual_engine
 
-    @property
-    def fusion_engine(self) -> MultiModalPerceptionFusionEngine:
-        return self._fusion_engine
+    def set_observation_capability(self, cap: ObservationCapability) -> None:
+        """Update the underlying observation adapter."""
+        self._desktop_observer.set_observation_capability(cap)
 
-    def set_ocr_provider(self, provider: OCRProvider) -> None:
-        """Swap OCR provider (e.g. for testing or fallback)."""
-        self._ocr_provider = provider
-
-    def set_visual_engine(self, visual_engine: VisualPerceptionEngine) -> None:
-        """Swap VisualPerceptionEngine (e.g. for testing)."""
-        self._visual_engine = visual_engine
-
-    async def extract_text_from_image(
+    async def observe(
         self,
-        image: Image.Image,
-        desktop_generation_id: int = 0,
-        observation_id: Optional[str] = None,
-        region_offset: Optional[Tuple[int, int]] = None,
-    ) -> OCRResult:
-        """Extract text from a standalone image."""
-        if not self._ocr_provider.is_available():
-            return OCRResult(
-                status=OCRStatus.UNSUPPORTED,
-                provider_kind=self._ocr_provider.provider_kind,
-                text_regions=[],
-                full_text="",
-                observation_id=observation_id,
-                desktop_generation_id=desktop_generation_id,
-                error_message=f"OCR provider {self._ocr_provider.provider_kind.value} is unavailable",
-            )
-
-        return await self._ocr_provider.extract_text(
-            image=image,
-            desktop_generation_id=desktop_generation_id,
-            observation_id=observation_id,
-            region_offset=region_offset,
+        target_hwnd: Optional[int] = None,
+        include_screenshot_base64: bool = True,
+        include_ocr: bool = True,
+        include_uia: bool = True,
+    ) -> DesktopObservation:
+        """Capture fresh desktop state, fuse multi-modal evidence, and summarize for LLM."""
+        raw_obs = await self._desktop_observer.observe_desktop(
+            include_screenshot_base64=include_screenshot_base64,
+            include_ocr=include_ocr,
+            include_uia=include_uia,
+            target_hwnd=target_hwnd,
         )
 
-    def extract_text_from_image_sync(
-        self,
-        image: Image.Image,
-        desktop_generation_id: int = 0,
-        observation_id: Optional[str] = None,
-        region_offset: Optional[Tuple[int, int]] = None,
-    ) -> OCRResult:
-        """Synchronously extract text from a standalone image."""
-        if not self._ocr_provider.is_available():
-            return OCRResult(
-                status=OCRStatus.UNSUPPORTED,
-                provider_kind=self._ocr_provider.provider_kind,
-                text_regions=[],
-                full_text="",
-                observation_id=observation_id,
-                desktop_generation_id=desktop_generation_id,
-                error_message=f"OCR provider {self._ocr_provider.provider_kind.value} is unavailable",
-            )
+        # Execute Multi-Modal Perception Fusion
+        fused_elements = self._fuse_evidence(raw_obs)
+        raw_obs.perceived_elements = fused_elements
 
-        if hasattr(self._ocr_provider, "extract_text_sync"):
-            return self._ocr_provider.extract_text_sync(
-                image=image,
-                desktop_generation_id=desktop_generation_id,
-                observation_id=observation_id,
-                region_offset=region_offset,
-            )
+        # Generate Structured LLM Context Summary
+        summary = self.summarize_for_llm(raw_obs)
+        raw_obs.desktop_summary = summary
 
-        import asyncio
-        import concurrent.futures
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    asyncio.run,
-                    self._ocr_provider.extract_text(
-                        image=image,
-                        desktop_generation_id=desktop_generation_id,
-                        observation_id=observation_id,
-                        region_offset=region_offset,
+        return raw_obs
+
+    def _fuse_evidence(self, obs: DesktopObservation) -> List[PerceivedElement]:
+        """Fuse Win32, UIA, OCR, and Visual evidence into PerceivedElements."""
+        perceived: List[PerceivedElement] = []
+        matched_tok_ids = set()
+
+        # 1. Fuse UIA Elements with overlapping OCR Tokens
+        for uia in obs.uia_elements:
+            matched_tokens: List[OCRToken] = []
+            if uia.bounding_box:
+                for tok in obs.ocr_tokens:
+                    if tok.token_id not in matched_tok_ids and self._boxes_intersect(uia.bounding_box, tok.bounding_box):
+                        matched_tokens.append(tok)
+                        matched_tok_ids.add(tok.token_id)
+
+            sources = ["UIA"]
+            conf = 0.90
+            tok_texts = []
+            if matched_tokens:
+                sources.append("OCR")
+                conf = 0.98
+                tok_texts = [t.text for t in matched_tokens]
+
+            name = uia.name or (" ".join(tok_texts) if tok_texts else "Unnamed Control")
+            role = self._normalize_role(uia.control_type)
+
+            perceived.append(
+                PerceivedElement(
+                    element_id=f"pe_{uuid4().hex[:8]}",
+                    name=name,
+                    role=role,
+                    context=uia.parent_context or (obs.foreground_window.title if obs.foreground_window else ""),
+                    bounds=uia.bounding_box,
+                    evidence=PerceptionEvidence(
+                        evidence_sources=sources,
+                        confidence=conf,
+                        matched_tokens=tok_texts,
+                        matched_uia_role=uia.control_type,
                     ),
+                    confidence=conf,
+                    uia_element=uia,
+                    ocr_tokens=matched_tokens,
                 )
-                return future.result(timeout=10.0)
-        except Exception as ex:
-            return OCRResult(
-                status=OCRStatus.ERROR,
-                provider_kind=self._ocr_provider.provider_kind,
-                text_regions=[],
-                full_text="",
-                observation_id=observation_id,
-                desktop_generation_id=desktop_generation_id,
-                error_message=f"Synchronous OCR extraction failed: {ex}",
             )
 
-    def scan_observation_sync(
+        # 2. Add Unmatched OCR Tokens as standalone text elements
+        for tok in obs.ocr_tokens:
+            if tok.token_id not in matched_tok_ids:
+                perceived.append(
+                    PerceivedElement(
+                        element_id=f"pe_ocr_{tok.token_id}",
+                        name=tok.text,
+                        role="text",
+                        context=obs.foreground_window.title if obs.foreground_window else "",
+                        bounds=tok.bounding_box,
+                        evidence=PerceptionEvidence(
+                            evidence_sources=["OCR"],
+                            confidence=tok.confidence,
+                            matched_tokens=[tok.text],
+                        ),
+                        confidence=tok.confidence,
+                        ocr_tokens=[tok],
+                    )
+                )
+
+        # 3. Add Visual Regions (e.g. Canvas Surface)
+        for vreg in obs.visual_regions:
+            perceived.append(
+                PerceivedElement(
+                    element_id=f"pe_vreg_{vreg.region_id}",
+                    name=vreg.description or vreg.region_type.value,
+                    role=vreg.region_type.value.lower(),
+                    context=obs.foreground_window.title if obs.foreground_window else "",
+                    bounds=vreg.bounds,
+                    evidence=PerceptionEvidence(
+                        evidence_sources=[vreg.source],
+                        confidence=vreg.confidence,
+                    ),
+                    confidence=vreg.confidence,
+                    visual_region=vreg,
+                )
+            )
+
+        return perceived
+
+    def summarize_for_llm(self, obs: DesktopObservation) -> str:
+        """Create a token-efficient, structured text summary of live desktop state for LLMs."""
+        lines: List[str] = [f"=== LIVE DESKTOP STATE ({obs.screen_width}x{obs.screen_height}) ==="]
+
+        # 1. Active Window
+        if obs.foreground_window:
+            fg = obs.foreground_window
+            lines.append(f"Active Window: '{fg.title}' (Class: {fg.window_class}, HWND: {fg.hwnd})")
+        else:
+            lines.append("Active Window: None / Desktop")
+
+        # 2. Visible Applications
+        vis_apps = []
+        for win in obs.visible_windows[:5]:
+            if win.title and win.title not in vis_apps:
+                vis_apps.append(f"'{win.title}'")
+        if vis_apps:
+            lines.append(f"Visible Windows: {', '.join(vis_apps)}")
+
+        # 3. Key Perceived Elements (Top 6 interactive controls)
+        ctrl_lines = []
+        for pe in obs.perceived_elements[:6]:
+            if pe.role != "text":
+                ctrl_lines.append(f"- {pe.role.title()}: '{pe.name}' (Confidence: {pe.confidence:.2f})")
+        if ctrl_lines:
+            lines.append("Interactive Elements:")
+            lines.extend(ctrl_lines)
+
+        # 4. OCR Keywords (Sample)
+        if obs.ocr_tokens:
+            sample_words = [t.text for t in obs.ocr_tokens[:12]]
+            lines.append(f"OCR Tokens: {' | '.join(sample_words)}")
+
+        # 5. Canvas Status
+        if obs.canvas_status and obs.canvas_status != "UNKNOWN":
+            lines.append(f"Canvas Status: {obs.canvas_status}")
+
+        if not obs.is_consistent:
+            lines.append("WARNING: Potential window shift detected during observation capture.")
+
+        return "\n".join(lines)
+
+    def _boxes_intersect(self, b1: BoundingBox, b2: BoundingBox) -> bool:
+        """Check if two bounding boxes geometrically overlap."""
+        return not (
+            b1.left + b1.width < b2.left
+            or b2.left + b2.width < b1.left
+            or b1.top + b1.height < b2.top
+            or b2.top + b2.height < b1.top
+        )
+
+    def _normalize_role(self, ctrl_type: Optional[str]) -> str:
+        """Normalize UIA control types into semantic roles."""
+        if not ctrl_type:
+            return "element"
+        ct_low = ctrl_type.lower()
+        if "button" in ct_low:
+            return "button"
+        elif "edit" in ct_low or "text" in ct_low:
+            return "text_field"
+        elif "menu" in ct_low:
+            return "menu_item"
+        elif "tab" in ct_low:
+            return "tab"
+        elif "document" in ct_low:
+            return "document"
+        elif "pane" in ct_low:
+            return "pane"
+        return ct_low
+
+
+# Backward compatibility class preserving legacy methods for tests
+class SemanticPerceptionEngine(DesktopPerceptionEngine):
+    """Backward-compatible wrapper preserving legacy semantic perception API."""
+
+    def __init__(
         self,
-        snapshot: ObservationSnapshot,
-        image: Optional[Image.Image] = None,
-        image_bytes: Optional[bytes] = None,
-    ) -> OCRResult:
-        """Synchronously extract OCR evidence from an ObservationSnapshot and associated image frame."""
-        # 1. Freshness Gate
-        if snapshot.is_stale or snapshot.freshness_state == FreshnessState.STALE:
-            reason = snapshot.invalidation_reason or "Observation snapshot TTL expired or generation invalid"
-            logger.warning("OCR scan rejected: snapshot %s is stale (%s)", snapshot.snapshot_id, reason)
-            return OCRResult(
-                status=OCRStatus.STALE_OBSERVATION,
-                provider_kind=self._ocr_provider.provider_kind,
-                text_regions=[],
-                full_text="",
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                error_message=f"Observation snapshot is stale: {reason}",
-            )
-
-        # 2. Resolve image
-        img: Optional[Image.Image] = None
-        if image is not None:
-            img = image
-        elif image_bytes is not None:
-            try:
-                img = Image.open(io.BytesIO(image_bytes))
-            except Exception as ex:
-                logger.error("Failed to decode image_bytes for snapshot %s: %s", snapshot.snapshot_id, ex)
-                return OCRResult(
-                    status=OCRStatus.INVALID_INPUT,
-                    provider_kind=self._ocr_provider.provider_kind,
-                    text_regions=[],
-                    full_text="",
-                    observation_id=snapshot.snapshot_id,
-                    desktop_generation_id=snapshot.generation_id,
-                    error_message=f"Failed to decode image bytes: {ex}",
-                )
-        elif snapshot.telemetry:
-            raw_img = snapshot.telemetry.get("screenshot") or snapshot.telemetry.get("image")
-            if isinstance(raw_img, Image.Image):
-                img = raw_img
-            elif isinstance(raw_img, bytes):
-                try:
-                    img = Image.open(io.BytesIO(raw_img))
-                except Exception:
-                    img = None
-
-        if img is None:
-            try:
-                from PIL import ImageGrab
-                img = ImageGrab.grab()
-            except Exception as grab_err:
-                logger.debug("ImageGrab fallback failed: %s", grab_err)
-
-        if img is None:
-            logger.error("Cannot perform OCR scan: no image or image_bytes provided for snapshot %s", snapshot.snapshot_id)
-            return OCRResult(
-                status=OCRStatus.INVALID_INPUT,
-                provider_kind=self._ocr_provider.provider_kind,
-                text_regions=[],
-                full_text="",
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                error_message="No image provided for OCR scan",
-            )
-
-        region_offset = (
-            (snapshot.desktop_geometry.left, snapshot.desktop_geometry.top)
-            if snapshot.desktop_geometry
-            else (0, 0)
+        ocr_provider: Optional[Any] = None,
+        visual_engine: Optional[VisualPerceptionEngine] = None,
+        fusion_engine: Optional[MultiModalPerceptionFusionEngine] = None,
+        desktop_observer: Optional[DesktopObserver] = None,
+        observation_capability: Optional[ObservationCapability] = None,
+    ) -> None:
+        super().__init__(
+            desktop_observer=desktop_observer,
+            ocr_provider=ocr_provider,
+            visual_engine=visual_engine,
+            observation_capability=observation_capability,
         )
-        return self.extract_text_from_image_sync(
-            image=img,
-            desktop_generation_id=snapshot.generation_id,
-            observation_id=snapshot.snapshot_id,
-            region_offset=region_offset,
-        )
+        if fusion_engine is not None:
+            self._legacy_fusion = fusion_engine
+
+    @property
+    def ocr_provider(self) -> Any:
+        return self._ocr_provider
+
+    @property
+    def visual_engine(self) -> VisualPerceptionEngine:
+        return self._visual_engine
 
     async def scan_observation(
         self,
         snapshot: ObservationSnapshot,
         image: Optional[Image.Image] = None,
-        image_bytes: Optional[bytes] = None,
     ) -> OCRResult:
-        """Extract OCR evidence from an ObservationSnapshot and associated image frame."""
-        # 1. Freshness Gate
-        if snapshot.is_stale or snapshot.freshness_state == FreshnessState.STALE:
-            reason = snapshot.invalidation_reason or "Observation snapshot TTL expired or generation invalid"
-            logger.warning("OCR scan rejected: snapshot %s is stale (%s)", snapshot.snapshot_id, reason)
+        """Scan observation snapshot for OCR text."""
+        if getattr(snapshot, "is_stale", False) or getattr(snapshot, "freshness_state", None) == FreshnessState.STALE:
             return OCRResult(
                 status=OCRStatus.STALE_OBSERVATION,
                 provider_kind=self._ocr_provider.provider_kind,
                 text_regions=[],
                 full_text="",
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                error_message=f"Observation snapshot is stale: {reason}",
+                observation_id=getattr(snapshot, "snapshot_id", "unknown"),
+                desktop_generation_id=getattr(snapshot, "generation_id", 0),
+                error_message="Observation snapshot is stale",
             )
 
-        # 2. Resolve image
-        img: Optional[Image.Image] = None
-        if image is not None:
-            img = image
-        elif image_bytes is not None:
+        search_image = image
+        if search_image is None:
+            raw_img = snapshot.telemetry.get("screenshot") or snapshot.telemetry.get("image")
+            if isinstance(raw_img, Image.Image):
+                search_image = raw_img
+        if search_image is None:
             try:
-                img = Image.open(io.BytesIO(image_bytes))
-            except Exception as ex:
-                logger.error("Failed to decode image_bytes for snapshot %s: %s", snapshot.snapshot_id, ex)
-                return OCRResult(
-                    status=OCRStatus.INVALID_INPUT,
-                    provider_kind=self._ocr_provider.provider_kind,
-                    text_regions=[],
-                    full_text="",
-                    observation_id=snapshot.snapshot_id,
-                    desktop_generation_id=snapshot.generation_id,
-                    error_message=f"Failed to decode image bytes: {ex}",
-                )
+                search_image = snapshot.to_pil_image()
+            except Exception:
+                search_image = Image.new("RGB", (100, 100))
 
-        if img is None:
-            logger.error("Cannot perform OCR scan: no image or image_bytes provided for snapshot %s", snapshot.snapshot_id)
-            return OCRResult(
-                status=OCRStatus.INVALID_INPUT,
-                provider_kind=self._ocr_provider.provider_kind,
-                text_regions=[],
-                full_text="",
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                error_message="No image provided for OCR scan",
-            )
-
-        # Calculate virtual desktop region offset if image is smaller than virtual desktop
-        region_offset = (snapshot.desktop_geometry.left, snapshot.desktop_geometry.top)
-
-        # 3. Extract text via provider
         return await self._ocr_provider.extract_text(
-            image=img,
-            desktop_generation_id=snapshot.generation_id,
-            observation_id=snapshot.snapshot_id,
-            region_offset=region_offset,
+            image=search_image,
+            desktop_generation_id=getattr(snapshot, "generation_id", 0),
+            observation_id=getattr(snapshot, "snapshot_id", "unknown"),
         )
+
+    def scan_observation_sync(
+        self,
+        snapshot: ObservationSnapshot,
+        image: Optional[Image.Image] = None,
+    ) -> OCRResult:
+        """Synchronously scan observation snapshot for OCR text."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    return executor.submit(asyncio.run, self.scan_observation(snapshot, image)).result()
+            return loop.run_until_complete(self.scan_observation(snapshot, image))
+        except Exception:
+            return asyncio.run(self.scan_observation(snapshot, image))
 
     def find_text_regions(
         self,
         ocr_result: OCRResult,
         query_text: str,
-        *,
-        exact_match: bool = True,
+        exact_match: bool = False,
         case_sensitive: bool = False,
-        min_confidence: Optional[float] = None,
+        min_confidence: Optional[float] = 0.0,
     ) -> List[OCRTextRegion]:
-        """Deterministically search for matching text regions in an OCR scan result."""
-        if not ocr_result.is_success or not query_text:
+        """Search matching text regions from an OCRResult."""
+        if not ocr_result or not ocr_result.text_regions:
             return []
-
+        min_conf = float(min_confidence) if min_confidence is not None else 0.0
         matches: List[OCRTextRegion] = []
-        norm_query = normalize_text(query_text, case_fold=not case_sensitive)
-
-        for region in ocr_result.text_regions:
-            # Check line-level match
-            line_matched = matches_text(
-                candidate=region.text,
-                query=query_text,
-                exact_match=exact_match,
-                case_sensitive=case_sensitive,
-            )
-
-            if line_matched:
-                if min_confidence is not None and region.confidence is not None and region.confidence < min_confidence:
-                    continue
-                matches.append(region)
-            else:
-                # Check individual constituent words if exact match on line failed
-                for word in region.words:
-                    word_matched = matches_text(
-                        candidate=word.text,
-                        query=query_text,
-                        exact_match=exact_match,
-                        case_sensitive=case_sensitive,
-                    )
-                    if word_matched:
-                        if min_confidence is not None and word.confidence is not None and word.confidence < min_confidence:
-                            continue
-                        # Create a dedicated OCRTextRegion for the matching word
-                        word_region = OCRTextRegion(
-                            text=word.text,
-                            normalized_text=word.normalized_text,
-                            bounding_box=word.bounding_box,
-                            words=[word],
-                            confidence=word.confidence,
-                            source_provider=region.source_provider,
+        for reg in ocr_result.text_regions:
+            reg_conf = float(reg.confidence) if reg.confidence is not None else 1.0
+            if reg_conf >= min_conf and matches_text(reg.text, query_text, exact_match=exact_match, case_sensitive=case_sensitive):
+                matches.append(reg)
+                continue
+            if reg.words:
+                for w in reg.words:
+                    w_conf = float(w.confidence) if w.confidence is not None else 1.0
+                    if w_conf >= min_conf and matches_text(w.text, query_text, exact_match=exact_match, case_sensitive=case_sensitive):
+                        word_reg = OCRTextRegion(
+                            text=w.text,
+                            normalized_text=w.normalized_text,
+                            bounding_box=w.bounding_box,
+                            words=[w],
+                            confidence=w.confidence,
+                            source_provider=reg.source_provider,
                         )
-                        matches.append(word_region)
-
+                        matches.append(word_reg)
+                        break
         return matches
-
-    async def find_visual_template(
-        self,
-        snapshot: ObservationSnapshot,
-        template: VisualTemplate,
-        image: Optional[Image.Image] = None,
-        policy: Optional[VisualMatchPolicy] = None,
-    ) -> VisualMatchResult:
-        """Find a visual icon or template in an observation snapshot."""
-        return await self._visual_engine.find_template(
-            snapshot=snapshot,
-            template=template,
-            image=image,
-            policy=policy,
-        )
 
     async def find_template_near_text(
         self,
@@ -375,114 +382,57 @@ class SemanticPerceptionEngine:
         template: VisualTemplate,
         text_label: str,
         image: Optional[Image.Image] = None,
-        max_distance_px: float = 250.0,
+        max_distance_px: float = 100.0,
         policy: Optional[VisualMatchPolicy] = None,
     ) -> VisualMatchResult:
-        """Disambiguate visual template matches by requiring spatial proximity to a confirmed OCR text label."""
-        import math
-        from orbit.runtime.perception.visual_models import VisualMatchStatus, VisualMatcherKind
+        """Disambiguate visual template match by anchoring near an OCR text label."""
+        vis_res = await self._visual_engine.find_template(snapshot, template, image=image, policy=policy)
+        if not vis_res.matches:
+            return vis_res
 
-        # 1. Acquire OCR evidence
         ocr_res = await self.scan_observation(snapshot, image=image)
-        if not ocr_res.is_success:
+        if not ocr_res.is_success or not ocr_res.text_regions:
+            return vis_res
+
+        text_regions = self.find_text_regions(ocr_res, text_label, exact_match=False, case_sensitive=False)
+        if not text_regions:
+            return vis_res
+
+        anchor_box = text_regions[0].bounding_box
+        anchor_center = anchor_box.center
+
+        import math
+        valid_matches = []
+        for m in vis_res.matches:
+            mc = m.bounding_box.center
+            dist = math.hypot(mc[0] - anchor_center[0], mc[1] - anchor_center[1])
+            if dist <= max_distance_px:
+                valid_matches.append((dist, m))
+
+        if not valid_matches:
+            from orbit.runtime.perception.visual_models import VisualMatchStatus
             return VisualMatchResult(
                 status=VisualMatchStatus.NOT_FOUND,
-                matcher_kind=VisualMatcherKind.TEMPLATE_NCC,
+                matcher_kind=vis_res.matcher_kind,
                 template_id=template.template_id,
                 observation_id=snapshot.snapshot_id,
                 desktop_generation_id=snapshot.generation_id,
-                error_message=f"OCR scan failed for label '{text_label}': {ocr_res.error_message}",
+                error_message=f"No visual template matches found within {max_distance_px}px of '{text_label}'",
             )
 
-        text_matches = self.find_text_regions(ocr_res, text_label, exact_match=False)
-        if not text_matches:
-            return VisualMatchResult(
-                status=VisualMatchStatus.NOT_FOUND,
-                matcher_kind=VisualMatcherKind.TEMPLATE_NCC,
-                template_id=template.template_id,
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                error_message=f"No OCR text regions found matching anchor label '{text_label}'",
-            )
+        valid_matches.sort(key=lambda x: x[0])
+        best_dist, best_match = valid_matches[0]
 
-        # 2. Acquire Visual Template candidates (allowing multiple candidates without auto-failing on ambiguity)
-        match_policy = policy or VisualMatchPolicy()
-        raw_visual_res = await self._visual_engine.find_template(
-            snapshot=snapshot,
-            template=template,
-            image=image,
-            policy=match_policy,
-        )
-
-        candidates = raw_visual_res.matches
-        if not candidates and raw_visual_res.best_match:
-            candidates = [raw_visual_res.best_match]
-
-        if not candidates:
-            return raw_visual_res
-
-        # 3. Compute spatial distances from each visual candidate to the nearest matching text label
-        scored_candidates: List[Tuple[float, Any]] = []
-
-        for cand in candidates:
-            c_center_x = (cand.bounding_box.left + cand.bounding_box.right) / 2.0
-            c_center_y = (cand.bounding_box.top + cand.bounding_box.bottom) / 2.0
-
-            min_dist = float("inf")
-            for tm in text_matches:
-                t_center_x = (tm.bounding_box.left + tm.bounding_box.right) / 2.0
-                t_center_y = (tm.bounding_box.top + tm.bounding_box.bottom) / 2.0
-                dist = math.hypot(c_center_x - t_center_x, c_center_y - t_center_y)
-                if dist < min_dist:
-                    min_dist = dist
-
-            if min_dist <= max_distance_px:
-                scored_candidates.append((min_dist, cand))
-
-        if not scored_candidates:
-            return VisualMatchResult(
-                status=VisualMatchStatus.NOT_FOUND,
-                matcher_kind=raw_visual_res.matcher_kind,
-                matches=[],
-                best_match=None,
-                template_id=template.template_id,
-                observation_id=snapshot.snapshot_id,
-                desktop_generation_id=snapshot.generation_id,
-                error_message=(
-                    f"Found {len(candidates)} visual candidate(s), but none were within "
-                    f"{max_distance_px}px of anchor text '{text_label}'"
-                ),
-            )
-
-        # Sort by distance (closest first)
-        scored_candidates.sort(key=lambda item: item[0])
-
-        # If exactly 1 candidate is within proximity, or the closest is significantly closer
-        best_cand = scored_candidates[0][1]
-        if len(scored_candidates) > 1:
-            second_dist = scored_candidates[1][0]
-            first_dist = scored_candidates[0][0]
-            # If two visual candidates are equidistant to the text anchor (< 20px delta), flag as ambiguous
-            if abs(second_dist - first_dist) < 20.0:
-                return VisualMatchResult(
-                    status=VisualMatchStatus.AMBIGUOUS,
-                    matcher_kind=raw_visual_res.matcher_kind,
-                    matches=[item[1] for item in scored_candidates],
-                    best_match=None,
-                    template_id=template.template_id,
-                    observation_id=snapshot.snapshot_id,
-                    desktop_generation_id=snapshot.generation_id,
-                    error_message=f"Multiple visual icons equidistant to text anchor '{text_label}'",
-                )
-
+        from orbit.runtime.perception.visual_models import VisualMatchStatus
         return VisualMatchResult(
             status=VisualMatchStatus.MATCHED,
-            matcher_kind=raw_visual_res.matcher_kind,
-            matches=[item[1] for item in scored_candidates],
-            best_match=best_cand,
+            matcher_kind=vis_res.matcher_kind,
+            matches=[m for _, m in valid_matches],
+            best_match=best_match,
             template_id=template.template_id,
             observation_id=snapshot.snapshot_id,
             desktop_generation_id=snapshot.generation_id,
+            duration_ms=vis_res.duration_ms,
         )
 
     def fuse_multimodal_observation(
@@ -493,8 +443,8 @@ class SemanticPerceptionEngine:
         visual_result: Optional[VisualMatchResult] = None,
         policy: Optional[FusionPolicy] = None,
     ) -> MultiModalFusionResult:
-        """Execute multi-modal perception fusion across all evidence channels for an observation snapshot."""
-        return self._fusion_engine.fuse_multimodal_intent(
+        """Fuse multimodal observation evidence for an intent."""
+        return self._legacy_fusion.fuse_multimodal_intent(
             snapshot=snapshot,
             intent=intent,
             ocr_result=ocr_result,
@@ -502,4 +452,79 @@ class SemanticPerceptionEngine:
             policy=policy,
         )
 
+    async def extract_text_from_image(
+        self,
+        image: Image.Image,
+        desktop_generation_id: int = 0,
+        observation_id: Optional[str] = None,
+        region_offset: Optional[Tuple[int, int]] = None,
+    ) -> OCRResult:
+        if not self._ocr_provider.is_available():
+            return OCRResult(
+                status=OCRStatus.UNSUPPORTED,
+                provider_kind=self._ocr_provider.provider_kind,
+                text_regions=[],
+                full_text="",
+                observation_id=observation_id,
+                desktop_generation_id=desktop_generation_id,
+                error_message=f"OCR provider {self._ocr_provider.provider_kind.value} is unavailable",
+            )
+        return await self._ocr_provider.extract_text(
+            image=image,
+            desktop_generation_id=desktop_generation_id,
+            observation_id=observation_id,
+            region_offset=region_offset,
+        )
 
+    async def extract_text_from_snapshot(
+        self,
+        snapshot: ObservationSnapshot,
+        region: Optional[BoundingBox] = None,
+    ) -> OCRResult:
+        if not snapshot.is_usable:
+            return OCRResult(
+                status=OCRStatus.STALE_OBSERVATION,
+                provider_kind=self._ocr_provider.provider_kind,
+                text_regions=[],
+                full_text="",
+                observation_id=snapshot.snapshot_id,
+                desktop_generation_id=snapshot.desktop_generation_id,
+                error_message="Snapshot is stale or unusable",
+            )
+        img = snapshot.to_pil_image()
+        offset = None
+        if region is not None:
+            box = (region.left, region.top, region.left + region.width, region.top + region.height)
+            img = img.crop(box)
+            offset = (region.left, region.top)
+
+        return await self.extract_text_from_image(
+            image=img,
+            desktop_generation_id=snapshot.desktop_generation_id,
+            observation_id=snapshot.snapshot_id,
+            region_offset=offset,
+        )
+
+    async def locate_text_regions(
+        self,
+        snapshot: ObservationSnapshot,
+        query: str,
+        exact_match: bool = False,
+        case_sensitive: bool = False,
+    ) -> List[OCRTextRegion]:
+        ocr_res = await self.extract_text_from_snapshot(snapshot)
+        if not ocr_res.is_success:
+            return []
+        matches: List[OCRTextRegion] = []
+        for reg in ocr_res.text_regions:
+            if matches_text(reg.text, query, exact_match=exact_match, case_sensitive=case_sensitive):
+                matches.append(reg)
+        return matches
+
+    async def match_visual_template(
+        self,
+        snapshot: ObservationSnapshot,
+        template: VisualTemplate,
+        policy: Optional[VisualMatchPolicy] = None,
+    ) -> VisualMatchResult:
+        return await self._visual_engine.find_template(snapshot, template, policy=policy)

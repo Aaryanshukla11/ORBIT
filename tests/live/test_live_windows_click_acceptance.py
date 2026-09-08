@@ -116,15 +116,18 @@ async def test_live_physical_clicking_acceptance_matrix():
     # --- ACTION 1: Click Button 1 twice ---
     res1 = await pointer.click(b1_x, b1_y)
     assert res1 is True, "First pointer click on Button 1 must succeed"
-    for _ in range(5):
+    for _ in range(10):
         root.update()
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.03)
+
+    await asyncio.sleep(0.2)
+    root.update()
 
     res2 = await pointer.click(b1_x, b1_y)
     assert res2 is True, "Second pointer click on Button 1 must succeed"
-    for _ in range(5):
+    for _ in range(10):
         root.update()
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.03)
 
     assert btn1_clicks == 2, f"Physical clicks failed to actuate Button 1 callback (expected 2, got {btn1_clicks})"
 

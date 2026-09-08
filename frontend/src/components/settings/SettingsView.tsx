@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   SettingsTabIcon,
   ShieldIcon,
@@ -6,6 +6,7 @@ import {
   CheckCircleIcon,
   ModelsIcon,
   CpuChipIcon,
+  RefreshIcon,
 } from '../icons/Icons';
 import { ActiveModelCard } from '../models/ActiveModelCard';
 import { SourceSwitcher } from '../models/SourceSwitcher';
@@ -13,24 +14,42 @@ import { LocalModelsList } from '../models/LocalModelsList';
 import { CloudModelsList } from '../models/CloudModelsList';
 import { SystemModelStatus } from '../models/SystemModelStatus';
 import { useModelManager } from '../../context/ModelManagerContext';
+import { useSettings, SettingsSection } from '../../context/SettingsContext';
 
-export type SettingsSection = 'models' | 'agent' | 'network';
+export type { SettingsSection };
 
 export const SettingsView: React.FC = () => {
-  const [activeSection, setActiveSection] = useState<SettingsSection>('models');
-  const [autonomyMode, setAutonomyMode] = useState<'supervised' | 'autonomous'>('supervised');
-  const [safetyGates, setSafetyGates] = useState<boolean>(true);
-  const [maxSteps, setMaxSteps] = useState<number>(15);
-  const [gatewayPort, setGatewayPort] = useState<string>('8765');
-  const [savedToast, setSavedToast] = useState<boolean>(false);
+  const { settings, saveSettings, resetSettings, savedToast } = useSettings();
+  const [activeSection, setActiveSection] = useState<SettingsSection>(settings.activeSettingsSection || 'models');
+  const [autonomyMode, setAutonomyMode] = useState<'supervised' | 'autonomous'>(settings.autonomyMode);
+  const [safetyGates, setSafetyGates] = useState<boolean>(settings.safetyGates);
+  const [maxSteps, setMaxSteps] = useState<number>(settings.maxSteps);
+  const [gatewayPort, setGatewayPort] = useState<string>(settings.gatewayPort);
 
   const { sourceTab } = useModelManager();
 
-  const handleSave = () => {
-    setSavedToast(true);
-    setTimeout(() => {
-      setSavedToast(false);
-    }, 2000);
+  // Keep local state synchronized if settings change externally
+  useEffect(() => {
+    setAutonomyMode(settings.autonomyMode);
+    setSafetyGates(settings.safetyGates);
+    setMaxSteps(settings.maxSteps);
+    setGatewayPort(settings.gatewayPort);
+    setActiveSection(settings.activeSettingsSection);
+  }, [settings]);
+
+  const handleApply = () => {
+    saveSettings({
+      autonomyMode,
+      safetyGates,
+      maxSteps,
+      gatewayPort,
+      activeSettingsSection: activeSection,
+    });
+  };
+
+  const handleSectionChange = (section: SettingsSection) => {
+    setActiveSection(section);
+    saveSettings({ activeSettingsSection: section });
   };
 
   return (
@@ -44,15 +63,21 @@ export const SettingsView: React.FC = () => {
             <p style={styles.subtitle}>LLM providers, agent autonomy, and system runtime preferences</p>
           </div>
         </div>
-        <button type="button" style={styles.saveBtn} onClick={handleSave}>
-          Apply Changes
-        </button>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button type="button" style={styles.resetBtn} onClick={resetSettings} title="Reset all settings to defaults">
+            <RefreshIcon size={12} color="var(--text-muted)" />
+            <span>Reset</span>
+          </button>
+          <button type="button" style={styles.saveBtn} onClick={handleApply}>
+            Apply Changes
+          </button>
+        </div>
       </div>
 
       {savedToast && (
         <div style={styles.toast}>
           <CheckCircleIcon size={13} color="var(--accent-green)" />
-          <span>Configuration applied successfully</span>
+          <span>Settings saved permanently</span>
         </div>
       )}
 
@@ -67,7 +92,7 @@ export const SettingsView: React.FC = () => {
             fontWeight: activeSection === 'models' ? 700 : 500,
             boxShadow: activeSection === 'models' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
           }}
-          onClick={() => setActiveSection('models')}
+          onClick={() => handleSectionChange('models')}
         >
           <ModelsIcon size={14} color={activeSection === 'models' ? 'var(--accent-primary)' : 'var(--text-muted)'} />
           <span>AI Models & Providers</span>
@@ -82,7 +107,7 @@ export const SettingsView: React.FC = () => {
             fontWeight: activeSection === 'agent' ? 700 : 500,
             boxShadow: activeSection === 'agent' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
           }}
-          onClick={() => setActiveSection('agent')}
+          onClick={() => handleSectionChange('agent')}
         >
           <ShieldIcon size={14} color={activeSection === 'agent' ? 'var(--accent-primary)' : 'var(--text-muted)'} />
           <span>Agent & Autonomy</span>
@@ -97,7 +122,7 @@ export const SettingsView: React.FC = () => {
             fontWeight: activeSection === 'network' ? 700 : 500,
             boxShadow: activeSection === 'network' ? '0 1px 3px rgba(0,0,0,0.06)' : 'none',
           }}
-          onClick={() => setActiveSection('network')}
+          onClick={() => handleSectionChange('network')}
         >
           <ServerIcon size={14} color={activeSection === 'network' ? 'var(--accent-primary)' : 'var(--text-muted)'} />
           <span>Gateway & System</span>
@@ -280,6 +305,20 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '10.5px',
     color: 'var(--text-muted)',
     margin: 0,
+  },
+  resetBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '4px 8px',
+    borderRadius: 'var(--radius-md)',
+    backgroundColor: 'var(--bg-subtle)',
+    color: 'var(--text-muted)',
+    border: '1px solid var(--border-subtle)',
+    fontSize: '11px',
+    fontWeight: 500,
+    cursor: 'pointer',
+    transition: 'all var(--transition-fast)',
   },
   saveBtn: {
     padding: '4px 10px',

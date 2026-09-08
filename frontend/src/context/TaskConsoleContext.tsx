@@ -21,6 +21,8 @@ interface TaskConsoleContextType {
   isProcessing: boolean;
 }
 
+import { loadStoredSettings, saveStoredSettings } from './SettingsContext';
+
 const TaskConsoleContext = createContext<TaskConsoleContextType | undefined>(undefined);
 
 export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -29,8 +31,21 @@ export const TaskConsoleProvider: React.FC<{ children: ReactNode }> = ({ childre
   const [chatbotMessages, setChatbotMessages] = useState<ChatMessage[]>([]);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [activePlan, setActivePlan] = useState<ExecutionPlan | null>(null);
-  const [inputMode, setInputMode] = useState<InputMode>('task');
+  const [inputMode, setInputModeState] = useState<InputMode>(() => {
+    try {
+      const stored = loadStoredSettings();
+      return (stored.inputMode as InputMode) || 'task';
+    } catch {
+      return 'task';
+    }
+  });
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
+
+  const setInputMode = useCallback((mode: InputMode) => {
+    setInputModeState(mode);
+    const curr = loadStoredSettings();
+    saveStoredSettings({ ...curr, inputMode: mode });
+  }, []);
 
   // Active messages stream dynamically derived from inputMode
   const messages = inputMode === 'task' ? assistantMessages : chatbotMessages;

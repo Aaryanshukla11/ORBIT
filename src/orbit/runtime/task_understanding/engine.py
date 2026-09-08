@@ -17,11 +17,11 @@ from orbit.runtime.task_understanding.validator import TaskUnderstandingValidato
 
 
 class TaskUnderstandingEngine:
-    """Core facade for ORBIT Hybrid Task Understanding (Deterministic Fast-Path + Cognitive LLM Fallback).
+    """Core facade for ORBIT Hybrid Task Understanding.
 
-    Converts raw natural language prompts into validated, strongly-typed structured task intents.
-    - Deterministic fast path for known verbs and patterns.
-    - Cognitive LLM decomposition for complex, compound, or ambiguous instructions.
+    .. deprecated::
+        Superseded in production by the unified AI-native `AgentExecutionLoop` and `ModelRouter`.
+        Retained for backward compatibility, testing, and legacy intent parsing.
     """
 
     def __init__(

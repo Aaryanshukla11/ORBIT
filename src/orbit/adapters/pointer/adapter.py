@@ -318,6 +318,22 @@ class ProductionPointerAdapter(BaseCapabilityAdapter, PointerCapability):
             )
         raise PointerError(f"[{res.status.value}] Button-up execution failed: {res.status.value}")
 
+    async def button_down(
+        self,
+        button: str = "left",
+        cancellation_token: Optional[CancellationToken] = None,
+    ) -> bool:
+        """Alias for press_down for backward and cross-capability protocol compatibility."""
+        return await self.press_down(button=button, cancellation_token=cancellation_token)
+
+    async def button_up(
+        self,
+        button: str = "left",
+        cancellation_token: Optional[CancellationToken] = None,
+    ) -> bool:
+        """Alias for release_up for backward and cross-capability protocol compatibility."""
+        return await self.release_up(button=button, cancellation_token=cancellation_token)
+
     async def emergency_release_all(
         self,
         cancellation_token: Optional[CancellationToken] = None,
