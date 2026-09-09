@@ -91,6 +91,22 @@ from orbit.runtime.targeting import (
 from orbit.runtime.task_completion.goal_verifier import GoalVerifier
 from orbit.runtime.task_completion.models import TaskCompletionStatus
 from orbit.runtime.capabilities import FeasibilityAnalyzer
+from orbit.runtime.capabilities.execution import (
+    CapabilityExecutorRegistry,
+    StageRecoveryManager,
+    StrategyExecutionEngine,
+    StrategyExecutionResult,
+)
+from orbit.runtime.cognitive.decomposer import HierarchicalGoalDecomposer
+from orbit.runtime.cognitive.primitive_composer import PrimitiveComposer, ComposedPrimitiveSequence
+from orbit.runtime.cognitive.primitive_validator import PrimitiveValidator
+from orbit.runtime.cognitive.primitive_execution_controller import PrimitiveExecutionController
+from orbit.runtime.task_completion.multi_evidence_verifier import MultiEvidenceActionVerifier
+from orbit.runtime.agent.grounding_validator import GroundingValidator
+from orbit.runtime.cognitive.failure_analyst import CognitiveFailureAnalyst, FailureReport, FailureCategory
+from orbit.runtime.cognitive.runtime_feasibility import RuntimeFeasibilityEvaluator, RuntimeFeasibilityResult
+from orbit.runtime.environment.registry import EnvironmentProviderRegistry, get_default_environment_registry
+from orbit.runtime.world_model import AgentWorldModel, WorldModelUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +135,12 @@ class AgentExecutionLoop:
         event_bus: Optional[EventBus] = None,
         budget: Optional[ExecutionBudget] = None,
         feasibility_analyzer: Optional[FeasibilityAnalyzer] = None,
+        executor_registry: Optional[CapabilityExecutorRegistry] = None,
+        strategy_execution_engine: Optional[StrategyExecutionEngine] = None,
+        world_model: Optional[AgentWorldModel] = None,
+        goal_decomposer: Optional[HierarchicalGoalDecomposer] = None,
+        runtime_feasibility_evaluator: Optional[RuntimeFeasibilityEvaluator] = None,
+        environment_registry: Optional[EnvironmentProviderRegistry] = None,
     ) -> None:
         self._session_manager = model_session_manager
         if router is not None:
@@ -148,6 +170,70 @@ class AgentExecutionLoop:
         self._text_input_lock = asyncio.Lock()
         self._last_text_input_diagnostics: Dict[str, Any] = {}
 
+        # Authoritative Capability Execution Registry & Strategy Execution Engine (M1.9)
+        self._executor_registry = executor_registry or CapabilityExecutorRegistry.create_default(
+            workspace=self._workspace,
+            pointer=self._pointer,
+            keyboard=self._keyboard,
+            target_locator=self._target_locator,
+            capability_registry=getattr(self._feasibility_analyzer, "_registry", None),
+        )
+        self._strategy_execution_engine = strategy_execution_engine or StrategyExecutionEngine(
+            executor_registry=self._executor_registry,
+            observer=self._observer,
+            event_bus=self._event_bus,
+            recovery_manager=StageRecoveryManager(max_recovery_attempts=2),
+        )
+
+        # Phase 1: Primitive-Centric General Agent Foundation Components
+        self._world_model = world_model or AgentWorldModel()
+        self._environment_registry = environment_registry or get_default_environment_registry()
+        self._goal_decomposer = goal_decomposer or HierarchicalGoalDecomposer(model_session_manager=model_session_manager)
+        self._runtime_feasibility_evaluator = runtime_feasibility_evaluator or RuntimeFeasibilityEvaluator()
+
+        # Phase 2: Closed-Loop Primitive Engine Components
+        self._primitive_validator = PrimitiveValidator()
+        self._multi_evidence_verifier = MultiEvidenceActionVerifier()
+        self._primitive_composer = PrimitiveComposer(
+            model_client=self._session_manager,
+            validator=self._primitive_validator,
+        )
+        self._primitive_execution_controller = PrimitiveExecutionController(
+            validator=self._primitive_validator,
+            verifier=self._multi_evidence_verifier,
+            provider_registry=self._environment_registry,
+        )
+
+        # Phase 3: Target Grounding Infrastructure
+        self._grounding_validator = GroundingValidator()
+
+        # Phase 4: Failure Diagnosis & Replanning
+        self._failure_analyst = CognitiveFailureAnalyst()
+
+    @property
+    def failure_analyst(self) -> CognitiveFailureAnalyst:
+        return self._failure_analyst
+
+    @property
+    def grounding_validator(self) -> GroundingValidator:
+        return self._grounding_validator
+
+    @property
+    def primitive_validator(self) -> PrimitiveValidator:
+        return self._primitive_validator
+
+    @property
+    def multi_evidence_verifier(self) -> MultiEvidenceActionVerifier:
+        return self._multi_evidence_verifier
+
+    @property
+    def primitive_composer(self) -> PrimitiveComposer:
+        return self._primitive_composer
+
+    @property
+    def primitive_execution_controller(self) -> PrimitiveExecutionController:
+        return self._primitive_execution_controller
+
     @property
     def router(self) -> Optional[ModelRouter]:
         return self._router
@@ -160,12 +246,29 @@ class AgentExecutionLoop:
     def recovery_manager(self) -> AgentRecoveryManager:
         return self._recovery_manager
 
+    @property
+    def world_model(self) -> AgentWorldModel:
+        return self._world_model
+
+    @property
+    def goal_decomposer(self) -> HierarchicalGoalDecomposer:
+        return self._goal_decomposer
+
+    @property
+    def runtime_feasibility_evaluator(self) -> RuntimeFeasibilityEvaluator:
+        return self._runtime_feasibility_evaluator
+
+    @property
+    def environment_registry(self) -> EnvironmentProviderRegistry:
+        return self._environment_registry
+
     def set_model_session_manager(self, msm: ModelSessionManager) -> None:
         """Update the underlying ModelSessionManager and instantiate ModelRouter."""
         self._session_manager = msm
         self._router = ModelRouter(session_manager=msm)
         self._interpreter.set_model_session_manager(msm)
         self._decision_engine.set_model_session_manager(msm)
+        self._goal_decomposer.set_model_session_manager(msm)
         if hasattr(self._feasibility_analyzer, "environment_discovery"):
             self._feasibility_analyzer.environment_discovery.set_model_session_manager(msm)
 
@@ -175,6 +278,7 @@ class AgentExecutionLoop:
         self._session_manager = router.session_manager
         self._interpreter.set_model_session_manager(router.session_manager)
         self._decision_engine.set_model_session_manager(router.session_manager)
+        self._goal_decomposer.set_model_session_manager(router.session_manager)
         if hasattr(self._feasibility_analyzer, "environment_discovery"):
             self._feasibility_analyzer.environment_discovery.set_model_session_manager(router.session_manager)
 
@@ -206,6 +310,53 @@ class AgentExecutionLoop:
             objective.end_condition,
             objective.target_entities,
         )
+
+        # 1b. World Model & Hierarchical Goal Decomposition
+        self._world_model = self._world_model.model_copy(update={"session_id": session_id})
+        decomposed_plan = await self._goal_decomposer.decompose(objective, self._world_model)
+        logger.info(
+            "Goal Decomposed into %d milestone(s): %s",
+            len(decomposed_plan.sub_objectives),
+            [s.title for s in decomposed_plan.sub_objectives],
+        )
+
+        # 1c. Runtime Environment Feasibility Evaluation
+        if hasattr(self._observer, "observe"):
+            initial_obs = await self._observer.observe(objective)
+        elif hasattr(self._observer, "capture_observation"):
+            initial_obs = await self._observer.capture_observation()
+        else:
+            initial_obs = CurrentStateObservation()
+        self._world_model = WorldModelUpdater.update_from_observation(self._world_model, initial_obs)
+
+        for sub in decomposed_plan.sub_objectives:
+            rt_feas = await self._runtime_feasibility_evaluator.evaluate(
+                sub_objective=sub,
+                world_model=self._world_model,
+                observation=initial_obs,
+                provider_registry=self._environment_registry,
+            )
+            if not rt_feas.is_feasible:
+                logger.warning("[RUNTIME FEASIBILITY GATE] Sub-goal '%s' blocked: %s", sub.title, rt_feas.blocking_reason)
+                sm.transition_to(
+                    AgentLoopState.FAILED,
+                    cycle_number=0,
+                    failure_reason=rt_feas.blocking_reason,
+                )
+                return AgentExecutionResult(
+                    task_id=effective_task_id,
+                    objective=objective,
+                    is_success=False,
+                    total_steps=0,
+                    step_history=[],
+                    final_status=TaskCompletionStatus.UNSUPPORTED,
+                    failure_reason=rt_feas.blocking_reason,
+                    failure_code="RUNTIME_ENVIRONMENT_INFEASIBLE",
+                    elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                    state_transitions=sm.history,
+                    cycle_traces=[],
+                    recovery_records=[],
+                )
 
         # 2. Capability Discovery & Feasibility Analysis Gate
         feasibility = self._feasibility_analyzer.evaluate_feasibility(objective)
@@ -240,6 +391,85 @@ class AgentExecutionLoop:
                 feasibility.matched_strategy.estimated_success_probability,
             )
 
+        # -----------------------------------------------------------------
+        # 2b. Authoritative Strategy Execution Bridge (M1.9 Component 6)
+        # -----------------------------------------------------------------
+        if self._requires_authoritative_strategy_execution(feasibility.matched_strategy, context):
+            selected_strat = feasibility.matched_strategy
+            logger.info(
+                "[STRATEGY EXECUTION BRIDGE] Authoritatively executing selected strategy '%s' via StrategyExecutionEngine",
+                selected_strat.name,
+            )
+            sm.transition_to(AgentLoopState.OBSERVING, cycle_number=0)
+            strat_res = await self._strategy_execution_engine.execute_strategy(
+                strategy=selected_strat,
+                objective=objective,
+                context=context,
+                cancel_token=cancel_token,
+                session_id=session_id,
+            )
+
+            # Re-capture fresh desktop state to verify overall goal achievement
+            final_obs = await self._observer.observe(objective)
+            goal_verified = strat_res.is_success
+
+            if self._goal_verifier is not None:
+                try:
+                    g_eval = await self._goal_verifier.verify_goal_achievement(
+                        task_id=effective_task_id,
+                        objective=objective,
+                        current_observation=final_obs,
+                        step_history=[],
+                    )
+                    is_sat = getattr(g_eval, "is_satisfied", getattr(g_eval, "is_completed", False)) or (getattr(g_eval, "status", None) == TaskCompletionStatus.COMPLETED)
+                    goal_verified = bool(is_sat)
+                except Exception as g_err:
+                    logger.debug("Final goal verification error post-strategy execution: %s", g_err)
+
+            if strat_res.is_success and goal_verified:
+                sm.transition_to(
+                    AgentLoopState.EVALUATING_PROGRESS,
+                    cycle_number=len(strat_res.stage_results),
+                    goal_satisfied=True,
+                )
+                sm.transition_to(
+                    AgentLoopState.COMPLETED,
+                    cycle_number=len(strat_res.stage_results),
+                    goal_satisfied=True,
+                )
+                return AgentExecutionResult(
+                    task_id=effective_task_id,
+                    objective=objective,
+                    is_success=True,
+                    total_steps=len(strat_res.stage_results),
+                    step_history=[],
+                    final_status=TaskCompletionStatus.COMPLETED,
+                    elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                    state_transitions=sm.history,
+                    cycle_traces=[],
+                    recovery_records=[],
+                )
+            elif not strat_res.is_success:
+                sm.transition_to(
+                    AgentLoopState.FAILED,
+                    cycle_number=len(strat_res.stage_results),
+                    failure_reason=strat_res.failure_reason,
+                )
+                return AgentExecutionResult(
+                    task_id=effective_task_id,
+                    objective=objective,
+                    is_success=False,
+                    total_steps=len(strat_res.stage_results),
+                    step_history=[],
+                    final_status=TaskCompletionStatus.FAILED,
+                    failure_reason=strat_res.failure_reason,
+                    failure_code=strat_res.failure_code or "STRATEGY_EXECUTION_FAILED",
+                    elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                    state_transitions=sm.history,
+                    cycle_traces=[],
+                    recovery_records=[],
+                )
+
         step_history: List[CognitiveStepResult] = []
         cycle_traces: List[CycleExecutionTrace] = []
         consecutive_identical_actions = 0
@@ -248,7 +478,7 @@ class AgentExecutionLoop:
         target_resolution_failures = 0
         last_observed_id: Optional[str] = None
         step_idx = 0
-        current_obs: Optional[CurrentStateObservation] = None
+        current_obs: Optional[CurrentStateObservation] = initial_obs
 
         while step_idx < self._budget.max_total_actions:
             t_cycle_start = time.perf_counter()
@@ -465,12 +695,12 @@ class AgentExecutionLoop:
             # CRITICAL PRODUCTION INVARIANT 1: "MODEL DECISION IS NOT REALITY"
             # If model claims goal is satisfied or emits COMPLETE_GOAL, independently verify with GoalVerifier!
             is_model_claiming_completion = decision.is_goal_satisfied or (
-                decision.next_action and decision.next_action.action_type in (AbstractActionType.COMPLETE_GOAL, AbstractActionType.COMPLETE)
+                decision.next_action and decision.next_action.action_type == AbstractActionType.COMPLETE_GOAL
             )
 
             if is_model_claiming_completion:
                 logger.info("Model proposed goal completion at step %d; verifying reality against live desktop", step_idx)
-                goal_truly_verified = True
+                goal_truly_verified = False
                 if self._goal_verifier is not None:
                     try:
                         g_eval = await self._goal_verifier.verify_goal_achievement(
@@ -484,6 +714,13 @@ class AgentExecutionLoop:
                     except Exception as g_err:
                         logger.debug("Goal verification evaluation error: %s", g_err)
                         goal_truly_verified = False
+                else:
+                    # Guardrail 8 & 16: COMPLETE_GOAL is an intent signal only, not proof of success
+                    # If no goal verifier is present, verify based on verifiable outcome evidence
+                    goal_truly_verified = any(
+                        step.execution_result and step.execution_result.expected_effect_observed
+                        for step in step_history
+                    )
 
                 if goal_truly_verified:
                     sm.transition_to(
@@ -540,11 +777,7 @@ class AgentExecutionLoop:
                     # Do not exit; continue loop
 
             # Handle ABORT from model
-            if decision.next_action and decision.next_action.action_type in (
-                AbstractActionType.ABORT_TASK,
-                AbstractActionType.ABORT,
-                AbstractActionType.ABORT_UNACHIEVABLE,
-            ):
+            if decision.next_action and decision.next_action.action_type == AbstractActionType.ABORT_TASK:
                 sm.transition_to(
                     AgentLoopState.FAILED,
                     cycle_number=step_idx,
@@ -593,9 +826,7 @@ class AgentExecutionLoop:
             if action.outcome_contract is None and action.action_type not in (
                 AbstractActionType.WAIT,
                 AbstractActionType.COMPLETE_GOAL,
-                AbstractActionType.COMPLETE,
                 AbstractActionType.ABORT_TASK,
-                AbstractActionType.ABORT,
             ):
                 action.outcome_contract = ActionOutcomeContract(
                     expected_state_transition=f"{action.action_type.value}_completed",
@@ -656,9 +887,7 @@ class AgentExecutionLoop:
             if not is_redundant and step_history and action.action_type not in (
                 AbstractActionType.WAIT,
                 AbstractActionType.COMPLETE_GOAL,
-                AbstractActionType.COMPLETE,
                 AbstractActionType.ABORT_TASK,
-                AbstractActionType.ABORT,
             ):
                 last_step = step_history[-1]
                 if (
@@ -846,7 +1075,6 @@ class AgentExecutionLoop:
             # Only pointer-based interaction actions require physical screen coordinate grounding
             requires_coordinates = action.action_type in (
                 AbstractActionType.CLICK,
-                AbstractActionType.CLICK_ELEMENT,
                 AbstractActionType.DOUBLE_CLICK,
                 AbstractActionType.RIGHT_CLICK,
             )
@@ -910,7 +1138,19 @@ class AgentExecutionLoop:
             )
 
             cycle_trace.dispatch_attempted = True
-            dispatch_success, dispatch_err = await self._dispatch_physical_action(action, current_obs, resolved_coords, cancel_token)
+            controller_res = await self._primitive_execution_controller.execute_primitive(
+                action=action,
+                pre_observation=current_obs,
+                objective=objective,
+                grounding_fn=self._resolve_target_coordinates,
+                safety_gate_fn=self._evaluate_safety_gate,
+                dispatch_fn=self._dispatch_physical_action,
+                observe_fn=self._observer.observe,
+                cancel_token=cancel_token,
+            )
+            dispatch_success = controller_res.execution_outcome.dispatch_success
+            dispatch_err = controller_res.execution_outcome.error_message
+            post_obs = controller_res.post_observation
             cycle_trace.dispatch_success = dispatch_success
             cycle_trace.dispatch_error = dispatch_err
 
@@ -926,11 +1166,7 @@ class AgentExecutionLoop:
                 dispatch_success=dispatch_success,
             )
 
-            # Settlement wait
-            await asyncio.sleep(0.35)
-
-            # FRESH POST-ACTION OBSERVATION CAPTURE
-            post_obs = await self._observer.observe(objective)
+            # Observation advancement verification (from controller's fresh observation)
             cycle_trace.post_observation_id = post_obs.observation_id
             cycle_trace.post_freshness_validated = (post_obs.observation_id != current_obs.observation_id)
 
@@ -995,6 +1231,18 @@ class AgentExecutionLoop:
                 post_observation=post_obs.desktop_observation,
             )
 
+            # Phase 2: Multi-Evidence Semantic Action Verification
+            me_res = await self._multi_evidence_verifier.verify_action_effect(
+                action=action,
+                pre_obs=current_obs,
+                post_obs=post_obs,
+            )
+            if me_res.is_verified and not outcome.expected_effect_observed:
+                outcome.expected_effect_observed = True
+                outcome.verified = True
+                outcome.outcome_status = OutcomeStatus.EFFECT_VERIFIED
+                outcome.verification_reason = me_res.verification_reason
+
             exec_result = ActionExecutionResult(
                 action_id=action.action_id,
                 dispatch_success=outcome.dispatch_success,
@@ -1015,7 +1263,7 @@ class AgentExecutionLoop:
             cycle_trace.verification_reason = outcome.verification_reason or ""
 
             # Structured diagnostics for TYPE_TEXT actions (Part 1)
-            if action.action_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE):
+            if action.action_type == AbstractActionType.TYPE_TEXT:
                 t_diag = getattr(self, "_last_text_input_diagnostics", {})
                 txt_param = str(action.parameters.get("text", action.parameters.get("query", "")))
                 logger.info(
@@ -1055,8 +1303,24 @@ class AgentExecutionLoop:
             if not exec_result.expected_effect_observed:
                 logger.warning("Action %s dispatched but expected effect was NOT observed; evaluating recovery", action.action_id)
 
+                # Phase 4: Diagnostic Root-Cause Analysis (Guardrail 9)
+                failure_rep = self._failure_analyst.analyze_failure(
+                    action=action,
+                    pre_obs=current_obs,
+                    post_obs=post_obs,
+                    exec_outcome=outcome,
+                    world_model=self._world_model,
+                )
+                logger.info(
+                    "[FAILURE ANALYST] Diagnosis for action %s: %s [%s] -> Remediation: %s",
+                    action.action_id,
+                    failure_rep.diagnosis,
+                    failure_rep.category.value,
+                    failure_rep.suggested_remediation_direction,
+                )
+
                 # Part 6: Controlled Post-Type Recovery
-                if action.action_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE) and getattr(action, "_typing_recovery_attempts", 0) < 2:
+                if action.action_type == AbstractActionType.TYPE_TEXT and getattr(action, "_typing_recovery_attempts", 0) < 2:
                     action._typing_recovery_attempts = getattr(action, "_typing_recovery_attempts", 0) + 1
                     logger.info("Executing controlled text recovery attempt %d/2 for action %s", action._typing_recovery_attempts, action.action_id)
                     
@@ -1281,6 +1545,22 @@ class AgentExecutionLoop:
         )
         return exec_res, post_obs
 
+    def _evaluate_safety_gate(
+        self,
+        action: AbstractAction,
+        resolved_coords: Optional[Tuple[int, int]] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """Pre-dispatch safety gate guarding physical OS execution."""
+        if resolved_coords is not None:
+            x, y = resolved_coords
+            if x < 0 or y < 0:
+                return False, f"Coordinates ({x}, {y}) out of screen bounds"
+        if action.action_type == AbstractActionType.LAUNCH_APPLICATION:
+            app = str(action.parameters.get("application_name", "")).lower()
+            if any(danger in app for danger in ("format", "diskpart", "shutdown", "regedit")):
+                return False, f"Destructive system application blocked by safety gate: '{app}'"
+        return True, None
+
     async def _dispatch_physical_action(
         self,
         action: AbstractAction,
@@ -1296,8 +1576,8 @@ class AgentExecutionLoop:
 
         logger.info(
             "PHYSICAL ACTION DISPATCH: action_id=%s, type=%s, params=%s",
-            action.action_id,
-            act_type.value,
+            getattr(action, "action_id", "act"),
+            act_type.value if hasattr(act_type, "value") else str(act_type),
             params,
         )
 
@@ -1401,11 +1681,11 @@ class AgentExecutionLoop:
                 else:
                     dispatch_success = True
 
-            elif act_type in (AbstractActionType.DRAW_STROKES, AbstractActionType.DRAW):
+            elif act_type == AbstractActionType.DRAW_STROKES:
                 shape = str(params.get("shape", "cube"))
                 dispatch_success = await self._execute_drawing_strokes(shape, cancel_token)
 
-            elif act_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE):
+            elif act_type == AbstractActionType.TYPE_TEXT:
                 text = str(params.get("text", params.get("query", "")))
                 press_enter = bool(params.get("press_enter", False))
                 pref_strategy = params.get("strategy")
@@ -1418,7 +1698,7 @@ class AgentExecutionLoop:
                     cancel_token=cancel_token,
                 )
 
-            elif act_type in (AbstractActionType.CLICK, AbstractActionType.CLICK_ELEMENT):
+            elif act_type == AbstractActionType.CLICK:
                 coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
                 if coords and self._pointer is not None:
                     await self._pointer.move_to(coords[0], coords[1])
@@ -1429,7 +1709,8 @@ class AgentExecutionLoop:
                     await self._pointer.click()
                     dispatch_success = True
                 else:
-                    dispatch_success = True
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
 
             elif act_type == AbstractActionType.DOUBLE_CLICK:
                 coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
@@ -1445,7 +1726,8 @@ class AgentExecutionLoop:
                     await self._pointer.click()
                     dispatch_success = True
                 else:
-                    dispatch_success = True
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
 
             elif act_type == AbstractActionType.RIGHT_CLICK:
                 coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
@@ -1461,9 +1743,10 @@ class AgentExecutionLoop:
                     await self._pointer.click()
                     dispatch_success = True
                 else:
-                    dispatch_success = True
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
 
-            elif act_type in (AbstractActionType.SEND_HOTKEY, AbstractActionType.HOTKEY):
+            elif act_type == AbstractActionType.SEND_HOTKEY:
                 combination = str(params.get("hotkey", params.get("combination", "ctrl+s")))
                 if self._keyboard is not None:
                     keys = combination.lower().split("+")
@@ -1473,27 +1756,34 @@ class AgentExecutionLoop:
                         await self._keyboard.release_key(k.strip())
                     dispatch_success = True
                 else:
-                    dispatch_success = True
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: KeyboardCapability"
 
             elif act_type == AbstractActionType.SCROLL:
                 direction = str(params.get("direction", "down"))
                 if self._pointer is not None and hasattr(self._pointer, "scroll"):
                     await self._pointer.scroll(direction=direction, amount=120)
-                dispatch_success = True
+                    dispatch_success = True
+                elif self._pointer is not None:
+                    dispatch_success = True
+                else:
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
 
             elif act_type in (AbstractActionType.WAIT, AbstractActionType.WAIT_SETTLE):
                 dur_ms = float(params.get("duration_sec", 0.5)) * 1000.0 if "duration_sec" in params else float(params.get("duration_ms", 500))
                 await asyncio.sleep(dur_ms / 1000.0)
                 dispatch_success = True
 
-            elif act_type in (AbstractActionType.COMPLETE_GOAL, AbstractActionType.COMPLETE):
+            elif act_type == AbstractActionType.COMPLETE_GOAL:
                 dispatch_success = True
 
             else:
-                dispatch_success = True
+                dispatch_success = False
+                err_msg = f"UNKNOWN_ACTION_TYPE: {act_type.value if hasattr(act_type, 'value') else act_type}"
 
         except Exception as ex:
-            logger.warning("Action physical dispatch error for %s: %s", act_type.value, ex, exc_info=True)
+            logger.warning("Action physical dispatch error for %s: %s", act_type.value if hasattr(act_type, "value") else act_type, ex, exc_info=True)
             dispatch_success = False
             err_msg = str(ex)
 
@@ -1522,12 +1812,30 @@ class AgentExecutionLoop:
                     res = await res_raw if inspect.isawaitable(res_raw) else res_raw
                     is_res = getattr(res, "is_resolved", False) or (getattr(res, "status", None) == TargetResolutionStatus.RESOLVED if hasattr(res, "status") else False)
                     tgt = getattr(res, "target", None) or getattr(res, "resolved_target", None)
+                    cand_coords = None
                     if is_res and tgt and hasattr(tgt, "bounding_box"):
-                        return (int(tgt.bounding_box.center_x), int(tgt.bounding_box.center_y))
+                        cand_coords = (int(tgt.bounding_box.center_x), int(tgt.bounding_box.center_y))
                     elif is_res and tgt and hasattr(tgt, "bounds"):
-                        return (int(tgt.bounds.center_x), int(tgt.bounds.center_y))
+                        cand_coords = (int(tgt.bounds.center_x), int(tgt.bounds.center_y))
                     elif is_res and tgt and hasattr(tgt, "safe_point"):
-                        return (int(tgt.safe_point.x), int(tgt.safe_point.y))
+                        cand_coords = (int(tgt.safe_point.x), int(tgt.safe_point.y))
+
+                    if cand_coords is not None:
+                        # Pass through GroundingValidator (Guardrail 4)
+                        g_val = self._grounding_validator.validate_grounding(
+                            target=target,
+                            resolved_target=tgt,
+                            candidate_coords=cand_coords,
+                        )
+                        if g_val.is_valid and g_val.validated_point:
+                            return g_val.validated_point
+                        else:
+                            logger.warning(
+                                "[GROUNDING VALIDATOR] Rejected candidate coordinates %s for target '%s': %s",
+                                cand_coords,
+                                target.name,
+                                g_val.failure_reason,
+                            )
         except Exception as ex:
             logger.debug("TargetLocator resolution notice: %s", ex)
 
@@ -1988,4 +2296,30 @@ class AgentExecutionLoop:
                         pass
                 diag["completion_time_ns"] = time.perf_counter_ns()
                 self._last_text_input_diagnostics = diag
+
+    def _requires_authoritative_strategy_execution(
+        self,
+        strategy: Optional[StrategyOption],
+        context: Dict[str, Any],
+    ) -> bool:
+        """Determine whether a selected strategy should be authoritatively executed by StrategyExecutionEngine."""
+        if strategy is None or not strategy.stages:
+            return False
+
+        # If explicitly opted into authoritative strategy execution
+        if context.get("authoritative_strategy_execution") is True or context.get("use_strategy_engine") is True:
+            return True
+
+        # Composite workflows with multiple sub-stages or image generation
+        if strategy.strategy_id.startswith("STRAT_COMPOSITE") or "IMAGE_GENERATE_AND_INSERT" in strategy.required_capabilities:
+            return True
+
+        # Workflows that declare dynamic output references (e.g. {{stage_0...}})
+        for stage in strategy.stages:
+            for v in stage.parameters.values():
+                if isinstance(v, str) and "{{" in v and "}}" in v:
+                    return True
+
+        return False
+
 

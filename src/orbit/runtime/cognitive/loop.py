@@ -407,26 +407,18 @@ class CognitiveExecutionLoop:
                         await asyncio.sleep(0.02)
                     dispatch_success = True
                 else:
-                    dispatch_success = True
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: KeyboardCapability"
 
             elif act_type == AbstractActionType.CLICK_ELEMENT:
                 # Dynamic Runtime Target Resolution (SemanticTarget -> Physical Coordinates)
                 coords = await self._resolve_target_coordinates(action.target)
                 logger.info(
-                    "TARGET RESOLUTION:\n"
-                    "  resolved x/y: %s\n"
-                    "  target window HWND: %s\n"
-                    "  foreground HWND: %s",
-                    coords,
-                    params.get("target_hwnd"),
-                    pre_obs.active_window_hwnd,
-                )
-                logger.info(
                     "DISPATCH:\n"
                     "  adapter class: %s\n"
                     "  dispatch function: pointer.click\n"
                     "  native API used: user32.SendInput (MOUSEINPUT)\n"
-                    "  coordinates: %s",
+                    "  resolved coordinates: %s",
                     type(self._pointer).__name__ if self._pointer else "None",
                     coords,
                 )
@@ -440,7 +432,8 @@ class CognitiveExecutionLoop:
                     await self._pointer.click()
                     dispatch_success = True
                 else:
-                    dispatch_success = True
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
 
             elif act_type == AbstractActionType.SEND_HOTKEY:
                 combination = str(params.get("combination", "ctrl+s"))
@@ -461,7 +454,8 @@ class CognitiveExecutionLoop:
                         await self._keyboard.release_key(k.strip())
                     dispatch_success = True
                 else:
-                    dispatch_success = True
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: KeyboardCapability"
 
             elif act_type == AbstractActionType.WAIT_SETTLE:
                 dur_ms = float(params.get("duration_ms", 500))
@@ -470,6 +464,10 @@ class CognitiveExecutionLoop:
 
             elif act_type == AbstractActionType.COMPLETE_GOAL:
                 dispatch_success = True
+
+            else:
+                dispatch_success = False
+                err_msg = f"UNKNOWN_ACTION_TYPE: {act_type.value if hasattr(act_type, 'value') else act_type}"
 
         except Exception as ex:
             logger.warning("Action dispatch error for %s: %s", act_type.value, ex, exc_info=True)

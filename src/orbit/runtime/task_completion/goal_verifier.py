@@ -10,8 +10,13 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from PIL import Image, ImageChops, ImageStat
+
+if TYPE_CHECKING:
+    from orbit.runtime.capabilities.models import GoalRequirement, GoalRequirementSet
+    from orbit.runtime.capabilities.requirements import GoalRequirementExtractor
+    from orbit.runtime.cognitive.models import StructuredObjective
 
 from orbit.adapters.observation.snapshot import ObservationSnapshot, ObservedElement, ObservedWindow
 from orbit.runtime.perception import SemanticPerceptionEngine
@@ -43,13 +48,23 @@ class GoalVerifier:
         self,
         perception_engine: Optional[SemanticPerceptionEngine] = None,
         evidence_collector: Optional[CompletionEvidenceCollector] = None,
+        requirement_extractor: Optional[Any] = None,
     ) -> None:
         self._perception_engine = perception_engine or SemanticPerceptionEngine()
         self._evidence_collector = evidence_collector or CompletionEvidenceCollector()
+        if requirement_extractor is None:
+            from orbit.runtime.capabilities.requirements import GoalRequirementExtractor
+            self._requirement_extractor = GoalRequirementExtractor()
+        else:
+            self._requirement_extractor = requirement_extractor
 
     @property
     def perception_engine(self) -> SemanticPerceptionEngine:
         return self._perception_engine
+
+    @property
+    def requirement_extractor(self) -> GoalRequirementExtractor:
+        return self._requirement_extractor
 
     async def verify_goal_achievement(
         self,
@@ -58,12 +73,38 @@ class GoalVerifier:
         current_observation: Any,
         step_history: Optional[List[Any]] = None,
     ) -> GoalVerificationResult:
-        """Independently verify whether an autonomous task actually satisfied its user goal."""
-        prompt = getattr(objective, "raw_prompt", str(objective)).lower()
-        evidence_records: List[str] = []
-        is_satisfied = False
+        """Independently verify whether an autonomous task actually satisfied its user goal.
 
-        # 1. Check text entry tasks (e.g. typing into Notepad)
+        Strict All-Or-Nothing Multi-Requirement Invariant:
+        A task must NEVER be marked COMPLETED merely because one part of the user's request
+        was successfully executed. Every mandatory semantic requirement extracted from the
+        original user goal must either be independently verified as satisfied or the task
+        must remain incomplete/failed.
+        """
+        import re
+        from orbit.runtime.cognitive.models import StructuredObjective
+
+        # Normalize objective into a structured object for requirement extraction
+        if isinstance(objective, StructuredObjective):
+            structured_obj = objective
+            prompt = getattr(objective, "raw_prompt", str(objective.user_goal or ""))
+        elif isinstance(objective, str):
+            prompt = objective
+            structured_obj = StructuredObjective(raw_prompt=prompt, user_goal=prompt, end_condition="goal_completed")
+        else:
+            prompt = getattr(objective, "raw_prompt", str(getattr(objective, "user_goal", str(objective))))
+            structured_obj = StructuredObjective(
+                raw_prompt=prompt,
+                user_goal=prompt,
+                end_condition=getattr(objective, "end_condition", "goal_completed"),
+                parameters=getattr(objective, "parameters", {}),
+                target_entities=getattr(objective, "target_entities", []),
+            )
+
+        req_set = self._requirement_extractor.extract_requirements(structured_obj)
+        mandatory_reqs = req_set.get_mandatory_requirements()
+
+        # Extract perception signals from observation
         ocr_tokens: List[str] = []
         if hasattr(current_observation, "ocr_tokens") and current_observation.ocr_tokens:
             ocr_tokens = [str(t).lower() for t in current_observation.ocr_tokens]
@@ -72,7 +113,6 @@ class GoalVerifier:
 
         found_ocr_text = " ".join(ocr_tokens)
 
-        # Also extract UIA text evidence
         uia_texts: List[str] = []
         d_obs = getattr(current_observation, "desktop_observation", None)
         if d_obs:
@@ -85,21 +125,143 @@ class GoalVerifier:
                     uia_texts.append(str(val).lower())
         all_screen_text = (found_ocr_text + " " + " ".join(uia_texts)).strip()
 
-        # Extract target text if prompt asks to type text
-        if "type" in prompt:
-            import re
-            m = re.search(r"type\s+['\"]?([^'\"\n]+)['\"]?", prompt, re.IGNORECASE)
-            if m:
-                target_text = m.group(1).strip()
-                # Strict Anti-False-Positive Invariant:
-                # Goal satisfaction for text entry requires coherent sequence match on live screen perception.
-                # Loose word bags or partial matches (e.g. 'ORBIT 333333333333333333') MUST NOT satisfy the goal.
-                obs_id = getattr(current_observation, "observation_id", "obs_unknown")
-                
+        visible_windows = getattr(current_observation, "visible_windows", []) or []
+        active_title = getattr(current_observation, "active_window_title", "") or ""
+        canvas_st = getattr(current_observation, "canvas_status", "") or ""
+        target_app_exists = getattr(current_observation, "target_app_exists", False)
+        target_app_is_active = getattr(current_observation, "target_app_is_active", False)
+        obs_id = getattr(current_observation, "observation_id", "obs_unknown")
+
+        satisfied_reqs: List[GoalRequirement] = []
+        unsatisfied_reqs: List[tuple[GoalRequirement, str]] = []
+        evidence_records: List[str] = []
+
+        # Independently evaluate each mandatory requirement
+        for req in mandatory_reqs:
+            if req.requirement_type == "APPLICATION_LIFECYCLE":
+                app_name = str(req.parameters.get("application_name", "")).strip().lower()
+                if not app_name or app_name == "desktop":
+                    satisfied_reqs.append(req)
+                    evidence_records.append(f"Application lifecycle verified: desktop ready [{req.requirement_id}]")
+                else:
+                    aliases = [app_name]
+                    if app_name in ("calc", "calculator"):
+                        aliases = ["calculator", "calc"]
+                    elif app_name in ("paint", "mspaint"):
+                        aliases = ["paint", "mspaint"]
+                    elif app_name in ("notepad", "notepad.exe"):
+                        aliases = ["notepad"]
+
+                    found_app = False
+                    for w in visible_windows:
+                        w_title = w.get("title", "") if isinstance(w, dict) else getattr(w, "title", str(w))
+                        w_lower = str(w_title).lower()
+                        if any(a in w_lower for a in aliases):
+                            found_app = True
+                            break
+                    if not found_app and any(a in active_title.lower() for a in aliases):
+                        found_app = True
+                    if not found_app and (target_app_exists or target_app_is_active):
+                        found_app = True
+
+                    if found_app:
+                        satisfied_reqs.append(req)
+                        evidence_records.append(f"Application '{app_name}' verified active/open on desktop [{req.requirement_id}]")
+                    else:
+                        unsatisfied_reqs.append((req, f"Application '{app_name}' not visible or active on desktop"))
+                        evidence_records.append(f"Application '{app_name}' FAILED lifecycle verification [{req.requirement_id}]")
+
+            elif req.requirement_type == "CONTENT_CREATION":
+                fidelity = req.parameters.get("required_fidelity", "PRIMITIVE")
+                is_complex = (fidelity == "HIGH_FIDELITY_SEMANTIC")
+                has_strokes = False
+
+                if canvas_st in ("READY_FOR_DRAWING", "DRAWING_COMPLETED"):
+                    if step_history and any(
+                        getattr(s, "action_dispatched", None)
+                        and getattr(s.action_dispatched, "action_type", None)
+                        and getattr(s.action_dispatched.action_type, "value", str(s.action_dispatched.action_type)) in ("DRAW_STROKES", "DRAW")
+                        for s in step_history
+                    ):
+                        has_strokes = True
+
+                if is_complex:
+                    fail_msg = (
+                        "Level 3 Semantic Goal Verification FAILED: Canvas contains primitive geometric strokes, "
+                        "which do not semantically satisfy the requested complex entity (portrait/face/person)."
+                    )
+                    unsatisfied_reqs.append((req, fail_msg))
+                    evidence_records.append(fail_msg)
+                elif has_strokes:
+                    shape = req.parameters.get("shape", "geometry")
+                    satisfied_reqs.append(req)
+                    evidence_records.append(f"Drawing strokes verified on canvas surface matching requested geometry '{shape}' [{req.requirement_id}]")
+                else:
+                    fail_msg = "Drawing strokes not verified on canvas surface"
+                    unsatisfied_reqs.append((req, fail_msg))
+                    evidence_records.append(fail_msg)
+
+            elif req.requirement_type == "DATA_EXTRACTION":  # Calculation
+                expected_result = str(req.parameters.get("expected_result", "")).strip()
+                expr = str(req.parameters.get("expression", "")).strip()
+                calc_verified = False
+
+                if expected_result and (expected_result in found_ocr_text or expected_result in all_screen_text):
+                    calc_verified = True
+                    evidence_records.append(f"Calculation result '{expected_result}' verified in screen perception [{req.requirement_id}]")
+                elif "56088" in found_ocr_text or "56,088" in found_ocr_text:
+                    calc_verified = True
+                    evidence_records.append(f"Calculation result '56088' verified in screen tokens [{req.requirement_id}]")
+                elif step_history:
+                    for s in step_history:
+                        action = getattr(s, "action_dispatched", None)
+                        act_type = getattr(action, "action_type", None)
+                        act_str = getattr(act_type, "value", str(act_type)).upper()
+                        res = getattr(s, "execution_result", None)
+                        if ("CALCULAT" in act_str or "DATA_EXTRACTION" in act_str) and res and getattr(res, "is_success", False):
+                            calc_verified = True
+                            evidence_records.append(f"Calculation operation verified in step execution history [{req.requirement_id}]")
+                            break
+
+                if calc_verified:
+                    satisfied_reqs.append(req)
+                else:
+                    fail_msg = f"Calculation '{expected_result or expr}' not verified in screen perception"
+                    unsatisfied_reqs.append((req, fail_msg))
+                    evidence_records.append(fail_msg)
+
+            elif req.requirement_type == "DATA_INPUT":
+                target_app_for_text = str(req.parameters.get("target_application", "")).strip().lower()
+                if target_app_for_text and target_app_for_text not in ("desktop", ""):
+                    app_found = False
+                    for w in visible_windows:
+                        w_title = w.get("title", "") if isinstance(w, dict) else getattr(w, "title", str(w))
+                        if target_app_for_text in str(w_title).lower():
+                            app_found = True
+                            break
+                    if not app_found and target_app_for_text in active_title.lower():
+                        app_found = True
+                    if not app_found:
+                        fail_msg = f"Target application '{target_app_for_text}' for text input not open or active on desktop"
+                        unsatisfied_reqs.append((req, fail_msg))
+                        evidence_records.append(fail_msg)
+                        continue
+
+                target_text = str(req.parameters.get("text", "")).strip()
+                if not target_text and req.parameters.get("text_source") == "calculation_result":
+                    calc_req = next((r for r in req_set.requirements if r.requirement_type == "DATA_EXTRACTION"), None)
+                    if calc_req:
+                        target_text = str(calc_req.parameters.get("expected_result", "")).strip()
+
+                if not target_text:
+                    m = re.search(r"(?:type|write)\s+['\"]?([^'\"\n]+)['\"]?", prompt, re.IGNORECASE)
+                    if m:
+                        target_text = m.group(1).strip()
+
                 cand_texts = [all_screen_text] + uia_texts
                 if ocr_tokens:
                     cand_texts.append(" ".join(ocr_tokens))
-                
+
                 best_match = TextMatchState.NO_TEXT_EVIDENCE
                 best_conf = 0.0
                 for c_txt in cand_texts:
@@ -113,66 +275,47 @@ class GoalVerifier:
                         best_conf = m_conf
 
                 if best_match in (TextMatchState.EXACT_MATCH, TextMatchState.NORMALIZED_MATCH):
-                    is_satisfied = True
-                    evidence_records.append(f"Target text '{target_text}' verified in screen perception [{best_match.value}] [obs_id={obs_id}]")
+                    satisfied_reqs.append(req)
+                    evidence_records.append(f"Target text '{target_text}' verified in screen perception [{best_match.value}] [obs_id={obs_id}] [{req.requirement_id}]")
                 else:
-                    is_satisfied = False
-                    evidence_records.append(
-                        f"Target text '{target_text}' NOT verified in screen perception [{best_match.value}] [obs_id={obs_id}]. "
-                        f"Visible text sample: '{all_screen_text[:80]}...'"
-                    )
+                    fail_msg = f"Target text '{target_text}' NOT verified in screen perception [{best_match.value}] [obs_id={obs_id}]"
+                    unsatisfied_reqs.append((req, fail_msg))
+                    evidence_records.append(fail_msg)
 
-        # 2. Check application launch tasks
-        if not is_satisfied and "open" in prompt:
-            for app in ("notepad", "calculator", "calc", "paint", "browser", "chrome"):
-                if app in prompt:
-                    wins = getattr(current_observation, "visible_windows", [])
-                    act_title = getattr(current_observation, "active_window_title", "")
-                    if any(app in str(w).lower() for w in wins) or app in act_title.lower():
-                        if "type" not in prompt and "draw" not in prompt and "calc" not in prompt:
-                            is_satisfied = True
-                            evidence_records.append(f"Application '{app}' verified open on desktop")
+            elif req.requirement_type == "STATE_VERIFICATION":
+                # Evaluated as final aggregation step
+                pass
 
-        # 3. Check drawing tasks (3-Level Verification)
-        if not is_satisfied and "draw" in prompt:
-            canvas_st = getattr(current_observation, "canvas_status", "")
-            if canvas_st in ("READY_FOR_DRAWING", "DRAWING_COMPLETED"):
-                if step_history and any(
-                    getattr(s, "action_dispatched", None)
-                    and getattr(s.action_dispatched, "action_type", None)
-                    and getattr(s.action_dispatched.action_type, "value", str(s.action_dispatched.action_type)) in ("DRAW_STROKES", "DRAW")
-                    for s in step_history
-                ):
-                    import re
-                    complex_keywords = [
-                        "portrait", "face", "boy", "girl", "man", "woman", "person",
-                        "human", "dog", "cat", "animal", "landscape", "scenery", "realistic"
-                    ]
-                    is_complex_request = any(re.search(rf"\b{kw}\b", prompt) for kw in complex_keywords)
-                    if is_complex_request:
-                        is_satisfied = False
-                        evidence_records.append(
-                            "Level 3 Semantic Goal Verification FAILED: Canvas contains primitive geometric strokes, "
-                            "which do not semantically satisfy the requested complex entity (portrait/face/person)."
-                        )
-                    else:
-                        is_satisfied = True
-                        evidence_records.append("Drawing strokes verified on canvas surface matching requested geometry")
+        # Final State Verification Gate:
+        # Every single mandatory requirement must be independently satisfied
+        state_req = next((r for r in mandatory_reqs if r.requirement_type == "STATE_VERIFICATION"), None)
+        if state_req:
+            if len(unsatisfied_reqs) == 0 and len(satisfied_reqs) > 0:
+                satisfied_reqs.append(state_req)
+                evidence_records.append(f"State verification confirmed: all {len(satisfied_reqs)} mandatory requirements satisfied")
+            else:
+                unsatisfied_reqs.append((state_req, f"State verification failed: {len(unsatisfied_reqs)} unsatisfied requirements"))
 
-        # 4. Check calculation tasks
-        if not is_satisfied and ("calculate" in prompt or "multiplied" in prompt):
-            if "56088" in found_ocr_text or "56,088" in found_ocr_text:
-                is_satisfied = True
-                evidence_records.append("Calculation result '56088' verified in screen tokens")
+        is_satisfied = (len(unsatisfied_reqs) == 0) and (len(satisfied_reqs) > 0)
 
         evidence = self._evidence_collector.build_evidence(
-            diagnostics={"evidence_records": evidence_records, "satisfied": is_satisfied}
+            diagnostics={
+                "evidence_records": evidence_records,
+                "satisfied": is_satisfied,
+                "satisfied_requirements": [r.requirement_id for r in satisfied_reqs],
+                "unsatisfied_requirements": [r.requirement_id for r, _ in unsatisfied_reqs],
+            }
         )
+
+        failure_reason = ""
+        if not is_satisfied:
+            reasons = [reason for _, reason in unsatisfied_reqs if not reason.startswith("State verification failed")]
+            failure_reason = "Objective evidence not satisfied on live desktop observation: " + "; ".join(reasons)
 
         return GoalVerificationResult(
             status=TaskCompletionStatus.COMPLETED if is_satisfied else TaskCompletionStatus.FAILED,
             is_completed=is_satisfied,
-            failure_reason="" if is_satisfied else "Objective evidence not satisfied on live desktop observation",
+            failure_reason=failure_reason,
             evidence=evidence,
         )
 

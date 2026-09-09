@@ -52,6 +52,13 @@ class CurrentStateObserver:
             include_screenshot_base64=include_base64,
         )
 
+    async def capture_observation(
+        self,
+        objective: Optional[StructuredObjective] = None,
+    ) -> CurrentStateObservation:
+        """Capture live state observation snapshot."""
+        return await self.observe(objective)
+
     async def observe(
         self,
         objective: Optional[StructuredObjective] = None,

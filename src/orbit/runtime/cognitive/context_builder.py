@@ -296,3 +296,127 @@ class AgentReasoningContextBuilder:
             temperature=temperature,
         )
         return request, attached_vision
+
+
+# ==============================================================================
+# STRUCTURED AGENT CONTEXT SNAPSHOT (FOR PRIMITIVE COMPOSER & PLANNER)
+# ==============================================================================
+
+from pydantic import BaseModel, Field
+from orbit.runtime.world_model.model import AgentWorldModel, ControlSummary
+
+
+class StructuredAgentContext(BaseModel):
+    """Rich structured observation and capability snapshot for Planner and PrimitiveComposer.
+
+    Strictly bounded according to Guardrail 11 to prevent context bloat.
+    """
+
+    # Active Window & System Context
+    active_process_name: str = Field(default="")
+    active_window_title: str = Field(default="")
+    active_window_bounds: Optional[Tuple[int, int, int, int]] = None
+    is_locked_or_screensaver: bool = False
+
+    # Visible Interactive Controls (Bounded)
+    visible_controls: List[ControlSummary] = Field(default_factory=list)
+
+    # Domain State
+    current_url: Optional[str] = None
+    active_document_name: Optional[str] = None
+
+    # Working Memory & Knowledge Facts
+    known_facts: Dict[str, Any] = Field(default_factory=dict)
+    clipboard_text: Optional[str] = None
+
+    # Execution & Failure Memory (Strictly Bounded)
+    recent_actions: List[Dict[str, Any]] = Field(default_factory=list)
+    recent_failures: List[Dict[str, Any]] = Field(default_factory=list)
+    failed_primitive_sequences: List[List[str]] = Field(default_factory=list)
+
+    # Goal Context
+    current_subgoal_title: str = Field(default="")
+    subgoal_constraints: List[str] = Field(default_factory=list)
+
+    # Available Primitives and Providers in current environment
+    available_primitives: List[str] = Field(default_factory=list)
+    available_providers: Dict[str, str] = Field(default_factory=dict)
+
+
+class StructuredContextBuilder:
+    """Builds bounded StructuredAgentContext snapshots from live WorldModel and environment."""
+
+    MAX_RECENT_ACTIONS: int = 10
+    MAX_RECENT_FAILURES: int = 5
+    MAX_VISIBLE_CONTROLS: int = 20
+
+    @classmethod
+    def build(
+        cls,
+        sub_objective: Any,
+        world_model: AgentWorldModel,
+        observation: Optional[Any] = None,
+        provider_registry: Optional[Any] = None,
+        available_primitives: Optional[List[str]] = None,
+        provider_availability_map: Optional[Dict[str, str]] = None,
+    ) -> StructuredAgentContext:
+        """Construct a bounded snapshot for cognitive layers."""
+        sub_title = getattr(sub_objective, "title", str(sub_objective))
+        constraints = getattr(sub_objective, "constraints", [])
+
+        # Bound recent actions to last N
+        actions = list(world_model.action_history)[-cls.MAX_RECENT_ACTIONS :]
+
+        # Bound failures
+        failures = []
+        failed_seqs = []
+        for f in list(world_model.failed_primitive_sequences)[-cls.MAX_RECENT_FAILURES :]:
+            failures.append({
+                "sub_goal": f.sub_goal_title,
+                "action_failed": f.action_that_failed,
+                "reason": f.failure_reason,
+                "root_cause": f.root_cause,
+            })
+            failed_seqs.append(f.primitive_sequence)
+
+        # Bound controls
+        controls = list(world_model.visible_controls)[: cls.MAX_VISIBLE_CONTROLS]
+
+        # Extract active window info
+        proc = world_model.active_process_name
+        title = world_model.active_window_title
+        bounds = world_model.active_window_bounds
+        is_locked = world_model.is_desktop_locked
+
+        if observation:
+            if not proc:
+                proc = getattr(observation, "active_process_name", "") or ""
+            if not title:
+                title = getattr(observation, "active_window_title", "") or ""
+
+        # Determine primitives
+        if available_primitives is None:
+            from orbit.runtime.agent.contracts import AbstractActionType
+            available_primitives = [p.value for p in AbstractActionType]
+
+        providers = provider_availability_map or {}
+
+        return StructuredAgentContext(
+            active_process_name=proc,
+            active_window_title=title,
+            active_window_bounds=bounds,
+            is_locked_or_screensaver=is_locked,
+            visible_controls=controls,
+            current_url=world_model.current_url,
+            active_document_name=world_model.active_document,
+            known_facts=dict(world_model.known_information),
+            clipboard_text=world_model.clipboard_text,
+            recent_actions=actions,
+            recent_failures=failures,
+            failed_primitive_sequences=failed_seqs,
+            current_subgoal_title=sub_title,
+            subgoal_constraints=list(constraints),
+            available_primitives=available_primitives,
+            available_providers=providers,
+        )
+

@@ -36,7 +36,7 @@ Output ONLY a single valid JSON object with the following schema:
   "expected_state_transition": "<what state delta should happen after action>",
   "reason_summary": "<why this action is selected>",
   "next_action": {
-     "action_type": "<LAUNCH_APPLICATION | FOCUS_WINDOW | CLICK_ELEMENT | TYPE_TEXT | DRAW_STROKES | SEND_HOTKEY | WAIT_SETTLE | COMPLETE_GOAL | ABORT_UNACHIEVABLE>",
+     "action_type": "<LAUNCH_APPLICATION | FOCUS_WINDOW | CLICK | TYPE_TEXT | DRAW_STROKES | SEND_HOTKEY | WAIT_SETTLE | COMPLETE_GOAL | ABORT_TASK>",
      "target": {
         "name": "<logical label, text, or title>",
         "role": "<edit | button | canvas | window | etc>",
@@ -374,7 +374,7 @@ class CognitiveDecisionEngine:
                     is_goal_satisfied=False,
                     escalated_to_llm=False,
                     next_action=AbstractAction(
-                        action_type=AbstractActionType.ABORT_UNACHIEVABLE,
+                        action_type=AbstractActionType.ABORT_TASK,
                         outcome_contract=ActionOutcomeContract(expected_state_transition="task_aborted"),
                         expected_effect="Halt execution: goal not feasibly executable with available capabilities",
                         rationale=assessment.explanation,

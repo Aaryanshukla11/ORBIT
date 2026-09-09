@@ -76,7 +76,36 @@ class StructuredObjective(BaseModel):
     target_entities: List[str] = Field(default_factory=list, description="Target applications, controls, files, or geometric shapes")
     constraints: List[str] = Field(default_factory=list, description="Negative or positive constraints and boundaries")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Extracted parameters (e.g. shape, text, app name)")
+    deliverable: Optional[str] = Field(default=None, description="Expected concrete deliverable (e.g. spreadsheet, drawing, text file)")
+    success_criteria: List[str] = Field(default_factory=list, description="Explicit criteria that define completion")
+    assumptions: List[str] = Field(default_factory=list, description="Operating assumptions")
+    subtasks: List[str] = Field(default_factory=list, description="High-level decomposed subtasks")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of interpretation")
+
+
+class SubObjective(BaseModel):
+    """Atomic milestone sub-goal within a decomposed plan."""
+
+    sub_id: str = Field(default_factory=lambda: f"sub_{uuid4().hex[:8]}")
+    title: str = Field(..., description="High-level title of sub-goal milestone")
+    description: str = Field(default="", description="Detailed milestone goal")
+    target_entity: Optional[str] = Field(default=None, description="App, website, document, or control targeted")
+    success_criteria: List[str] = Field(default_factory=list, description="Verifiable success criteria for this sub-goal")
+    constraints: List[str] = Field(default_factory=list, description="Milestone-specific constraints")
+    preferred_primitives: List[AbstractActionType] = Field(default_factory=list, description="Suggested canonical primitives")
+    is_completed: bool = Field(default=False)
+
+
+class DecomposedPlan(BaseModel):
+    """Ordered sequence of sub-objectives produced by HierarchicalGoalDecomposer."""
+
+    plan_id: str = Field(default_factory=lambda: f"plan_{uuid4().hex[:8]}")
+    objective_id: str = Field(..., description="Parent objective ID")
+    raw_prompt: str = Field(default="")
+    sub_objectives: List[SubObjective] = Field(default_factory=list)
+    reasoning: str = Field(default="")
+    created_at_utc: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
 
 class CurrentStateObservation(BaseModel):
@@ -195,6 +224,7 @@ __all__ = [
     "CompleteGoalParams",
     "CurrentStateObservation",
     "CycleExecutionTrace",
+    "DecomposedPlan",
     "DoubleClickParams",
     "DragParams",
     "DrawStrokesParams",
@@ -214,6 +244,7 @@ __all__ = [
     "SemanticTarget",
     "SendHotkeyParams",
     "StructuredObjective",
+    "SubObjective",
     "TERMINAL_STATES",
     "TypeTextParams",
     "VerificationStrategy",

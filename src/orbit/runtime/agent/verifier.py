@@ -89,10 +89,7 @@ class AgentStateTransitionVerifier:
         post_id = getattr(post_state, "snapshot_id", None)
         is_terminal_or_wait = action.action_type in (
             AbstractActionType.COMPLETE_GOAL,
-            AbstractActionType.COMPLETE,
             AbstractActionType.ABORT_TASK,
-            AbstractActionType.ABORT,
-            AbstractActionType.ABORT_UNACHIEVABLE,
             AbstractActionType.WAIT,
             AbstractActionType.WAIT_SETTLE,
         )
@@ -180,7 +177,7 @@ class AgentStateTransitionVerifier:
                 verified = True
                 reason = "Focus window command dispatched"
 
-        elif act_type in (AbstractActionType.DRAW_STROKES, AbstractActionType.DRAW):
+        elif act_type == AbstractActionType.DRAW_STROKES:
             shape = str(action.parameters.get("shape", "strokes"))
             verified = True
             reason = f"Successfully executed geometric drawing strokes for '{shape}'"
@@ -189,7 +186,6 @@ class AgentStateTransitionVerifier:
 
         elif act_type in (
             AbstractActionType.CLICK,
-            AbstractActionType.CLICK_ELEMENT,
             AbstractActionType.DOUBLE_CLICK,
             AbstractActionType.RIGHT_CLICK,
             AbstractActionType.SELECT_OPTION,
@@ -240,7 +236,7 @@ class AgentStateTransitionVerifier:
                 verified = True
                 reason = f"Click dispatched successfully on '{action.target.name if action.target else 'element'}'"
 
-        elif act_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE):
+        elif act_type == AbstractActionType.TYPE_TEXT:
             expected_text = str(action.parameters.get("text", action.parameters.get("query", "")))
             ver_res = self._verify_text_in_state(
                 expected_text=expected_text,
@@ -267,7 +263,7 @@ class AgentStateTransitionVerifier:
             observed_delta["match_state"] = ver_res.match_state.value
             observed_delta["text_typed_length"] = len(expected_text)
 
-        elif act_type in (AbstractActionType.SEND_HOTKEY, AbstractActionType.HOTKEY):
+        elif act_type == AbstractActionType.SEND_HOTKEY:
             combo = str(action.parameters.get("hotkey", action.parameters.get("combination", "")))
             verified = dispatch_success
             reason = f"Successfully dispatched hotkey combination '{combo}'"
@@ -284,15 +280,11 @@ class AgentStateTransitionVerifier:
             verified = True
             reason = f"Settle wait of {dur} completed"
 
-        elif act_type in (AbstractActionType.COMPLETE_GOAL, AbstractActionType.COMPLETE):
+        elif act_type == AbstractActionType.COMPLETE_GOAL:
             verified = True
             reason = "Task goal satisfaction completed and verified"
 
-        elif act_type in (
-            AbstractActionType.ABORT_TASK,
-            AbstractActionType.ABORT,
-            AbstractActionType.ABORT_UNACHIEVABLE,
-        ):
+        elif act_type == AbstractActionType.ABORT_TASK:
             verified = True
             reason = "Goal unachievable abort condition verified"
 
@@ -313,7 +305,7 @@ class AgentStateTransitionVerifier:
             action_id=action.action_id,
             dispatch_success=dispatch_success,
             expected_effect_observed=verified,
-            goal_satisfied=(act_type in (AbstractActionType.COMPLETE_GOAL, AbstractActionType.COMPLETE) and verified),
+            goal_satisfied=(act_type == AbstractActionType.COMPLETE_GOAL and verified),
             outcome_status=final_status,
             verified=verified,
             verification_strategy=strategy,

@@ -22,7 +22,7 @@ class GoalRequirementExtractor:
     COMPLEX_VISUAL_KEYWORDS = {
         "portrait", "face", "boy", "girl", "man", "woman", "person",
         "human", "dog", "cat", "animal", "landscape", "scenery",
-        "painting", "photo", "photograph", "realistic", "character", "tree", "car"
+        "painting", "photo", "photograph", "realistic", "character", "tree"
     }
 
     BASIC_GEOMETRY_KEYWORDS = {
@@ -44,24 +44,54 @@ class GoalRequirementExtractor:
         target_domain = "general"
         required_fidelity = "STANDARD"
 
-        # 1. Host Application Lifecycle Requirement
-        if target_app or "open" in p_lower or "launch" in p_lower:
+        # 1. Host Application Lifecycle Requirements (supporting multi-application compound goals)
+        detected_apps: List[str] = []
+        if target_app:
+            detected_apps.append(target_app)
+        if objective.target_entities:
+            for ent in objective.target_entities:
+                if ent and ent not in detected_apps:
+                    detected_apps.append(ent)
+
+        known_app_patterns = {
+            "calculator": r"\b(calculator|calc)\b",
+            "notepad": r"\b(notepad)\b",
+            "paint": r"\b(paint|mspaint)\b",
+            "browser": r"\b(browser|chrome|edge|firefox)\b",
+            "wordpad": r"\b(wordpad)\b",
+            "excel": r"\b(excel)\b",
+            "word": r"\b(word|winword)\b",
+        }
+        for app_canonical, pat in known_app_patterns.items():
+            if re.search(pat, p_lower):
+                if not any(app_canonical in d.lower() for d in detected_apps):
+                    detected_apps.append(app_canonical.capitalize())
+
+        if not detected_apps and ("open" in p_lower or "launch" in p_lower):
+            m_open = re.search(r"(?:open|launch)\s+([a-zA-Z0-9_\-]+)", prompt, re.IGNORECASE)
+            if m_open:
+                detected_apps.append(m_open.group(1).strip())
+            else:
+                detected_apps.append("desktop")
+
+        for idx, app_name in enumerate(detected_apps):
+            req_id = "req_app_lifecycle" if len(detected_apps) == 1 else f"req_app_lifecycle_{app_name.lower()}"
             requirements.append(
                 GoalRequirement(
-                    requirement_id="req_app_lifecycle",
+                    requirement_id=req_id,
                     requirement_type="APPLICATION_LIFECYCLE",
-                    semantic_description=f"Host application '{target_app or 'desktop'}' must be launched and focused in foreground",
+                    semantic_description=f"Host application '{app_name}' must be launched and focused in foreground",
                     required_capability_category=CapabilityCategory.DESKTOP_CONTROL,
                     mandatory=True,
-                    success_criteria=[f"window_active:{target_app.lower()}" if target_app else "desktop_ready"],
+                    success_criteria=[f"window_active:{app_name.lower()}" if app_name.lower() != "desktop" else "desktop_ready"],
                     alternatives=["web_browser_alternative", "secondary_installed_tool"],
-                    parameters={"application_name": target_app},
+                    parameters={"application_name": app_name},
                 )
             )
 
         # 2. Creative / Visual Content Creation Requirement
-        if action_type == "draw" or "draw" in p_lower or "paint" in p_lower or "sketch" in p_lower:
-            target_domain = "creative_drawing"
+        has_drawing = action_type == "draw" or "draw" in p_lower or "paint" in p_lower or "sketch" in p_lower
+        if has_drawing:
             is_complex = any(re.search(rf"\b{kw}\b", p_lower) for kw in self.COMPLEX_VISUAL_KEYWORDS)
             is_basic = any(re.search(rf"\b{kw}\b", p_lower) for kw in self.BASIC_GEOMETRY_KEYWORDS)
 
@@ -120,45 +150,113 @@ class GoalRequirementExtractor:
                     )
                 )
 
-        # 3. Text Entry Requirement
-        elif action_type == "type" or "type" in p_lower or "write" in p_lower:
-            target_domain = "document_editing"
+        # 3. Calculation Requirement (independent of drawing/text in compound goals)
+        has_calc = (
+            action_type == "calculate"
+            or "calculate" in p_lower
+            or "multiplied" in p_lower
+            or bool(re.search(r"\d+\s*[\+\-\*\/x×÷]\s*\d+", prompt))
+        )
+        calculated_result = ""
+        if has_calc:
+            calc_expr = prompt
+            m_expr = re.search(r"(\d+(?:\.\d+)?)\s*([\+\-\*\/xX×÷]|multiplied by|times|plus|minus|divided by)\s*(\d+(?:\.\d+)?)", prompt)
+            if m_expr:
+                try:
+                    op_str = m_expr.group(2).lower()
+                    n1 = float(m_expr.group(1))
+                    n2 = float(m_expr.group(3))
+                    if op_str in ("*", "x", "×", "multiplied by", "times"):
+                        res_val = n1 * n2
+                    elif op_str in ("+", "plus"):
+                        res_val = n1 + n2
+                    elif op_str in ("-", "minus"):
+                        res_val = n1 - n2
+                    elif op_str in ("/", "÷", "divided by") and n2 != 0:
+                        res_val = n1 / n2
+                    else:
+                        res_val = None
+                    if res_val is not None:
+                        calculated_result = str(int(res_val) if res_val.is_integer() else res_val)
+                        calc_expr = f"{int(n1) if n1.is_integer() else n1} {op_str} {int(n2) if n2.is_integer() else n2}"
+                except Exception:
+                    pass
+
+            if not calculated_result:
+                m_direct = re.search(r"calculate\s+(\d+)", prompt, re.IGNORECASE)
+                if m_direct:
+                    calculated_result = m_direct.group(1)
+
+            requirements.append(
+                GoalRequirement(
+                    requirement_id="req_calculation",
+                    requirement_type="DATA_EXTRACTION",
+                    semantic_description=f"Compute arithmetic expression '{calc_expr}' and observe displayed result",
+                    required_capability_category=CapabilityCategory.INPUT,
+                    mandatory=True,
+                    success_criteria=[f"arithmetic_result_displayed:{calculated_result}" if calculated_result else "arithmetic_result_displayed"],
+                    alternatives=["calculator_gui_buttons", "calculator_keyboard_numpad"],
+                    parameters={"expression": calc_expr, "expected_result": calculated_result},
+                )
+            )
+
+        # 4. Text Entry Requirement (independent of calculation/drawing in compound goals)
+        has_text = action_type == "type" or "type" in p_lower or "write" in p_lower or "enter" in p_lower
+        if has_text:
             text_payload = str(objective.parameters.get("text", "")).strip()
+            text_source = "explicit"
             if not text_payload:
-                m = re.search(r"['\"]([^'\"]+)['\"]", prompt)
-                if m:
-                    text_payload = m.group(1)
+                m_quote = re.search(r"['\"]([^'\"]+)['\"]", prompt)
+                if m_quote:
+                    text_payload = m_quote.group(1)
+                elif has_calc and ("result" in p_lower or "answer" in p_lower):
+                    text_payload = calculated_result
+                    text_source = "calculation_result"
                 else:
-                    text_payload = prompt
+                    m_typed = re.search(r"(?:type|write|enter)\s+([a-zA-Z0-9_\s]+?)(?:\s+(?:into|in|on)\b|\s*$)", prompt, re.IGNORECASE)
+                    if m_typed and m_typed.group(1).strip().lower() not in ("the result", "result"):
+                        text_payload = m_typed.group(1).strip()
+                    else:
+                        text_payload = prompt
+
+            # Infer target application for text entry if specified in compound goal
+            text_target_app = ""
+            m_target_app = re.search(r"(?:into|in|on)\s+([a-zA-Z0-9_\-]+)", prompt, re.IGNORECASE)
+            if m_target_app:
+                candidate_app = m_target_app.group(1).strip()
+                if candidate_app.lower() in known_app_patterns or any(candidate_app.lower() in d.lower() for d in detected_apps):
+                    text_target_app = candidate_app
+            if not text_target_app and detected_apps:
+                for a in detected_apps:
+                    if a.lower() in ("notepad", "wordpad", "word", "document", "editor"):
+                        text_target_app = a
+                        break
 
             requirements.append(
                 GoalRequirement(
                     requirement_id="req_text_input",
                     requirement_type="DATA_INPUT",
-                    semantic_description=f"Input exact textual payload into document buffer",
+                    semantic_description="Input exact textual payload into document buffer",
                     required_capability_category=CapabilityCategory.INPUT,
                     mandatory=True,
                     success_criteria=[f"text_buffer_contains:{text_payload[:15]}"],
                     alternatives=["keyboard_keystrokes", "clipboard_atomic_paste"],
-                    parameters={"text": text_payload},
+                    parameters={"text": text_payload, "text_source": text_source, "target_application": text_target_app},
                 )
             )
 
-        # 4. Calculation Requirement
-        elif action_type == "calculate" or "calculate" in p_lower or "multiplied" in p_lower:
+        # Domain classification
+        domain_count = sum([1 for flag in (has_drawing, has_calc, has_text) if flag])
+        if domain_count > 1 or len(detected_apps) > 1:
+            target_domain = "compound_multi_stage"
+        elif has_drawing:
+            target_domain = "creative_drawing"
+        elif has_text:
+            target_domain = "document_editing"
+        elif has_calc:
             target_domain = "system_automation"
-            requirements.append(
-                GoalRequirement(
-                    requirement_id="req_calculation",
-                    requirement_type="DATA_EXTRACTION",
-                    semantic_description="Compute arithmetic expression and observe displayed result",
-                    required_capability_category=CapabilityCategory.INPUT,
-                    mandatory=True,
-                    success_criteria=["arithmetic_result_displayed"],
-                    alternatives=["calculator_gui_buttons", "calculator_keyboard_numpad"],
-                    parameters={"expression": prompt},
-                )
-            )
+        else:
+            target_domain = "general"
 
         # 5. Final State Verification Requirement
         end_cond = str(objective.end_condition or "goal_completed")

@@ -21,6 +21,10 @@ Output ONLY a single valid JSON object with the following fields:
   "end_condition": "<verifiable physical/perceptual end state condition, e.g. canvas_has_cube_drawing, notepad_contains_hello_world, calc_shows_42>",
   "target_entities": ["<application or control names, e.g. mspaint, notepad, calculator, canvas, button>"],
   "constraints": ["<any negative or positive constraints, e.g. do_not_close_unsaved>"],
+  "deliverable": "<expected concrete output deliverable if any, e.g. spreadsheet, text document, drawing, or null>",
+  "success_criteria": ["<explicit observable criteria that confirm completion>"],
+  "assumptions": ["<allowed operating assumptions>"],
+  "subtasks": ["<high-level milestone subtasks if compound goal>"],
   "parameters": {
      "app_name": "<primary app executable or name, e.g. mspaint, notepad.exe, calc>",
      "action_type": "<e.g. draw, type, click, open, calculate>",
@@ -92,6 +96,10 @@ class LLMIntentInterpreter:
                             end_condition=str(parsed.get("end_condition", "goal_achieved")),
                             target_entities=list(parsed.get("target_entities", [])),
                             constraints=list(parsed.get("constraints", [])),
+                            deliverable=parsed.get("deliverable"),
+                            success_criteria=list(parsed.get("success_criteria", [])),
+                            assumptions=list(parsed.get("assumptions", [])),
+                            subtasks=list(parsed.get("subtasks", [])),
                             parameters=dict(parsed.get("parameters", {})),
                         )
             except Exception as ex:

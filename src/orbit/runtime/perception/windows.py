@@ -127,6 +127,9 @@ class Win32WindowObserver:
                 is_min = bool(user32.IsIconic(hwnd))
                 is_max = bool(user32.IsZoomed(hwnd))
 
+                w_bounds = BoundingBox(left=rect.left, top=rect.top, width=w, height=h)
+                c_bounds = BoundingBox(left=pt.x, top=pt.y, width=client_w, height=client_h) if (client_w > 0 and client_h > 0) else w_bounds
+
                 obs = WindowObservation(
                     hwnd=hwnd,
                     title=title,
@@ -135,8 +138,8 @@ class Win32WindowObserver:
                     is_visible=True,
                     is_minimized=is_min,
                     is_maximized=is_max,
-                    window_bounds=BoundingBox(left=rect.left, top=rect.top, width=w, height=h),
-                    client_bounds=BoundingBox(left=pt.x, top=pt.y, width=client_w, height=client_h),
+                    window_bounds=w_bounds,
+                    client_bounds=c_bounds,
                     process_id=pid.value,
                     process_name=proc_name,
                 )

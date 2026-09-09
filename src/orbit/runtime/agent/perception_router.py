@@ -27,6 +27,7 @@ from orbit.adapters.observation.snapshot import ObservationSnapshot
 from orbit.runtime.agent.contracts import SemanticTarget
 from orbit.runtime.model_runtime.router import ModelRouter, RoutingPolicy
 from orbit.runtime.models.models import ModelCapability, ModelGenerateRequest
+from orbit.runtime.agent.grounding_validator import GroundingValidator, GroundingValidationResult
 from orbit.runtime.targeting import (
     EvidenceBasedTargetLocator,
     ResolvedTarget,
@@ -58,9 +59,9 @@ class PerceptionQueryResult(BaseModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence score")
     coordinates: Optional[Tuple[int, int]] = Field(default=None, description="Resolved physical (x, y) screen center point")
     resolved_target: Optional[ResolvedTarget] = Field(default=None, description="Detailed resolved UI target structure")
-    evidence: Dict[str, Any] = Field(default_factory=dict, description="Supporting evidence data")
-    diagnostic_message: str = Field(default="", description="Diagnostic status message")
-    duration_ms: float = Field(default=0.0, description="Elapsed query time in milliseconds")
+    evidence: Dict[str, Any] = Field(default_factory=dict, description="Sensory evidence supporting resolution")
+    diagnostic_message: str = Field(default="", description="Diagnostic details or failure reason")
+    duration_ms: float = Field(default=0.0, description="Resolution latency in milliseconds")
 
 
 class PerceptionRouter:
@@ -70,9 +71,15 @@ class PerceptionRouter:
         self,
         target_locator: Optional[TargetLocator] = None,
         model_router: Optional[ModelRouter] = None,
+        grounding_validator: Optional[GroundingValidator] = None,
     ) -> None:
         self._target_locator = target_locator or EvidenceBasedTargetLocator()
         self._model_router = model_router
+        self._grounding_validator = grounding_validator or GroundingValidator()
+
+    @property
+    def grounding_validator(self) -> GroundingValidator:
+        return self._grounding_validator
 
     def set_model_router(self, router: ModelRouter) -> None:
         """Attach or update the ModelRouter for Tier 4 Vision Model queries."""
