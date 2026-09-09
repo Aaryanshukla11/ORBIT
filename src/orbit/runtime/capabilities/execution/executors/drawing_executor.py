@@ -7,6 +7,7 @@ into grounded canvas screen pixels and dispatching pointer drag strokes.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -126,12 +127,22 @@ class DrawingExecutor(BaseCapabilityExecutor):
                 await self._pointer.move_to(start_x, start_y)
                 await asyncio.sleep(0.02)
 
-                if hasattr(self._pointer, "mouse_down"):
-                    await self._pointer.mouse_down(button="left")
-                elif hasattr(self._pointer, "press_down"):
-                    await self._pointer.press_down(button="left")
-                elif hasattr(self._pointer, "button_down"):
-                    await self._pointer.button_down()
+                btn_down = getattr(self._pointer, "button_down", None)
+                press_down = getattr(self._pointer, "press_down", None)
+                mouse_down = getattr(self._pointer, "mouse_down", None)
+
+                if callable(btn_down) and hasattr(self._pointer, "button_down"):
+                    res = btn_down()
+                    if inspect.isawaitable(res):
+                        await res
+                elif callable(press_down) and hasattr(self._pointer, "press_down"):
+                    res = press_down(button="left")
+                    if inspect.isawaitable(res):
+                        await res
+                elif callable(mouse_down) and hasattr(self._pointer, "mouse_down"):
+                    res = mouse_down(button="left")
+                    if inspect.isawaitable(res):
+                        await res
 
                 await asyncio.sleep(0.02)
 
@@ -139,12 +150,22 @@ class DrawingExecutor(BaseCapabilityExecutor):
                     await self._pointer.move_to(next_x, next_y)
                     await asyncio.sleep(0.01)
 
-                if hasattr(self._pointer, "mouse_up"):
-                    await self._pointer.mouse_up(button="left")
-                elif hasattr(self._pointer, "release_up"):
-                    await self._pointer.release_up(button="left")
-                elif hasattr(self._pointer, "button_up"):
-                    await self._pointer.button_up()
+                btn_up = getattr(self._pointer, "button_up", None)
+                release_up = getattr(self._pointer, "release_up", None)
+                mouse_up = getattr(self._pointer, "mouse_up", None)
+
+                if callable(btn_up) and hasattr(self._pointer, "button_up"):
+                    res = btn_up()
+                    if inspect.isawaitable(res):
+                        await res
+                elif callable(release_up) and hasattr(self._pointer, "release_up"):
+                    res = release_up(button="left")
+                    if inspect.isawaitable(res):
+                        await res
+                elif callable(mouse_up) and hasattr(self._pointer, "mouse_up"):
+                    res = mouse_up(button="left")
+                    if inspect.isawaitable(res):
+                        await res
 
                 await asyncio.sleep(0.02)
                 strokes_dispatched += 1

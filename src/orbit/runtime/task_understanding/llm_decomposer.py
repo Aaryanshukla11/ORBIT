@@ -83,6 +83,10 @@ CRITICAL RULES:
     def set_model_session_manager(self, msm: ModelSessionManager) -> None:
         self._msm = msm
 
+    def is_model_active(self) -> bool:
+        """Check whether an AI model is currently loaded and ready for inference."""
+        return self._msm is not None and self._msm.is_model_active()
+
     async def decompose_request(self, raw_request: Union[RawTaskRequest, str]) -> List[StructuredTaskIntent]:
         """Use active AI model to decompose natural language request into structured intents."""
         if isinstance(raw_request, str):
@@ -90,22 +94,7 @@ CRITICAL RULES:
         else:
             req_obj = raw_request
 
-        if self._msm is None:
-            logger.debug("LLMTaskDecomposer: ModelSessionManager unavailable")
-            return []
-
-        if not self._msm.is_model_active():
-            # Attempt auto-activation of registered local model
-            try:
-                reg = getattr(self._msm, "_registry", None)
-                if reg and hasattr(reg, "list_models"):
-                    models = await reg.list_models()
-                    if models:
-                        await self._msm.activate_model(models[0].model_id)
-            except Exception as auto_act_err:
-                logger.debug("Auto-activation in decomposer: %s", auto_act_err)
-
-        if not self._msm.is_model_active():
+        if not self.is_model_active():
             logger.debug("LLMTaskDecomposer: No active AI model available for cognitive decomposition")
             return []
 

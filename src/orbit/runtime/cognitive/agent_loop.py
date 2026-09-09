@@ -392,14 +392,13 @@ class AgentExecutionLoop:
                 feasibility.matched_strategy.semantic_goal_coverage,
                 feasibility.matched_strategy.estimated_success_probability,
             )
-
         # -----------------------------------------------------------------
-        # 2b. Authoritative Strategy Execution Bridge (M1.9 Component 6)
+        # Offline Strategy Execution Test Bridge (Strictly opt-in via test context)
         # -----------------------------------------------------------------
         if self._requires_authoritative_strategy_execution(feasibility.matched_strategy, context):
             selected_strat = feasibility.matched_strategy
             logger.info(
-                "[STRATEGY EXECUTION BRIDGE] Authoritatively executing selected strategy '%s' via StrategyExecutionEngine",
+                "[STRATEGY EXECUTION BRIDGE] Executing strategy '%s' via StrategyExecutionEngine (explicit test opt-in)",
                 selected_strat.name,
             )
             sm.transition_to(AgentLoopState.OBSERVING, cycle_number=0)
@@ -411,7 +410,6 @@ class AgentExecutionLoop:
                 session_id=session_id,
             )
 
-            # Re-capture fresh desktop state to verify overall goal achievement
             final_obs = await self._observer.observe(objective)
             goal_verified = strat_res.is_success
 
@@ -1612,18 +1610,6 @@ class AgentExecutionLoop:
                 else:
                     dispatch_success = True
 
-            elif act_type == AbstractActionType.DRAW_STROKES:
-                from orbit.runtime.capabilities.execution.executors.drawing_executor import DrawingExecutor
-                from orbit.runtime.capabilities.execution.contracts import CapabilityExecutionRequest
-                draw_exec = DrawingExecutor(pointer=self._pointer)
-                req = CapabilityExecutionRequest(
-                    capability_id="DRAW_STROKES",
-                    stage_index=0,
-                    parameters=params,
-                )
-                draw_res = await draw_exec.execute(req)
-                dispatch_success = draw_res.dispatch_success
-                err_msg = draw_res.failure_reason
 
             elif act_type == AbstractActionType.TYPE_TEXT:
                 text = str(params.get("text", params.get("query", "")))
@@ -1832,28 +1818,15 @@ class AgentExecutionLoop:
 
     def _requires_authoritative_strategy_execution(
         self,
-        strategy: Optional[StrategyOption],
+        strategy: Optional[Any],
         context: Dict[str, Any],
     ) -> bool:
-        """Determine whether a selected strategy should be authoritatively executed by StrategyExecutionEngine."""
-        if strategy is None or not strategy.stages:
+        """StrategyExecutionEngine is excluded from production autonomous execution; only permitted for explicit offline test contexts."""
+        if strategy is None or not getattr(strategy, "stages", None):
             return False
+        return bool(context.get("authoritative_strategy_execution") is True)
 
-        # If explicitly opted into authoritative strategy execution
-        if context.get("authoritative_strategy_execution") is True or context.get("use_strategy_engine") is True:
-            return True
 
-        # Composite workflows with multiple sub-stages or image generation
-        if strategy.strategy_id.startswith("STRAT_COMPOSITE") or "IMAGE_GENERATE_AND_INSERT" in strategy.required_capabilities:
-            return True
-
-        # Workflows that declare dynamic output references (e.g. {{stage_0...}})
-        for stage in strategy.stages:
-            for v in stage.parameters.values():
-                if isinstance(v, str) and "{{" in v and "}}" in v:
-                    return True
-
-        return False
 
     async def _execute_deterministic_text_input(
         self,

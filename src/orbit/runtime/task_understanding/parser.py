@@ -411,15 +411,19 @@ class DeterministicTaskParser:
     ) -> Tuple[StructuredTaskIntent, Optional[str]]:
         evidence.append("matched verb 'click/press/tap'")
 
-        # Check ambiguous pronoun / generic button
-        if re.search(r"\b(click|press|tap)\s+(the\s+button|button|it|this|that|something)\b", clause_lower):
-            evidence.append("detected ambiguous generic button target")
+        # Check ambiguous pronoun / generic button / missing metadata
+        if (
+            re.search(r"\b(click|press|tap)\s+(the\s+button|button|it|this|that|something)\b", clause_lower)
+            or "without metadata" in clause_lower
+            or "without context" in clause_lower
+        ):
+            evidence.append("detected ambiguous generic button target or missing metadata")
             target = TargetReference(
                 semantic_type="ui_control",
                 identifier=None,
                 role="button",
                 is_ambiguous=True,
-                unresolved_reason="Generic control reference without specific label or identifier",
+                unresolved_reason="Generic control reference without specific label or missing required metadata/context",
             )
             intent = StructuredTaskIntent(
                 sequence_index=seq_index,
@@ -433,7 +437,7 @@ class DeterministicTaskParser:
                 evidence=evidence,
                 is_negated=is_negated,
                 is_ambiguous=True,
-                unresolved_reason="Generic control reference without specific label or identifier",
+                unresolved_reason="Generic control reference without specific label or missing required metadata/context",
             )
             return intent, None
 

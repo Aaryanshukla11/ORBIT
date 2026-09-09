@@ -115,6 +115,13 @@ class EnvironmentProviderRegistry:
         provider = await self.resolve_provider(primitive)
         return provider is not None
 
+    def get_all_registered_providers(
+        self,
+        primitive: AbstractActionType,
+    ) -> List[EnvironmentProvider]:
+        """Return all registered providers for this primitive regardless of current runtime availability."""
+        return [provider for _, provider in self._providers.get(primitive, [])]
+
     async def get_providers_for_primitive(
         self,
         primitive: AbstractActionType,
@@ -159,6 +166,9 @@ def get_default_environment_registry() -> EnvironmentProviderRegistry:
         PlaywrightBrowserProvider,
         SystemDefaultBrowserProvider,
     )
+    from orbit.runtime.environment.file_providers import LocalFileProvider
+    from orbit.runtime.environment.shell_provider import ShellExecutionProvider
+    from orbit.runtime.environment.image_providers import ArtifactImageGenProvider
 
     registry = EnvironmentProviderRegistry()
 
@@ -181,6 +191,19 @@ def get_default_environment_registry() -> EnvironmentProviderRegistry:
 
     registry.register(AbstractActionType.BROWSER_NAVIGATE, playwright_provider, priority=50)
     registry.register(AbstractActionType.BROWSER_NAVIGATE, default_browser_provider, priority=100)
+
+    # File Providers (Non-physical filesystem interface)
+    file_provider = LocalFileProvider()
+    registry.register(AbstractActionType.FILE_READ, file_provider, priority=50)
+    registry.register(AbstractActionType.FILE_WRITE, file_provider, priority=50)
+
+    # Shell Provider (Hardened non-physical shell, Zero Physical OS Bypass)
+    shell_provider = ShellExecutionProvider()
+    registry.register(AbstractActionType.SHELL_EXECUTE, shell_provider, priority=50)
+
+    # Image Artifact Provider (Artifact-only, zero physical desktop authority)
+    image_provider = ArtifactImageGenProvider()
+    registry.register(AbstractActionType.IMAGE_GENERATE, image_provider, priority=50)
 
     return registry
 

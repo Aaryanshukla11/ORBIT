@@ -31,6 +31,7 @@ from orbit.runtime.cognitive.models import (
     StructuredObjective,
     SubObjective,
 )
+from orbit.runtime.cognitive.plan_directive import PlanDirective
 from orbit.runtime.cognitive.primitive_validator import PrimitiveValidator
 from orbit.runtime.models.models import ModelGenerateRequest
 
@@ -132,6 +133,57 @@ class PrimitiveComposer:
         logger.info("[PRIMITIVE COMPOSER] Recomposing sequence incorporating failure diagnosis: %s", getattr(failure_report, "diagnosis", str(failure_report)))
         # Append failure context into prompt for LLM or apply alternative strategy
         return await self.compose(objective, sub_objective, context)
+
+    def compose_from_directive(
+        self,
+        directive: PlanDirective,
+        context: Optional[StructuredAgentContext] = None,
+    ) -> ComposedPrimitiveSequence:
+        """Compose canonical primitives directly from an approved PlanDirective."""
+        actions: List[AbstractAction] = []
+
+        for prim_type in directive.preferred_primitives:
+            target = (
+                directive.semantic_targets[0]
+                if directive.semantic_targets
+                else SemanticTarget(name=directive.subgoal_title, role="control")
+            )
+            params: Dict[str, Any] = {}
+
+            if prim_type == AbstractActionType.DRAW_STROKES:
+                if directive.creative_payload and "strokes" in directive.creative_payload:
+                    params["strokes"] = directive.creative_payload["strokes"]
+            elif prim_type == AbstractActionType.TYPE_TEXT:
+                if directive.creative_payload and "text" in directive.creative_payload:
+                    params["text"] = directive.creative_payload["text"]
+                    params["press_enter"] = True
+                else:
+                    params["text"] = directive.subgoal_title
+                    params["press_enter"] = True
+            elif prim_type == AbstractActionType.LAUNCH_APPLICATION:
+                app = target.name or "notepad"
+                params["application_name"] = app
+
+            action = AbstractAction(
+                action_type=prim_type,
+                target=target,
+                parameters=params,
+                outcome_contract=directive.expected_outcome,
+                expected_effect=directive.expected_outcome.expected_state_transition,
+                rationale=f"Composed from PlanDirective '{directive.directive_id}' for subgoal '{directive.subgoal_id}'",
+            )
+            val_res = self._validator.validate_action(action)
+            if val_res.is_valid:
+                actions.append(action)
+            else:
+                logger.warning("Directive action validation failed: %s (%s)", val_res.failure_reason, val_res.failure_code)
+
+        return ComposedPrimitiveSequence(
+            sub_objective_id=directive.subgoal_id,
+            actions=actions,
+            rationale=f"Composed from PlanDirective {directive.directive_id}",
+            estimated_steps=len(actions),
+        )
 
     async def _compose_via_llm(
         self,

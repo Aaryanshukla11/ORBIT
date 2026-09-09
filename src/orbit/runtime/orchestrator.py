@@ -85,6 +85,7 @@ from orbit.runtime.verification import (
 from orbit.runtime.task_understanding import (
     TaskUnderstandingEngine,
     TaskUnderstandingResult,
+    TaskUnderstandingStatus,
 )
 from orbit.runtime.planning import (
     ExecutableTaskPlan,
@@ -1325,6 +1326,176 @@ class OrbitOrchestrator:
                         except Exception as gen_err:
                             logger.warning("Conversational model turn exception: %s", gen_err)
 
+                # 1. Task Understanding Evaluation & Ambiguity Detection
+                task_understanding = None
+                try:
+                    if hasattr(self._task_understanding_engine, "understand_async"):
+                        task_understanding = await self._task_understanding_engine.understand_async(
+                            request=task.prompt,
+                            metadata=task.metadata,
+                        )
+                    else:
+                        task_understanding = self._task_understanding_engine.understand(
+                            request=task.prompt,
+                            metadata=task.metadata,
+                        )
+                    task.metadata["task_understanding"] = task_understanding.model_dump()
+                except Exception as und_err:
+                    logger.warning("Task understanding notice for task %s: %s", task_id, und_err)
+
+                # Check if task requested understand_only fail-closed check
+                if task.metadata.get("understand_only"):
+                    err_detail = ErrorDetail(
+                        code="UNDERSTAND_ONLY",
+                        message="Task halted after understanding phase (understand_only=True)",
+                        recoverable=False,
+                    )
+                    rec = await self._history_store.get_record_by_task_id(task_id)
+                    if rec:
+                        rec.status = ExecutionStatus.FAILED
+                        rec.failure_code = "UNDERSTAND_ONLY"
+                        rec.failure_reason = err_detail.message
+                        rec.completed_at = datetime.now(timezone.utc)
+                        await self._history_store.save_record(rec)
+                    await self._task_manager.update_status(task_id, TaskStatus.FAILED, error=err_detail, metadata=task.metadata)
+                    await self._emit_task_event(task_id, TaskStatus.FAILED, error=err_detail)
+                    return
+
+                # Check for unresolved ambiguity or unsupported task - fail closed with 0 physical dispatches
+                if task_understanding and task_understanding.status in {
+                    TaskUnderstandingStatus.AMBIGUOUS,
+                    TaskUnderstandingStatus.INVALID,
+                    TaskUnderstandingStatus.FAILED,
+                    TaskUnderstandingStatus.UNSUPPORTED,
+                }:
+                    try:
+                        ambig_plan = self._task_planning_engine.plan_task(
+                            understanding=task_understanding,
+                            task_id=task_id,
+                        )
+                        task.metadata["task_plan"] = ambig_plan.model_dump()
+                    except Exception as plan_err:
+                        logger.debug("Ambiguous planning notice: %s", plan_err)
+
+                    err_msg = (
+                        "; ".join(task_understanding.diagnostic_messages)
+                        if task_understanding.diagnostic_messages
+                        else "Task understanding contains unresolved ambiguity"
+                    )
+                    if task_understanding.status == TaskUnderstandingStatus.AMBIGUOUS:
+                        err_code = "PLANNING_AMBIGUOUS"
+                    elif task_understanding.status == TaskUnderstandingStatus.UNSUPPORTED:
+                        err_code = "PLANNING_UNSUPPORTED"
+                    else:
+                        err_code = "TASK_UNDERSTANDING_FAILED"
+                    err_detail = ErrorDetail(
+                        code=err_code,
+                        message=err_msg,
+                        recoverable=False,
+                    )
+                    rec = await self._history_store.get_record_by_task_id(task_id)
+                    if rec:
+                        rec.status = ExecutionStatus.FAILED
+                        rec.failure_code = err_code
+                        rec.failure_reason = err_msg
+                        rec.completed_at = datetime.now(timezone.utc)
+                        await self._history_store.save_record(rec)
+                    await self._task_manager.update_status(task_id, TaskStatus.FAILED, error=err_detail, metadata=task.metadata)
+                    await self._emit_task_event(task_id, TaskStatus.FAILED, error=err_detail)
+                    return
+
+                # Check if task requested plan-only or DAG execution bridge
+                if task.metadata.get("plan_only") or task.metadata.get("execute_plan") or task.metadata.get("use_dag_plan"):
+                    logger.info("Executing plan-based task %s via TaskCompletionEngine: '%s'", task_id, task.prompt)
+                    task_exec_res: TaskExecutionResult = await self._task_completion_engine.execute_task(
+                        goal=task.prompt,
+                        session_id=session_id,
+                        task_id=task_id,
+                        context=task.metadata,
+                        policy=task.metadata.get("execution_policy"),
+                        cancel_token=cancel_token,
+                    )
+                    task.metadata["task_execution_result"] = task_exec_res.model_dump()
+                    if task_exec_res.understanding:
+                        task.metadata["task_understanding"] = task_exec_res.understanding.model_dump()
+                    if task_exec_res.plan:
+                        task.metadata["task_plan"] = task_exec_res.plan.model_dump()
+                    if task_exec_res.plan_execution_result:
+                        task.metadata["plan_execution_result"] = task_exec_res.plan_execution_result.model_dump()
+
+                    # Emit Plan if formulated
+                    if task_exec_res.plan:
+                        try:
+                            ui_plan = ExecutionPlan(
+                                plan_id=task_exec_res.plan.plan_id,
+                                task_id=task_id,
+                                description=task_exec_res.plan.description or task.prompt,
+                                steps=[
+                                    Step(
+                                        step_id=s.step_id,
+                                        step_index=idx,
+                                        description=s.description or f"Step {idx + 1}",
+                                    )
+                                    for idx, s in enumerate(task_exec_res.plan.steps)
+                                ],
+                            )
+                            await self._task_manager.set_plan(task_id, ui_plan)
+                            await self._emit_event(
+                                EventType.PLAN_UPDATED,
+                                session_id=session_id,
+                                correlation_id=task_id,
+                                payload=PlanUpdatedPayload(task_id=task_id, plan=ui_plan).model_dump(),
+                            )
+                        except Exception as plan_err:
+                            logger.debug("Plan conversion notice: %s", plan_err)
+
+                    # Update history store record
+                    rec = await self._history_store.get_record_by_task_id(task_id)
+                    is_successful = getattr(task_exec_res, "is_success", False)
+                    comp_status = getattr(task_exec_res, "completion_status", None)
+                    if rec:
+                        if comp_status and comp_status.value in ExecutionStatus.__members__:
+                            rec.status = ExecutionStatus[comp_status.value]
+                        else:
+                            rec.status = ExecutionStatus.COMPLETED if is_successful else ExecutionStatus.FAILED
+                        rec.completed_at = datetime.now(timezone.utc)
+                        rec.duration_ms = getattr(task_exec_res, "elapsed_duration_ms", 0.0)
+                        rec.failure_reason = getattr(task_exec_res, "failure_reason", None)
+                        rec.failure_code = getattr(task_exec_res, "failure_code", None)
+                        if task_exec_res.plan:
+                            rec.total_steps = len(task_exec_res.plan.steps)
+                            rec.steps_completed = len(task_exec_res.plan.steps) if is_successful else 0
+                        await self._history_store.save_record(rec)
+                        await self._emit_event(
+                            EventType.EXECUTION_RECORD_UPDATED,
+                            session_id=session_id,
+                            correlation_id=task_id,
+                            payload={"record": rec.model_dump(mode="json")},
+                        )
+
+                    if is_successful:
+                        await self._task_manager.update_status(task_id, TaskStatus.VERIFYING, metadata=task.metadata)
+                        await self._emit_task_event(task_id, TaskStatus.VERIFYING)
+                        await self._task_manager.update_status(task_id, TaskStatus.COMPLETED, metadata=task.metadata)
+                        await self._emit_task_event(task_id, TaskStatus.COMPLETED)
+                    else:
+                        err_code = getattr(task_exec_res, "failure_code", "TASK_EXECUTION_FAILED") or "TASK_EXECUTION_FAILED"
+                        err_msg = getattr(task_exec_res, "failure_reason", "Task goal could not be verified or completed") or "Task goal could not be verified or completed"
+                        logger.warning("Task %s failed physical execution: [%s] %s", task_id, err_code, err_msg)
+                        err_detail = ErrorDetail(
+                            code=err_code,
+                            message=err_msg,
+                            recoverable=False,
+                        )
+                        terminal_status = (
+                            TaskStatus.CANCELLED
+                            if (comp_status and comp_status.value == "CANCELLED")
+                            else TaskStatus.FAILED
+                        )
+                        await self._task_manager.update_status(task_id, terminal_status, error=err_detail, metadata=task.metadata)
+                        await self._emit_task_event(task_id, terminal_status, error=err_detail)
+                    return
+
                 # Production Path: Execute Natural Language Autonomous Task end-to-end via unified AgentExecutionLoop
                 logger.info("Executing autonomous task %s via AgentExecutionLoop: '%s'", task_id, task.prompt)
                 agent_res: AgentExecutionResult = await self._agent_loop.run(
@@ -1336,7 +1507,8 @@ class OrbitOrchestrator:
                 )
 
                 task.metadata["agent_execution_result"] = agent_res.model_dump()
-                task.metadata["task_understanding"] = agent_res.objective.model_dump()
+                task.metadata["task_objective"] = agent_res.objective.model_dump()
+
 
                 # Emit Plan if formulated from step history
                 if agent_res.step_history:

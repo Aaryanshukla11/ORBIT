@@ -83,17 +83,260 @@ class StructuredObjective(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of interpretation")
 
 
+class SubgoalStatus(str, Enum):
+    """Authoritative lifecycle status of an atomic milestone subgoal."""
+
+    PENDING = "PENDING"          # Dependencies not yet satisfied
+    READY = "READY"              # Dependencies satisfied, eligible for scheduling/execution
+    IN_PROGRESS = "IN_PROGRESS"  # Actively executing under PrimitiveExecutionController
+    COMPLETED = "COMPLETED"      # Post-condition verified, terminal success for this node
+    BLOCKED = "BLOCKED"          # One or more ancestor dependencies failed or was aborted
+    FAILED = "FAILED"            # Node execution failed and exhausted retries
+
+
 class SubObjective(BaseModel):
-    """Atomic milestone sub-goal within a decomposed plan."""
+    """Atomic milestone sub-goal specification within a decomposed plan."""
 
     sub_id: str = Field(default_factory=lambda: f"sub_{uuid4().hex[:8]}")
     title: str = Field(..., description="High-level title of sub-goal milestone")
     description: str = Field(default="", description="Detailed milestone goal")
+    dependencies: List[str] = Field(default_factory=list, description="List of ancestor sub_ids required before this milestone")
     target_entity: Optional[str] = Field(default=None, description="App, website, document, or control targeted")
     success_criteria: List[str] = Field(default_factory=list, description="Verifiable success criteria for this sub-goal")
     constraints: List[str] = Field(default_factory=list, description="Milestone-specific constraints")
     preferred_primitives: List[AbstractActionType] = Field(default_factory=list, description="Suggested canonical primitives")
     is_completed: bool = Field(default=False)
+
+
+class ProgressNode(BaseModel):
+    """Authoritative runtime lifecycle tracking node for a single subgoal in ProgressGraph."""
+
+    sub_id: str
+    title: str
+    status: SubgoalStatus = Field(default=SubgoalStatus.PENDING)
+    dependencies: List[str] = Field(default_factory=list)
+    dependents: List[str] = Field(default_factory=list)
+    started_at_utc: Optional[datetime] = None
+    completed_at_utc: Optional[datetime] = None
+    failure_reason: Optional[str] = None
+    retry_count: int = 0
+    max_retries: int = 2
+
+
+class ProgressSnapshot(BaseModel):
+    """Immutable projection snapshot of the subgoal lifecycle state.
+
+    INVARIANT: ProgressGraph is the sole source of truth for subgoal lifecycle.
+    WorldModel, Planner, and external observers consume this immutable projection.
+    WorldModel and Planner cannot independently mutate or contradict this state.
+    """
+
+    snapshot_id: str = Field(default_factory=lambda: f"snap_{uuid4().hex[:8]}")
+    active_subgoal_id: Optional[str] = None
+    completed_subgoals: List[str] = Field(default_factory=list)
+    pending_subgoals: List[str] = Field(default_factory=list)
+    ready_subgoals: List[str] = Field(default_factory=list)
+    blocked_subgoals: List[str] = Field(default_factory=list)
+    failed_subgoals: List[str] = Field(default_factory=list)
+    nodes: Dict[str, ProgressNode] = Field(default_factory=dict)
+    is_fully_completed: bool = False
+    is_failed: bool = False
+    timestamp_utc: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ProgressGraph:
+    """Sole authoritative state machine and dependency DAG manager for subgoal lifecycle.
+
+    INVARIANT: ProgressGraph is the single source of truth for subgoal status transitions.
+    All transitions must be topologically valid, cycle-free, and atomically verified.
+    WorldModel may reference/projection-cache progress state but cannot independently mutate or contradict it.
+    """
+
+    def __init__(self, sub_objectives: Optional[List[SubObjective]] = None) -> None:
+        self._nodes: Dict[str, ProgressNode] = {}
+        self._active_subgoal_id: Optional[str] = None
+        if sub_objectives:
+            self.load_sub_objectives(sub_objectives)
+
+    def load_sub_objectives(self, sub_objectives: List[SubObjective]) -> None:
+        """Initialize the graph from milestone specifications, validating acyclicity."""
+        self._nodes.clear()
+        self._active_subgoal_id = None
+
+        # 1. Register all nodes
+        for sub in sub_objectives:
+            node = ProgressNode(
+                sub_id=sub.sub_id,
+                title=sub.title,
+                status=SubgoalStatus.PENDING,
+                dependencies=list(sub.dependencies),
+                dependents=[],
+            )
+            self._nodes[sub.sub_id] = node
+
+        # 2. Validate all dependency IDs exist and register dependents
+        for node in self._nodes.values():
+            for dep_id in node.dependencies:
+                if dep_id not in self._nodes:
+                    raise ValueError(f"Subgoal '{node.sub_id}' specifies non-existent dependency '{dep_id}'")
+                self._nodes[dep_id].dependents.append(node.sub_id)
+
+        # 3. Validate acyclicity via topological sort
+        self.topological_sort()
+
+        # 4. Initialize initial READY nodes (zero dependencies)
+        for node in self._nodes.values():
+            if not node.dependencies:
+                node.status = SubgoalStatus.READY
+
+    def topological_sort(self) -> List[str]:
+        """Compute topological sort; raises ValueError if a cycle is detected."""
+        in_degree: Dict[str, int] = {nid: len(n.dependencies) for nid, n in self._nodes.items()}
+        queue: List[str] = [nid for nid, deg in in_degree.items() if deg == 0]
+        sorted_nodes: List[str] = []
+
+        while queue:
+            curr = queue.pop(0)
+            sorted_nodes.append(curr)
+            for dependent_id in self._nodes[curr].dependents:
+                in_degree[dependent_id] -= 1
+                if in_degree[dependent_id] == 0:
+                    queue.append(dependent_id)
+
+        if len(sorted_nodes) != len(self._nodes):
+            raise ValueError("Dependency cycle detected in subgoal graph")
+
+        return sorted_nodes
+
+    @property
+    def active_subgoal_id(self) -> Optional[str]:
+        return self._active_subgoal_id
+
+    def get_node(self, sub_id: str) -> Optional[ProgressNode]:
+        return self._nodes.get(sub_id)
+
+    def get_ready_subgoals(self) -> List[ProgressNode]:
+        """Return list of subgoals ready to be scheduled and executed."""
+        return [n for n in self._nodes.values() if n.status == SubgoalStatus.READY]
+
+    def get_active_subgoal(self) -> Optional[ProgressNode]:
+        """Return the currently executing subgoal, if any."""
+        if self._active_subgoal_id and self._active_subgoal_id in self._nodes:
+            return self._nodes[self._active_subgoal_id]
+        return None
+
+    def start_subgoal(self, sub_id: str) -> ProgressNode:
+        """Transition a READY subgoal to IN_PROGRESS. Raises ValueError if not READY."""
+        if sub_id not in self._nodes:
+            raise KeyError(f"Subgoal '{sub_id}' not found in ProgressGraph")
+        node = self._nodes[sub_id]
+        if node.status != SubgoalStatus.READY:
+            raise ValueError(f"Cannot start subgoal '{sub_id}': status is {node.status.value}, expected READY")
+
+        node.status = SubgoalStatus.IN_PROGRESS
+        node.started_at_utc = datetime.now(timezone.utc)
+        self._active_subgoal_id = sub_id
+        return node
+
+    def complete_subgoal(self, sub_id: str) -> ProgressNode:
+        """Transition an IN_PROGRESS subgoal to COMPLETED and unlock ready dependents."""
+        if sub_id not in self._nodes:
+            raise KeyError(f"Subgoal '{sub_id}' not found in ProgressGraph")
+        node = self._nodes[sub_id]
+        if node.status != SubgoalStatus.IN_PROGRESS:
+            raise ValueError(f"Cannot complete subgoal '{sub_id}': status is {node.status.value}, expected IN_PROGRESS")
+
+        node.status = SubgoalStatus.COMPLETED
+        node.completed_at_utc = datetime.now(timezone.utc)
+        if self._active_subgoal_id == sub_id:
+            self._active_subgoal_id = None
+
+        # Check all dependents: if all their dependencies are now COMPLETED, transition PENDING -> READY
+        for dep_id in node.dependents:
+            dep_node = self._nodes[dep_id]
+            if dep_node.status == SubgoalStatus.PENDING:
+                all_deps_done = all(
+                    self._nodes[d].status == SubgoalStatus.COMPLETED
+                    for d in dep_node.dependencies
+                )
+                if all_deps_done:
+                    dep_node.status = SubgoalStatus.READY
+
+        return node
+
+    def fail_subgoal(self, sub_id: str, reason: str, allow_retry: bool = False) -> bool:
+        """Transition an active/ready subgoal to FAILED.
+        
+        If allow_retry and retry limit not reached, resets to READY and returns True.
+        Otherwise marks FAILED, cascades BLOCKED to all downstream dependents, and returns False.
+        """
+        if sub_id not in self._nodes:
+            raise KeyError(f"Subgoal '{sub_id}' not found in ProgressGraph")
+        node = self._nodes[sub_id]
+        if node.status not in (SubgoalStatus.IN_PROGRESS, SubgoalStatus.READY):
+            raise ValueError(f"Cannot fail subgoal '{sub_id}': status is {node.status.value}")
+
+        if allow_retry and node.retry_count < node.max_retries:
+            node.retry_count += 1
+            node.status = SubgoalStatus.READY
+            if self._active_subgoal_id == sub_id:
+                self._active_subgoal_id = None
+            return True
+
+        node.status = SubgoalStatus.FAILED
+        node.failure_reason = reason
+        if self._active_subgoal_id == sub_id:
+            self._active_subgoal_id = None
+
+        # Cascade BLOCKED to all downstream dependents recursively
+        queue: List[str] = list(node.dependents)
+        while queue:
+            curr_id = queue.pop(0)
+            curr_node = self._nodes[curr_id]
+            if curr_node.status in (SubgoalStatus.PENDING, SubgoalStatus.READY):
+                curr_node.status = SubgoalStatus.BLOCKED
+                curr_node.failure_reason = f"Ancestor dependency '{sub_id}' failed: {reason}"
+                queue.extend(curr_node.dependents)
+
+        return False
+
+    def get_snapshot(self) -> ProgressSnapshot:
+        """Generate an immutable projection snapshot for WorldModel and Planner."""
+        completed: List[str] = []
+        pending: List[str] = []
+        ready: List[str] = []
+        blocked: List[str] = []
+        failed: List[str] = []
+        nodes_copy: Dict[str, ProgressNode] = {}
+
+        for nid, node in self._nodes.items():
+            nodes_copy[nid] = node.model_copy()
+            if node.status == SubgoalStatus.COMPLETED:
+                completed.append(nid)
+            elif node.status == SubgoalStatus.PENDING:
+                pending.append(nid)
+            elif node.status == SubgoalStatus.READY:
+                ready.append(nid)
+            elif node.status == SubgoalStatus.BLOCKED:
+                blocked.append(nid)
+            elif node.status == SubgoalStatus.FAILED:
+                failed.append(nid)
+
+        total_nodes = len(self._nodes)
+        is_fully_completed = (total_nodes > 0) and (len(completed) == total_nodes)
+        is_failed = len(failed) > 0 or (len(blocked) > 0 and not ready and not self._active_subgoal_id)
+
+        return ProgressSnapshot(
+            active_subgoal_id=self._active_subgoal_id,
+            completed_subgoals=completed,
+            pending_subgoals=pending,
+            ready_subgoals=ready,
+            blocked_subgoals=blocked,
+            failed_subgoals=failed,
+            nodes=nodes_copy,
+            is_fully_completed=is_fully_completed,
+            is_failed=is_failed,
+        )
 
 
 class DecomposedPlan(BaseModel):
@@ -243,6 +486,10 @@ __all__ = [
     "SelectOptionParams",
     "SemanticTarget",
     "SendHotkeyParams",
+    "ProgressGraph",
+    "ProgressNode",
+    "ProgressSnapshot",
+    "SubgoalStatus",
     "StructuredObjective",
     "SubObjective",
     "TERMINAL_STATES",

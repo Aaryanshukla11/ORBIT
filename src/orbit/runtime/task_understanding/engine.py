@@ -101,7 +101,7 @@ class TaskUnderstandingEngine:
 
 
         # 3. Cognitive LLM Decomposition fallback for complex / unparsed goals
-        if self._llm_decomposer is not None:
+        if self._llm_decomposer is not None and getattr(self._llm_decomposer, "is_model_active", lambda: False)():
             llm_intents = await self._llm_decomposer.decompose_request(raw_req)
             if llm_intents:
                 llm_result = self._validator.validate(raw_req, llm_intents)

@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 from pydantic import BaseModel, Field
 
+from orbit.runtime.cognitive.models import ProgressSnapshot
+
 
 class ControlSummary(BaseModel):
     """Normalized summary of a visible UI control."""
@@ -73,6 +75,22 @@ class AgentWorldModel(BaseModel):
         description="Recorded sequence failures to avoid during replanning",
     )
 
+    # Progress & Subgoal State (Strict projection cache; ProgressGraph is sole authority)
+    progress_snapshot: Optional[ProgressSnapshot] = Field(
+        default=None,
+        description="Immutable projection snapshot of subgoal lifecycle from ProgressGraph",
+    )
+
     # Telemetry
     last_screenshot_path: Optional[str] = None
     last_updated_utc: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def update_progress_snapshot(self, snapshot: ProgressSnapshot) -> None:
+        """Update the immutable progress projection.
+
+        INVARIANT: ProgressGraph is the sole source of truth for subgoal lifecycle.
+        WorldModel may reference/projection-cache progress state but cannot independently
+        mutate or contradict it.
+        """
+        self.progress_snapshot = snapshot
+        self.last_updated_utc = datetime.now(timezone.utc)

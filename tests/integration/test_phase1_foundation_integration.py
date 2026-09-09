@@ -58,3 +58,104 @@ async def test_phase1_captcha_detection_blocks_execution():
     assert res.is_success is False
     assert res.failure_code == "RUNTIME_ENVIRONMENT_INFEASIBLE"
     assert "CAPTCHA" in res.failure_reason
+
+
+@pytest.mark.asyncio
+async def test_phase1_progress_graph_dag_and_world_model_integration():
+    """Integration: ProgressGraph DAG coordinates multi-milestone plan and updates WorldModel projection."""
+    from orbit.runtime.cognitive.models import ProgressGraph, SubObjective, SubgoalStatus
+    from orbit.runtime.world_model.model import AgentWorldModel
+
+    sub1 = SubObjective(sub_id="s1", title="Initialize Paint Canvas", dependencies=[])
+    sub2 = SubObjective(sub_id="s2", title="Draw Blue Rectangle", dependencies=["s1"])
+    sub3 = SubObjective(sub_id="s3", title="Save Artwork", dependencies=["s2"])
+
+    graph = ProgressGraph([sub1, sub2, sub3])
+    wm = AgentWorldModel()
+
+    # Step 1: Initial state
+    wm.update_progress_snapshot(graph.get_snapshot())
+    assert wm.progress_snapshot.ready_subgoals == ["s1"]
+    assert len(wm.progress_snapshot.pending_subgoals) == 2
+
+    # Step 2: Progress through s1
+    graph.start_subgoal("s1")
+    graph.complete_subgoal("s1")
+    wm.update_progress_snapshot(graph.get_snapshot())
+    assert "s1" in wm.progress_snapshot.completed_subgoals
+    assert wm.progress_snapshot.ready_subgoals == ["s2"]
+
+    # Step 3: Progress through s2 and s3
+    graph.start_subgoal("s2")
+    graph.complete_subgoal("s2")
+    graph.start_subgoal("s3")
+    graph.complete_subgoal("s3")
+
+    wm.update_progress_snapshot(graph.get_snapshot())
+    assert wm.progress_snapshot.is_fully_completed is True
+    assert wm.progress_snapshot.is_failed is False
+    assert len(wm.progress_snapshot.completed_subgoals) == 3
+
+
+@pytest.mark.asyncio
+async def test_phase1_task_scoped_memory_and_secret_isolation_integration():
+    """Integration: TaskScopedMemory isolates variables and credentials during execution and purges cleanly."""
+    from orbit.runtime.memory.task_memory import TaskScopedMemory
+
+    mem = TaskScopedMemory(task_id="integration_task_42")
+
+    # Ephemeral variables
+    mem.set_variable("current_step", "step_02")
+    mem.set_variable("doc_name", "annual_report.docx")
+
+    # Secret isolation
+    token = mem.secret_store.store_secret("db_pass", "super_secret_db_pass_123")
+    assert mem.secret_store.resolve_secret(token) == "super_secret_db_pass_123"
+
+    # Masking in telemetry
+    log_msg = f"Connecting to DB with password super_secret_db_pass_123 on port 5432"
+    masked = mem.secret_store.mask_text(log_msg)
+    assert "super_secret_db_pass_123" not in masked
+    assert "***REDACTED***" in masked
+
+    # Task completion lifecycle wipe
+    mem.wipe()
+    assert mem.is_wiped is True
+    assert mem.secret_store.resolve_secret("db_pass") is None
+
+
+@pytest.mark.asyncio
+async def test_phase1_clarification_blocks_ambiguous_intent_without_physical_dispatch():
+    """Integration: Ambiguous intent triggers ClarificationManager, halting physical execution."""
+    from orbit.runtime.cognitive.clarification import ClarificationManager
+    from orbit.runtime.task_understanding.models import (
+        RawTaskRequest,
+        StructuredTaskIntent,
+        TaskGoal,
+        TaskUnderstandingResult,
+        TaskUnderstandingStatus,
+    )
+
+    mgr = ClarificationManager()
+
+    ambig_res = TaskUnderstandingResult(
+        request_id="req_ambig_test",
+        raw_request=RawTaskRequest(raw_text="Click it"),
+        status=TaskUnderstandingStatus.AMBIGUOUS,
+        intents=[
+            StructuredTaskIntent(
+                intent_id="i_ambig",
+                sequence_index=0,
+                goal=TaskGoal.CLICK_TARGET,
+                is_ambiguous=True,
+                unresolved_reason="Target has no locator or application context",
+            )
+        ],
+        unresolved_constraints=["Ambiguous control reference 'it'"],
+    )
+
+    assert mgr.is_clarification_needed(ambig_res) is True
+    req = mgr.generate_clarification_request("task_test_ambig", "Click it", ambig_res)
+    assert len(req.clarification_questions) > 0
+    assert any("Ambiguous control reference" in q for q in req.clarification_questions)
+

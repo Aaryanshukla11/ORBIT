@@ -50,6 +50,8 @@ class AbstractActionType(str, Enum):
     BROWSER_NAVIGATE = "BROWSER_NAVIGATE"
     SPREADSHEET_READ = "SPREADSHEET_READ"
     SPREADSHEET_WRITE = "SPREADSHEET_WRITE"
+    SHELL_EXECUTE = "SHELL_EXECUTE"
+    IMAGE_GENERATE = "IMAGE_GENERATE"
 
     # ── CONTROL SIGNALS (Never physical execution actions) ───────────────
     COMPLETE_GOAL = "COMPLETE_GOAL"
@@ -84,6 +86,8 @@ TIER3_ENVIRONMENT_INTERFACES = frozenset({
     AbstractActionType.BROWSER_NAVIGATE,
     AbstractActionType.SPREADSHEET_READ,
     AbstractActionType.SPREADSHEET_WRITE,
+    AbstractActionType.SHELL_EXECUTE,
+    AbstractActionType.IMAGE_GENERATE,
 })
 
 CONTROL_SIGNAL_PRIMITIVES = frozenset({

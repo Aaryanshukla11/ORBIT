@@ -305,10 +305,8 @@ class TaskCompletionEngine:
             )
 
         # Authoritative Execution Path: Execute via closed-loop Cognitive Intent & Decision Engine
-        # (Unless explicitly asked for DAG plan or running legacy plan executor mock in tests)
-        from unittest.mock import MagicMock
-        is_mock_executor = isinstance(self._plan_executor, MagicMock) or getattr(self._plan_executor, "__module__", "").startswith("unittest.mock")
-        if not is_mock_executor and not (context and (context.get("plan_only") or context.get("use_dag_plan"))):
+        # when explicitly requested via context flag "use_cognitive_loop"
+        if context and context.get("use_cognitive_loop"):
             logger.info("TaskCompletionEngine executing task %s via CognitiveExecutionLoop: '%s'", effective_task_id, goal)
             cog_res: CognitiveExecutionResult = await self._cognitive_loop.run(
                 prompt=goal,
