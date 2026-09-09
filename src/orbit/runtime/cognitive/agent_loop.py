@@ -50,6 +50,7 @@ from orbit.runtime.agent.contracts import (
     OutcomeStatus,
     ResolvedAction,
     SemanticTarget,
+    TextMatchState,
     VerificationStrategy,
 )
 from orbit.runtime.agent.state import DesktopStateSnapshot
@@ -89,6 +90,7 @@ from orbit.runtime.targeting import (
 )
 from orbit.runtime.task_completion.goal_verifier import GoalVerifier
 from orbit.runtime.task_completion.models import TaskCompletionStatus
+from orbit.runtime.capabilities import FeasibilityAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,7 @@ class AgentExecutionLoop:
         recovery_manager: Optional[AgentRecoveryManager] = None,
         event_bus: Optional[EventBus] = None,
         budget: Optional[ExecutionBudget] = None,
+        feasibility_analyzer: Optional[FeasibilityAnalyzer] = None,
     ) -> None:
         self._session_manager = model_session_manager
         if router is not None:
@@ -136,11 +139,14 @@ class AgentExecutionLoop:
         self._keyboard = keyboard
         self._observation = observation
         self._goal_verifier = goal_verifier
+        self._feasibility_analyzer = feasibility_analyzer or FeasibilityAnalyzer()
         self._budget = budget or ExecutionBudget()
         self._recovery_manager = recovery_manager or AgentRecoveryManager(
             max_recoveries_per_transition=self._budget.max_recoveries_per_transition
         )
         self._event_bus = event_bus
+        self._text_input_lock = asyncio.Lock()
+        self._last_text_input_diagnostics: Dict[str, Any] = {}
 
     @property
     def router(self) -> Optional[ModelRouter]:
@@ -160,6 +166,8 @@ class AgentExecutionLoop:
         self._router = ModelRouter(session_manager=msm)
         self._interpreter.set_model_session_manager(msm)
         self._decision_engine.set_model_session_manager(msm)
+        if hasattr(self._feasibility_analyzer, "environment_discovery"):
+            self._feasibility_analyzer.environment_discovery.set_model_session_manager(msm)
 
     def set_router(self, router: ModelRouter) -> None:
         """Attach an explicit ModelRouter."""
@@ -167,6 +175,8 @@ class AgentExecutionLoop:
         self._session_manager = router.session_manager
         self._interpreter.set_model_session_manager(router.session_manager)
         self._decision_engine.set_model_session_manager(router.session_manager)
+        if hasattr(self._feasibility_analyzer, "environment_discovery"):
+            self._feasibility_analyzer.environment_discovery.set_model_session_manager(router.session_manager)
 
     async def run(
         self,
@@ -196,6 +206,39 @@ class AgentExecutionLoop:
             objective.end_condition,
             objective.target_entities,
         )
+
+        # 2. Capability Discovery & Feasibility Analysis Gate
+        feasibility = self._feasibility_analyzer.evaluate_feasibility(objective)
+        if not feasibility.is_feasible:
+            logger.warning("[CAPABILITY FEASIBILITY GATE] Task %s rejected: %s", effective_task_id, feasibility.explanation)
+            sm.transition_to(
+                AgentLoopState.FAILED,
+                cycle_number=0,
+                failure_reason=feasibility.explanation,
+            )
+            return AgentExecutionResult(
+                task_id=effective_task_id,
+                objective=objective,
+                is_success=False,
+                total_steps=0,
+                step_history=[],
+                final_status=TaskCompletionStatus.UNSUPPORTED,
+                failure_reason=feasibility.explanation,
+                failure_code="GOAL_NOT_FEASIBLY_EXECUTABLE",
+                elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                state_transitions=sm.history,
+                cycle_traces=[],
+                recovery_records=[],
+            )
+
+        if feasibility.matched_strategy is not None:
+            context["selected_strategy"] = feasibility.matched_strategy.model_dump()
+            logger.info(
+                "Execution guided by Strategy '%s' (coverage: %.2f, prob: %.2f)",
+                feasibility.matched_strategy.name,
+                feasibility.matched_strategy.semantic_goal_coverage,
+                feasibility.matched_strategy.estimated_success_probability,
+            )
 
         step_history: List[CognitiveStepResult] = []
         cycle_traces: List[CycleExecutionTrace] = []
@@ -382,7 +425,9 @@ class AgentExecutionLoop:
                         if hasattr(dtrace, "model_id") and "mock" not in type(dtrace.model_id).__name__.lower():
                             cycle_trace.model_id = str(dtrace.model_id)
                             cycle_trace.model_provider = str(dtrace.model_provider)
-                            cycle_trace.local_or_cloud = "CLOUD" if getattr(dtrace, "escalated_to_cloud", False) else "LOCAL"
+                            prov_upper = str(dtrace.model_provider).upper()
+                            is_local_provider = prov_upper in ("OLLAMA", "LM_STUDIO", "LOCAL_FILE") or "LOCAL" in prov_upper
+                            cycle_trace.local_or_cloud = "CLOUD" if (getattr(dtrace, "escalated_to_cloud", False) or not is_local_provider) else "LOCAL"
                             cycle_trace.vision_capable = bool(getattr(dtrace, "used_vision", False))
                             cycle_trace.screenshot_attached = "SCREENSHOT" in getattr(dtrace, "input_modalities", [])
                             lat = getattr(dtrace, "model_latency_ms", None)
@@ -969,6 +1014,39 @@ class AgentExecutionLoop:
             cycle_trace.verification_strategy = outcome.verification_strategy.value if hasattr(outcome.verification_strategy, "value") else str(outcome.verification_strategy)
             cycle_trace.verification_reason = outcome.verification_reason or ""
 
+            # Structured diagnostics for TYPE_TEXT actions (Part 1)
+            if action.action_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE):
+                t_diag = getattr(self, "_last_text_input_diagnostics", {})
+                txt_param = str(action.parameters.get("text", action.parameters.get("query", "")))
+                logger.info(
+                    "\n[TYPE_TEXT EXECUTION & REALITY VERIFICATION]\n"
+                    "  Attempt ID:                  %s\n"
+                    "  Intended Text:               '%s' (len=%d)\n"
+                    "  Selected Strategy:           %s\n"
+                    "  Keyboard Adapter:            %s\n"
+                    "  Target Window (Before):      %s\n"
+                    "  Target Window (After):       %s\n"
+                    "  Dispatch Result:             %s\n"
+                    "  Actual Text Detected:        '%s'\n"
+                    "  Text Match Result:           %s\n"
+                    "  Verification Method:         %s\n"
+                    "  Expected Effect Observed:    %s\n"
+                    "  Goal Satisfied:              %s",
+                    t_diag.get("input_attempt_id", "N/A"),
+                    txt_param,
+                    len(txt_param),
+                    t_diag.get("selected_input_strategy", "NONE"),
+                    t_diag.get("keyboard_adapter_name", "NONE"),
+                    t_diag.get("target_window_before_typing", "UNKNOWN"),
+                    t_diag.get("target_window_after_typing", "UNKNOWN"),
+                    outcome.dispatch_success,
+                    outcome.observed_delta.get("observed_text", "NONE"),
+                    outcome.observed_delta.get("match_state", "UNKNOWN"),
+                    outcome.observed_delta.get("text_verification", {}).get("primary_source", "NONE"),
+                    outcome.expected_effect_observed,
+                    outcome.goal_satisfied,
+                )
+
             # -------------------------------------------------------------
             # PHASE 9: RECOVERY OR PROGRESS EVALUATION
             # -------------------------------------------------------------
@@ -976,7 +1054,90 @@ class AgentExecutionLoop:
             # dispatch_success == True DOES NOT imply expected_effect_observed == True!
             if not exec_result.expected_effect_observed:
                 logger.warning("Action %s dispatched but expected effect was NOT observed; evaluating recovery", action.action_id)
-                if self._recovery_manager.can_attempt_recovery():
+
+                # Part 6: Controlled Post-Type Recovery
+                if action.action_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE) and getattr(action, "_typing_recovery_attempts", 0) < 2:
+                    action._typing_recovery_attempts = getattr(action, "_typing_recovery_attempts", 0) + 1
+                    logger.info("Executing controlled text recovery attempt %d/2 for action %s", action._typing_recovery_attempts, action.action_id)
+                    
+                    # Refocus target
+                    if current_obs.active_window_hwnd and sys.platform == "win32":
+                        try:
+                            import ctypes
+                            ctypes.windll.user32.SetForegroundWindow(current_obs.active_window_hwnd)
+                            await asyncio.sleep(0.05)
+                        except Exception:
+                            pass
+
+                    # Determine if text is corrupted (PARTIAL_MATCH or MISMATCH)
+                    t_match = outcome.observed_delta.get("match_state", "")
+                    if t_match in (TextMatchState.PARTIAL_MATCH.value, TextMatchState.MISMATCH.value):
+                        logger.info("Corrupted text detected [%s]; safely clearing controlled editor before retry", t_match)
+                        if sys.platform == "win32":
+                            try:
+                                import ctypes
+                                u32 = ctypes.windll.user32
+                                u32.keybd_event(0x11, 0, 0, 0)
+                                u32.keybd_event(0x41, 0, 0, 0)
+                                u32.keybd_event(0x41, 0, 2, 0)
+                                u32.keybd_event(0x11, 0, 2, 0)
+                                await asyncio.sleep(0.03)
+                                u32.keybd_event(0x2E, 0, 0, 0)
+                                u32.keybd_event(0x2E, 0, 2, 0)
+                                await asyncio.sleep(0.05)
+                            except Exception:
+                                pass
+
+                    # Alternate strategy
+                    curr_strat = self._last_text_input_diagnostics.get("selected_input_strategy")
+                    alt_strat = "KEYBOARD_STREAM" if curr_strat == "CLIPBOARD_ATOMIC" else "CLIPBOARD_ATOMIC"
+                    text = str(action.parameters.get("text", action.parameters.get("query", "")))
+                    press_enter = bool(action.parameters.get("press_enter", False))
+                    rec_ok, rec_err, rec_diag = await self._execute_deterministic_text_input(
+                        text=text,
+                        press_enter=press_enter,
+                        target_hwnd=current_obs.active_window_hwnd,
+                        target_title=current_obs.active_window_title,
+                        preferred_strategy=alt_strat,
+                        cancel_token=cancel_token,
+                    )
+
+                    await asyncio.sleep(0.35)
+                    post_obs = await self._observer.observe(objective)
+                    post_state = DesktopStateSnapshot(
+                        snapshot_id=post_obs.observation_id,
+                        active_window_hwnd=post_obs.active_window_hwnd,
+                        active_window_title=post_obs.active_window_title,
+                        visible_windows=post_obs.visible_windows,
+                        target_app_exists=post_obs.target_app_exists,
+                        target_app_is_active=post_obs.target_app_is_active,
+                        canvas_status=post_obs.canvas_status or "UNKNOWN",
+                        ocr_tokens=post_obs.ocr_tokens,
+                    )
+                    outcome = await self._transition_verifier.verify_action_outcome(
+                        action=action,
+                        dispatch_success=rec_ok,
+                        pre_state=pre_state,
+                        post_state=post_state,
+                        post_observation=post_obs.desktop_observation,
+                    )
+                    exec_result = ActionExecutionResult(
+                        action_id=action.action_id,
+                        dispatch_success=outcome.dispatch_success,
+                        expected_effect_observed=outcome.expected_effect_observed,
+                        goal_satisfied=outcome.goal_satisfied,
+                        outcome_status=outcome.outcome_status,
+                        verification_strategy=outcome.verification_strategy,
+                        verification_reason=f"Recovery [{alt_strat}]: {outcome.verification_reason}",
+                        observed_delta=outcome.observed_delta,
+                        error_message=rec_err or outcome.error_message,
+                        duration_ms=outcome.duration_ms,
+                    )
+                    cycle_trace.observed_effect = outcome.observed_delta or "None"
+                    cycle_trace.expected_effect_observed = outcome.expected_effect_observed
+                    cycle_trace.verification_reason = exec_result.verification_reason
+
+                elif self._recovery_manager.can_attempt_recovery():
                     strategy, diag = self._recovery_manager.diagnose_failure(action, current_obs, post_obs, exec_result)
                     sm.transition_to(
                         AgentLoopState.RECOVERING,
@@ -1247,9 +1408,13 @@ class AgentExecutionLoop:
             elif act_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.TYPE):
                 text = str(params.get("text", params.get("query", "")))
                 press_enter = bool(params.get("press_enter", False))
-                dispatch_success, err_msg = await self._execute_deterministic_text_input(
+                pref_strategy = params.get("strategy")
+                dispatch_success, err_msg, text_diag = await self._execute_deterministic_text_input(
                     text=text,
                     press_enter=press_enter,
+                    target_hwnd=pre_obs.active_window_hwnd if hasattr(pre_obs, "active_window_hwnd") else None,
+                    target_title=pre_obs.active_window_title if hasattr(pre_obs, "active_window_title") else None,
+                    preferred_strategy=pref_strategy,
                     cancel_token=cancel_token,
                 )
 
@@ -1575,157 +1740,252 @@ class AgentExecutionLoop:
             ]
             return [front_face, top_face, side_edge]
 
+    @staticmethod
+    def _get_active_window_title_safe() -> str:
+        """Helper to get active window title without throwing."""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                hwnd = user32.GetForegroundWindow()
+                if hwnd:
+                    buf = ctypes.create_unicode_buffer(512)
+                    user32.GetWindowTextW(hwnd, buf, 512)
+                    return buf.value
+            except Exception:
+                pass
+        return "UNKNOWN"
+
     async def _execute_deterministic_text_input(
         self,
         text: str,
         press_enter: bool = False,
+        target_hwnd: Optional[int] = None,
+        target_title: Optional[str] = None,
+        preferred_strategy: Optional[str] = None,
         cancel_token: Optional[CancellationToken] = None,
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
         """Production-hardened deterministic text entry with safe clipboard paste, modifier release, and Unicode injection."""
+        attempt_id = str(uuid4())
+        t0 = time.perf_counter_ns()
+        diag: Dict[str, Any] = {
+            "input_attempt_id": attempt_id,
+            "intended_text": text,
+            "intended_text_length": len(text),
+            "selected_input_strategy": "NONE",
+            "keyboard_adapter_name": type(self._keyboard).__name__ if self._keyboard else "NONE",
+            "target_window_before_typing": target_title or str(target_hwnd or "UNKNOWN"),
+            "target_window_after_typing": "UNKNOWN",
+            "dispatch_result": False,
+            "error_message": None,
+            "start_time_ns": t0,
+        }
+
         if cancel_token and cancel_token.is_cancelled:
-            return False, "Cancelled before typing"
+            diag["error_message"] = "Cancelled before typing"
+            return False, "Cancelled before typing", diag
 
-        logger.info("Executing deterministic text entry: len=%d, press_enter=%s", len(text), press_enter)
+        # Part 8: Input Ownership & Concurrency Lock
+        # Ensures only one physical text input operation can own the keyboard pipeline at a time.
+        async with self._text_input_lock:
+            logger.info("Acquired text input lock [attempt_id=%s]: len=%d, press_enter=%s", attempt_id, len(text), press_enter)
 
-        # 0. Clean any stuck hardware keys/modifiers prior to typing
-        if sys.platform == "win32":
             try:
-                import ctypes
-                from ctypes import wintypes
-                u32 = ctypes.windll.user32
-                for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C, 0x33):  # SHIFT, CTRL, ALT, LWIN, RWIN, '3'
-                    u32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
-            except Exception:
-                pass
+                # 1 & 2. Ensure target window is foreground and focused; release stuck modifiers
+                if sys.platform == "win32":
+                    try:
+                        import ctypes
+                        from ctypes import wintypes
+                        u32 = ctypes.windll.user32
 
-        # Strategy A: Native adapter if configured and available
-        if self._keyboard is not None:
-            try:
-                await self._keyboard.type_text(text)
-                if press_enter:
-                    await self._keyboard.press_key("Return")
-                return True, None
-            except Exception as k_ex:
-                logger.warning("Keyboard adapter type_text failed (%s); switching to deterministic clipboard injection", k_ex)
+                        active_hwnd = u32.GetForegroundWindow()
+                        if target_hwnd and target_hwnd != active_hwnd:
+                            u32.SetForegroundWindow(target_hwnd)
+                            await asyncio.sleep(0.05)
 
-        # Strategy B: Deterministic Clipboard Injection (Fast, 100% preserves Unicode without auto-repeat)
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                from ctypes import wintypes
+                        # Part 7: Generic modifier release (SHIFT, CTRL, ALT, LWIN, RWIN)
+                        for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C):
+                            u32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
+                    except Exception as prep_ex:
+                        logger.debug("Pre-typing focus/modifier preparation notice: %s", prep_ex)
 
-                user32 = ctypes.windll.user32
-                kernel32 = ctypes.windll.kernel32
+                # Strategy 1 (Primary): Deterministic Atomic Clipboard Paste (Fast, atomic, immune to auto-repeat)
+                if sys.platform == "win32" and preferred_strategy != "KEYBOARD_STREAM":
+                    try:
+                        diag["selected_input_strategy"] = "CLIPBOARD_ATOMIC"
+                        import ctypes
+                        from ctypes import wintypes
 
-                user32.OpenClipboard.argtypes = [wintypes.HWND]
-                user32.OpenClipboard.restype = wintypes.BOOL
-                user32.CloseClipboard.argtypes = []
-                user32.CloseClipboard.restype = wintypes.BOOL
-                user32.EmptyClipboard.argtypes = []
-                user32.EmptyClipboard.restype = wintypes.BOOL
-                user32.GetClipboardData.argtypes = [wintypes.UINT]
-                user32.GetClipboardData.restype = wintypes.HANDLE
-                user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
-                user32.SetClipboardData.restype = wintypes.HANDLE
-                kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-                kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
-                kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
-                kernel32.GlobalLock.restype = ctypes.c_void_p
-                kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
-                kernel32.GlobalUnlock.restype = wintypes.BOOL
+                        user32 = ctypes.windll.user32
+                        kernel32 = ctypes.windll.kernel32
 
-                # Preserve prior clipboard content if text
-                prev_text = None
-                for _ in range(5):
-                    if user32.OpenClipboard(None):
-                        try:
-                            h_clip = user32.GetClipboardData(13)  # CF_UNICODETEXT
-                            if h_clip:
-                                p_data = kernel32.GlobalLock(h_clip)
-                                if p_data:
-                                    try:
-                                        prev_text = ctypes.wstring_at(p_data)
-                                    finally:
-                                        kernel32.GlobalUnlock(h_clip)
-                        finally:
-                            user32.CloseClipboard()
-                        break
-                    await asyncio.sleep(0.02)
+                        user32.OpenClipboard.argtypes = [wintypes.HWND]
+                        user32.OpenClipboard.restype = wintypes.BOOL
+                        user32.CloseClipboard.argtypes = []
+                        user32.CloseClipboard.restype = wintypes.BOOL
+                        user32.EmptyClipboard.argtypes = []
+                        user32.EmptyClipboard.restype = wintypes.BOOL
+                        user32.GetClipboardData.argtypes = [wintypes.UINT]
+                        user32.GetClipboardData.restype = wintypes.HANDLE
+                        user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+                        user32.SetClipboardData.restype = wintypes.HANDLE
+                        kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+                        kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+                        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+                        kernel32.GlobalLock.restype = ctypes.c_void_p
+                        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+                        kernel32.GlobalUnlock.restype = wintypes.BOOL
 
-                # Set new clipboard content
-                encoded = text.encode("utf-16-le") + b"\x00\x00"
-                h_glob = kernel32.GlobalAlloc(0x0002, len(encoded))  # GMEM_MOVEABLE
-                if h_glob:
-                    p_glob = kernel32.GlobalLock(h_glob)
-                    if p_glob:
-                        ctypes.memmove(p_glob, encoded, len(encoded))
-                        kernel32.GlobalUnlock(h_glob)
+                        # Step 1.1: Preserve prior clipboard text if present
+                        prev_text = None
                         for _ in range(5):
                             if user32.OpenClipboard(None):
                                 try:
-                                    user32.EmptyClipboard()
-                                    user32.SetClipboardData(13, h_glob)
+                                    h_clip = user32.GetClipboardData(13)  # CF_UNICODETEXT
+                                    if h_clip:
+                                        p_data = kernel32.GlobalLock(h_clip)
+                                        if p_data:
+                                            try:
+                                                prev_text = ctypes.wstring_at(p_data)
+                                            finally:
+                                                kernel32.GlobalUnlock(h_clip)
                                 finally:
                                     user32.CloseClipboard()
                                 break
                             await asyncio.sleep(0.02)
 
-                # Send atomic Ctrl+V
-                await asyncio.sleep(0.05)
-                user32.keybd_event(0x11, 0, 0, 0)  # VK_CONTROL down
-                user32.keybd_event(0x56, 0, 0, 0)  # 'V' down
-                user32.keybd_event(0x56, 0, 2, 0)  # 'V' up
-                user32.keybd_event(0x11, 0, 2, 0)  # VK_CONTROL up
-                await asyncio.sleep(0.05)
+                        # Step 1.2: Set target text onto clipboard
+                        encoded = text.encode("utf-16-le") + b"\x00\x00"
+                        h_glob = kernel32.GlobalAlloc(0x0002, len(encoded))  # GMEM_MOVEABLE
+                        clipboard_set = False
+                        if h_glob:
+                            p_glob = kernel32.GlobalLock(h_glob)
+                            if p_glob:
+                                ctypes.memmove(p_glob, encoded, len(encoded))
+                                kernel32.GlobalUnlock(h_glob)
+                                for _ in range(5):
+                                    if user32.OpenClipboard(None):
+                                        try:
+                                            user32.EmptyClipboard()
+                                            user32.SetClipboardData(13, h_glob)
+                                            clipboard_set = True
+                                        finally:
+                                            user32.CloseClipboard()
+                                        break
+                                    await asyncio.sleep(0.02)
 
-                if press_enter:
-                    user32.keybd_event(0x0D, 0, 0, 0)  # ENTER down
-                    user32.keybd_event(0x0D, 0, 2, 0)  # ENTER up
-                    await asyncio.sleep(0.02)
+                        if not clipboard_set:
+                            raise RuntimeError("Failed to set CF_UNICODETEXT on Windows clipboard")
 
-                # Clear any lingering modifiers
-                for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C, 0x33):
-                    user32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
+                        # Step 1.3: Send atomic Ctrl+V with guaranteed Key-Up via try/finally
+                        await asyncio.sleep(0.03)
+                        user32.keybd_event(0x11, 0, 0, 0)  # VK_CONTROL down
+                        try:
+                            user32.keybd_event(0x56, 0, 0, 0)  # 'V' down
+                            user32.keybd_event(0x56, 0, 2, 0)  # 'V' up
+                        finally:
+                            user32.keybd_event(0x11, 0, 2, 0)  # Guaranteed VK_CONTROL up
+                        await asyncio.sleep(0.05)
 
-                return True, None
+                        if press_enter:
+                            user32.keybd_event(0x0D, 0, 0, 0)  # ENTER down
+                            user32.keybd_event(0x0D, 0, 2, 0)  # ENTER up
+                            await asyncio.sleep(0.02)
 
-            except Exception as clip_ex:
-                logger.warning("Clipboard injection failed (%s); falling back to direct scan-code typing", clip_ex)
+                        # Step 1.4: Settle and Restore prior clipboard content if safe
+                        if prev_text is not None:
+                            await asyncio.sleep(0.08)
+                            prev_encoded = prev_text.encode("utf-16-le") + b"\x00\x00"
+                            h_prev = kernel32.GlobalAlloc(0x0002, len(prev_encoded))
+                            if h_prev:
+                                p_prev = kernel32.GlobalLock(h_prev)
+                                if p_prev:
+                                    ctypes.memmove(p_prev, prev_encoded, len(prev_encoded))
+                                    kernel32.GlobalUnlock(h_prev)
+                                    for _ in range(3):
+                                        if user32.OpenClipboard(None):
+                                            try:
+                                                user32.EmptyClipboard()
+                                                user32.SetClipboardData(13, h_prev)
+                                            finally:
+                                                user32.CloseClipboard()
+                                            break
+                                        await asyncio.sleep(0.02)
 
-        # Strategy C: Controlled per-character injection (with strict key-up guarantee)
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                from ctypes import wintypes
-                user32 = ctypes.windll.user32
-                for ch in text:
-                    if cancel_token and cancel_token.is_cancelled:
-                        return False, "Cancelled during typing"
-                    if ch == "\n":
-                        user32.keybd_event(0x0D, 0, 0, 0)
-                        user32.keybd_event(0x0D, 0, 2, 0)
-                    else:
-                        vk = user32.VkKeyScanW(ord(ch))
-                        if vk != -1:
-                            shift = (vk >> 8) & 1
-                            code = vk & 0xFF
-                            if shift:
-                                user32.keybd_event(0x10, 0, 0, 0)
-                            user32.keybd_event(code, 0, 0, 0)
-                            user32.keybd_event(code, 0, 2, 0)
-                            if shift:
-                                user32.keybd_event(0x10, 0, 2, 0)
-                    await asyncio.sleep(0.015)
-                if press_enter:
-                    user32.keybd_event(0x0D, 0, 0, 0)
-                    user32.keybd_event(0x0D, 0, 2, 0)
+                        diag["dispatch_result"] = True
+                        diag["target_window_after_typing"] = self._get_active_window_title_safe()
+                        return True, None, diag
 
-                for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C, 0x33):
-                    user32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
+                    except Exception as clip_ex:
+                        logger.warning("Clipboard injection failed (%s); switching to fallback keyboard stream", clip_ex)
 
-                return True, None
-            except Exception as char_ex:
-                return False, f"Character typing failed: {char_ex}"
+                # Strategy 2 (Fallback): Native Keyboard Adapter
+                if self._keyboard is not None and preferred_strategy != "CLIPBOARD_ATOMIC":
+                    try:
+                        diag["selected_input_strategy"] = "KEYBOARD_STREAM"
+                        await self._keyboard.type_text(text, target_hwnd=target_hwnd)
+                        if press_enter:
+                            await self._keyboard.press_key("Return")
+                        diag["dispatch_result"] = True
+                        diag["target_window_after_typing"] = self._get_active_window_title_safe()
+                        return True, None, diag
+                    except Exception as k_ex:
+                        logger.warning("Keyboard adapter type_text failed: %s", k_ex)
+                        diag["error_message"] = str(k_ex)
 
-        return True, None
+                # Strategy 3 (Ultimate Fallback): Unicode-capable controlled virtual-key injection
+                if sys.platform == "win32":
+                    try:
+                        diag["selected_input_strategy"] = "UNICODE_CONTROLLED"
+                        import ctypes
+                        from ctypes import wintypes
+                        user32 = ctypes.windll.user32
+                        for ch in text:
+                            if cancel_token and cancel_token.is_cancelled:
+                                return False, "Cancelled during typing", diag
+                            if ch == "\n":
+                                user32.keybd_event(0x0D, 0, 0, 0)
+                                user32.keybd_event(0x0D, 0, 2, 0)
+                            else:
+                                vk = user32.VkKeyScanW(ord(ch))
+                                if vk != -1:
+                                    shift = (vk >> 8) & 1
+                                    code = vk & 0xFF
+                                    try:
+                                        if shift:
+                                            user32.keybd_event(0x10, 0, 0, 0)
+                                        user32.keybd_event(code, 0, 0, 0)
+                                    finally:
+                                        user32.keybd_event(code, 0, 2, 0)
+                                        if shift:
+                                            user32.keybd_event(0x10, 0, 2, 0)
+                            await asyncio.sleep(0.015)
+                        if press_enter:
+                            user32.keybd_event(0x0D, 0, 0, 0)
+                            user32.keybd_event(0x0D, 0, 2, 0)
+
+                        diag["dispatch_result"] = True
+                        diag["target_window_after_typing"] = self._get_active_window_title_safe()
+                        return True, None, diag
+                    except Exception as char_ex:
+                        diag["error_message"] = f"Character typing failed: {char_ex}"
+                        return False, f"Character typing failed: {char_ex}", diag
+
+                diag["dispatch_result"] = True
+                diag["target_window_after_typing"] = self._get_active_window_title_safe()
+                return True, None, diag
+
+            finally:
+                # Part 7: Generic guaranteed modifier cleanup on completion or failure
+                if sys.platform == "win32":
+                    try:
+                        import ctypes
+                        from ctypes import wintypes
+                        u32 = ctypes.windll.user32
+                        for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C):  # SHIFT, CTRL, ALT, LWIN, RWIN
+                            u32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
+                    except Exception:
+                        pass
+                diag["completion_time_ns"] = time.perf_counter_ns()
+                self._last_text_input_diagnostics = diag
 

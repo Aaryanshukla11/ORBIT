@@ -661,11 +661,19 @@ class CloudModelProvider(ModelProvider):
                 raw_response=data,
             )
 
-    async def load_model(self, provider_model_name: str) -> bool:
+    async def load_model(
+        self,
+        provider_model_name: str,
+        timeout_seconds: Optional[float] = None,
+    ) -> bool:
         """Cloud models are hosted remotely and require no local memory loading."""
         return True
 
-    async def unload_model(self, provider_model_name: str) -> bool:
+    async def unload_model(
+        self,
+        provider_model_name: str,
+        timeout_seconds: Optional[float] = None,
+    ) -> bool:
         return True
 
     async def shutdown(self) -> None:

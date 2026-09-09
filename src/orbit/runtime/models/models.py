@@ -559,7 +559,7 @@ class ModelActivationRequest(BaseModel):
 
     model_id: str = Field(..., description="Target model ID to activate")
     timeout_seconds: float = Field(
-        default=30.0,
+        default=60.0,
         gt=0.0,
         description="Activation timeout in seconds",
     )

@@ -105,7 +105,9 @@ async def run_real_notepad_validation():
     print(f"Total Discovered Models in Inventory: {len(inv.models)}")
     for m in inv.models:
         caps_str = ", ".join(c.value for c in m.capabilities)
-        prov_ep = getattr(ollama_prov, "endpoint", "N/A") if m.provider.value == "ollama" else "Cloud/SDK"
+        prov_str = m.provider.value if hasattr(m.provider, "value") else str(m.provider)
+        is_local_prov = prov_str.upper() in ("OLLAMA", "LM_STUDIO", "LOCAL_FILE") or "LOCAL" in prov_str.upper()
+        prov_ep = getattr(ollama_prov, "endpoint", "N/A") if is_local_prov else "Cloud/SDK"
         print(f"  * Model ID: {m.model_id:<32} | Provider: {m.provider.value:<10} | Caps: [{caps_str}] | Endpoint: {prov_ep}")
 
     session_mgr = ModelSessionManager(
@@ -126,10 +128,18 @@ async def run_real_notepad_validation():
     # Pre-test model resolution check
     try:
         resolved_rt = await router.resolve_runtime(RoutingPolicy())
+        prov_val = resolved_rt.descriptor.provider.value if hasattr(resolved_rt.descriptor.provider, "value") else str(resolved_rt.descriptor.provider)
+        is_local = (
+            prov_val.upper() in ("OLLAMA", "LM_STUDIO", "LOCAL_FILE")
+            or "LOCAL" in prov_val.upper()
+            or resolved_rt.runtime_kind.value.upper().startswith("LOCAL")
+            or "127.0.0.1" in str(getattr(resolved_rt.provider, "endpoint", ""))
+            or "localhost" in str(getattr(resolved_rt.provider, "endpoint", ""))
+        )
         print(f"\n[MODEL ROUTER RESOLUTION]")
         print(f"  Selected Primary Runtime: {resolved_rt.model_id}")
         print(f"  Provider:                 {resolved_rt.descriptor.provider.value}")
-        print(f"  Local / Cloud:            {'LOCAL' if resolved_rt.descriptor.provider.value in ('ollama', 'lm_studio') else 'CLOUD'}")
+        print(f"  Local / Cloud:            {'LOCAL' if is_local else 'CLOUD'}")
         print(f"  Endpoint:                 {getattr(resolved_rt.provider, 'endpoint', 'N/A')}")
     except Exception as r_err:
         print(f"[MODEL ROUTER RESOLUTION ERROR] {r_err}")

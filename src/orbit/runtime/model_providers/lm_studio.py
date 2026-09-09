@@ -246,11 +246,19 @@ class LMStudioProvider(ModelProvider):
             raw_response=data,
         )
 
-    async def load_model(self, provider_model_name: str) -> bool:
+    async def load_model(
+        self,
+        provider_model_name: str,
+        timeout_seconds: Optional[float] = None,
+    ) -> bool:
         """LM Studio automatically loads models on request or keeps active loaded model."""
         return True
 
-    async def unload_model(self, provider_model_name: str) -> bool:
+    async def unload_model(
+        self,
+        provider_model_name: str,
+        timeout_seconds: Optional[float] = None,
+    ) -> bool:
         return True
 
     async def shutdown(self) -> None:

@@ -185,12 +185,14 @@ class NativeKeyboardDispatchGateway:
                     if vk_res != -1:
                         vk = vk_res & 0xFF
                         shift = (vk_res >> 8) & 1
-                        if shift:
-                            u32.keybd_event(0x10, 0, 0, 0)  # VK_SHIFT down
-                        u32.keybd_event(vk, 0, 0, 0)        # Key down
-                        u32.keybd_event(vk, 0, 2, 0)        # Key up
-                        if shift:
-                            u32.keybd_event(0x10, 0, 2, 0)  # VK_SHIFT up
+                        try:
+                            if shift:
+                                u32.keybd_event(0x10, 0, 0, 0)  # VK_SHIFT down
+                            u32.keybd_event(vk, 0, 0, 0)        # Key down
+                        finally:
+                            u32.keybd_event(vk, 0, 2, 0)        # Guaranteed Key up
+                            if shift:
+                                u32.keybd_event(0x10, 0, 2, 0)  # Guaranteed VK_SHIFT up
                         accepted = 2
                         err = 0
                 except Exception:

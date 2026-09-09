@@ -46,11 +46,16 @@ class ModelCapabilityProfile(BaseModel):
     @classmethod
     def from_descriptor(cls, descriptor: ModelDescriptor) -> ModelCapabilityProfile:
         """Create a profile from an active or discovered ModelDescriptor."""
-        is_local = descriptor.provider in {
-            ModelProviderKind.OLLAMA,
-            ModelProviderKind.LM_STUDIO,
-            ModelProviderKind.LOCAL_FILE,
-        }
+        prov_val = str(getattr(descriptor.provider, "value", descriptor.provider)).upper()
+        is_local = (
+            descriptor.provider in {
+                ModelProviderKind.OLLAMA,
+                ModelProviderKind.LM_STUDIO,
+                ModelProviderKind.LOCAL_FILE,
+            }
+            or prov_val in {"OLLAMA", "LM_STUDIO", "LOCAL_FILE"}
+            or "LOCAL" in prov_val
+        )
         caps = set(descriptor.capabilities)
         if not caps:
             caps = infer_capabilities(

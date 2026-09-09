@@ -555,7 +555,10 @@ class ModelManager:
         # Phase 3: Provider Preparation / Weight Loading
         try:
             if hasattr(provider, "load_model") and req.preload_weights:
-                await provider.load_model(descriptor.provider_model_name)
+                try:
+                    await provider.load_model(descriptor.provider_model_name, timeout_seconds=req.timeout_seconds)
+                except TypeError:
+                    await provider.load_model(descriptor.provider_model_name)
         except Exception as ex:
             logger.warning("Provider load_model failed for %s: %s", model_id, ex)
             elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000.0

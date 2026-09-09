@@ -74,12 +74,20 @@ class ModelProvider(ABC):
         ...
 
     @abstractmethod
-    async def load_model(self, provider_model_name: str) -> bool:
+    async def load_model(
+        self,
+        provider_model_name: str,
+        timeout_seconds: Optional[float] = None,
+    ) -> bool:
         """Instruct the provider to preload the model into memory/VRAM if supported."""
         ...
 
     @abstractmethod
-    async def unload_model(self, provider_model_name: str) -> bool:
+    async def unload_model(
+        self,
+        provider_model_name: str,
+        timeout_seconds: Optional[float] = None,
+    ) -> bool:
         """Instruct the provider to evict the model from memory/VRAM if supported."""
         ...
 

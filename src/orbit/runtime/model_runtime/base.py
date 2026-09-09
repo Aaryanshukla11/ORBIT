@@ -100,7 +100,7 @@ class BaseModelRuntime(ABC):
         )
 
     @abstractmethod
-    async def initialize(self, timeout_seconds: float = 30.0, preload_weights: bool = True) -> RuntimeInitializationResult:
+    async def initialize(self, timeout_seconds: float = 60.0, preload_weights: bool = True) -> RuntimeInitializationResult:
         """Perform lazy runtime preparation (connect, load weights, warmup).
         
         Must transition self._status to READY or FAILED.

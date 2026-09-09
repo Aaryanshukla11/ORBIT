@@ -440,6 +440,16 @@ class ActionExecutionOutcome(BaseModel):
 ActionExecutionResult = ActionExecutionOutcome
 
 
+class TextMatchState(str, Enum):
+    """Explicit categorical text verification states."""
+
+    EXACT_MATCH = "EXACT_MATCH"
+    NORMALIZED_MATCH = "NORMALIZED_MATCH"
+    PARTIAL_MATCH = "PARTIAL_MATCH"
+    MISMATCH = "MISMATCH"
+    NO_TEXT_EVIDENCE = "NO_TEXT_EVIDENCE"
+
+
 class TextVerificationResult(BaseModel):
     """Detailed evidence-based verification result for text actions."""
 
@@ -447,11 +457,19 @@ class TextVerificationResult(BaseModel):
     normalized_expected_text: str = Field(..., description="Normalized expected text for comparison")
     observed_text_candidates: List[str] = Field(default_factory=list, description="Observed text strings from post-action perception")
     evidence_sources: List[str] = Field(default_factory=list, description="Perception sources evaluated: UIA, OCR, etc.")
+    match_state: TextMatchState = Field(default=TextMatchState.NO_TEXT_EVIDENCE, description="Categorical match classification")
     exact_match: bool = Field(default=False, description="Whether an exact match was observed")
     confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="Confidence of text match")
     observation_id: str = Field(..., description="Provenance ID of the post-action observation")
     primary_source: Optional[str] = Field(default=None, description="Source yielding the primary match/closest candidate")
     observed_text: Optional[str] = Field(default=None, description="Actual observed text from primary source")
+    dispatch_success: bool = Field(default=True, description="Whether the low-level physical dispatch succeeded")
+    expected_effect_observed: bool = Field(default=False, description="Whether the exact/normalized text was independently observed on desktop")
+    goal_satisfied: bool = Field(default=False, description="Whether the complete user objective is verified")
+    selected_input_strategy: Optional[str] = Field(default=None, description="Input strategy utilized (e.g. CLIPBOARD_ATOMIC, KEYBOARD_STREAM)")
+    input_attempt_id: Optional[str] = Field(default=None, description="Unique identifier for the physical text input attempt")
+    target_window_before: Optional[str] = Field(default=None, description="Target window title/identifier before dispatch")
+    target_window_after: Optional[str] = Field(default=None, description="Target window title/identifier after dispatch")
 
 
 # ==============================================================================

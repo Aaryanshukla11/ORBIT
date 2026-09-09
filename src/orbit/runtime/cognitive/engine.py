@@ -74,8 +74,13 @@ class StateGoalDelta:
 class CognitiveDecisionEngine:
     """Computes state/goal delta and applies layered decision hierarchy (Fast Rules -> Recovery -> LLM Escalation)."""
 
-    def __init__(self, model_session_manager: Optional[Any] = None) -> None:
+    def __init__(
+        self,
+        model_session_manager: Optional[Any] = None,
+        feasibility_analyzer: Optional[Any] = None,
+    ) -> None:
         self._model_session_manager = model_session_manager
+        self._feasibility_analyzer = feasibility_analyzer
 
     def set_model_session_manager(self, msm: Any) -> None:
         self._model_session_manager = msm
@@ -83,6 +88,10 @@ class CognitiveDecisionEngine:
     @property
     def model_session_manager(self) -> Optional[Any]:
         return self._model_session_manager
+
+    @property
+    def feasibility_analyzer(self) -> Optional[Any]:
+        return self._feasibility_analyzer
 
     async def decide_next_step(
         self,
@@ -348,8 +357,30 @@ class CognitiveDecisionEngine:
                 ),
             )
 
-        # Rule 4: App Active & Drawing Intent -> Draw Strokes
+        # Rule 4: App Active & Drawing Intent -> Check Capability Feasibility
         if action_type == "draw" and not delta.content_present:
+            from orbit.runtime.capabilities.feasibility import FeasibilityAnalyzer
+            analyzer = self._feasibility_analyzer or FeasibilityAnalyzer()
+            assessment = analyzer.evaluate_feasibility(objective)
+            if not assessment.is_feasible:
+                # Goal exceeds capabilities (e.g. portrait of a boy without image gen) -> DO NOT fake execution with a cube!
+                return CognitiveDecision(
+                    step_index=step_index,
+                    decision_summary=f"Drawing goal unachievable: {assessment.explanation}",
+                    decision_confidence=1.0,
+                    evidence_used=[f"triggered_limitations:{len(assessment.triggered_limitations)}"],
+                    expected_state_transition="task_aborted_unsupported",
+                    reason_summary=assessment.explanation,
+                    is_goal_satisfied=False,
+                    escalated_to_llm=False,
+                    next_action=AbstractAction(
+                        action_type=AbstractActionType.ABORT_UNACHIEVABLE,
+                        outcome_contract=ActionOutcomeContract(expected_state_transition="task_aborted"),
+                        expected_effect="Halt execution: goal not feasibly executable with available capabilities",
+                        rationale=assessment.explanation,
+                    ),
+                )
+
             shape = str(objective.parameters.get("shape", "cube"))
             return CognitiveDecision(
                 step_index=step_index,

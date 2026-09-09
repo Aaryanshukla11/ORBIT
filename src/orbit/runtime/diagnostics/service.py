@@ -310,18 +310,26 @@ class DiagnosticService:
                 )
             )
 
+        prov_val = active_ctx.provider.value if hasattr(active_ctx.provider, "value") else str(active_ctx.provider)
+        is_local = (
+            str(prov_val).upper() in ("OLLAMA", "LM_STUDIO", "LOCAL_FILE")
+            or "LOCAL" in str(prov_val).upper()
+            or str(getattr(active_ctx, "runtime_kind", "")).upper() in ("LOCAL", "LOCAL_OLLAMA", "LOCAL_LM_STUDIO")
+        )
         report = SubsystemDiagnosticReport(
             subsystem_id="model_runtime",
             name="AI Model Runtime",
             status=status,
-            summary=f"Active: {active_ctx.display_name} ({active_ctx.provider.value if hasattr(active_ctx.provider, 'value') else str(active_ctx.provider)})",
+            summary=f"Active: {active_ctx.display_name} ({prov_val} [{'LOCAL' if is_local else 'CLOUD'}])",
             latency_ms=latency_val,
             details={
                 "model_id": active_ctx.model_id,
                 "display_name": active_ctx.display_name,
-                "provider": active_ctx.provider.value if hasattr(active_ctx.provider, "value") else str(active_ctx.provider),
+                "provider": prov_val,
                 "runtime_kind": active_ctx.runtime_kind.value if hasattr(active_ctx.runtime_kind, "value") else str(active_ctx.runtime_kind),
                 "context_window": active_ctx.context_window,
+                "is_local": is_local,
+                "classification": "LOCAL" if is_local else "CLOUD",
             },
         )
         return report, issues

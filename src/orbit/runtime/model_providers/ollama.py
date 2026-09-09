@@ -394,24 +394,56 @@ class OllamaProvider(ModelProvider):
         except httpx.ReadTimeout as ex:
             raise OllamaTimeoutError(f"Ollama chat timed out after {self._read_timeout}s: {ex}") from ex
 
-    async def load_model(self, provider_model_name: str) -> bool:
+    async def load_model(
+        self,
+        provider_model_name: str,
+        timeout_seconds: Optional[float] = None,
+    ) -> bool:
         """Instruct Ollama to preload model weights into VRAM."""
+        effective_timeout = timeout_seconds if timeout_seconds is not None else max(self._read_timeout, 60.0)
         client = await self._get_client()
         try:
             # An empty generate request with stream: False triggers loading without streaming overhead
             payload = {"model": provider_model_name, "prompt": "", "stream": False, "keep_alive": "5m"}
-            response = await client.post("/api/generate", json=payload, timeout=3.0)
-            return response.status_code == 200
+            response = await client.post("/api/generate", json=payload, timeout=effective_timeout)
+            if response.status_code == 200:
+                logger.info("Successfully preloaded model %s into Ollama VRAM", provider_model_name)
+                return True
+            elif response.status_code == 404:
+                raise OllamaModelNotFoundError(
+                    f"Model '{provider_model_name}' not found on Ollama daemon at {self._endpoint} (HTTP 404)"
+                )
+            else:
+                body_snippet = response.text[:200] if response.text else ""
+                raise OllamaProviderError(
+                    f"Ollama returned HTTP {response.status_code} while preloading '{provider_model_name}': {body_snippet}"
+                )
+        except (httpx.ConnectError, httpx.ConnectTimeout) as ex:
+            raise OllamaUnavailableError(
+                f"Ollama service unreachable at {self._endpoint} during preload of '{provider_model_name}': {ex}"
+            ) from ex
+        except (httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout) as ex:
+            raise OllamaTimeoutError(
+                f"Ollama preload timed out for '{provider_model_name}' after {effective_timeout:.1f}s: {ex}"
+            ) from ex
+        except OllamaProviderError:
+            raise
         except Exception as ex:
-            logger.warning("Failed to preload model %s on Ollama: %s", provider_model_name, ex)
-            return False
+            raise OllamaProviderError(
+                f"Unexpected error preloading model '{provider_model_name}' on Ollama: {ex}"
+            ) from ex
 
-    async def unload_model(self, provider_model_name: str) -> bool:
+    async def unload_model(
+        self,
+        provider_model_name: str,
+        timeout_seconds: Optional[float] = None,
+    ) -> bool:
         """Instruct Ollama to evict model from VRAM immediately (`keep_alive=0`)."""
         client = await self._get_client()
+        effective_timeout = timeout_seconds if timeout_seconds is not None else 10.0
         try:
             payload = {"model": provider_model_name, "stream": False, "keep_alive": 0}
-            response = await client.post("/api/generate", json=payload, timeout=5.0)
+            response = await client.post("/api/generate", json=payload, timeout=effective_timeout)
             return response.status_code == 200
         except Exception as ex:
             logger.warning("Failed to unload model %s on Ollama: %s", provider_model_name, ex)

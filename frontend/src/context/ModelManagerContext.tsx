@@ -266,8 +266,9 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
         if (payload?.models && Array.isArray(payload.models)) {
           const actId = payload.active_model_id || activeModelId;
           const incoming: ModelItem[] = payload.models.map((m: any) => {
-            const mId = m.model_id || m.id;
-            const isLocal = m.runtime_kind === 'LOCAL_OLLAMA' || (m.provider && m.provider.toLowerCase().includes('ollama')) || (m.type === 'local');
+            const provUpper = String(m.provider || '').toUpperCase();
+            const rkUpper = String(m.runtime_kind || '').toUpperCase();
+            const isLocal = rkUpper.startsWith('LOCAL') || provUpper.includes('OLLAMA') || provUpper.includes('LM_STUDIO') || (m.type === 'local');
             return {
               id: mId,
               name: m.display_name || m.name || mId,

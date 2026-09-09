@@ -26,6 +26,7 @@ from orbit.runtime.agent.contracts import (
     AgentAction,
     ExpectedState,
     OutcomeStatus,
+    TextMatchState,
     TextVerificationResult,
     VerificationStrategy,
 )
@@ -82,10 +83,20 @@ class AgentStateTransitionVerifier:
         )
 
         # STALE OBSERVATION REJECTION INVARIANT:
-        # Verification requires a fresh post-action observation that has advanced beyond pre-action state
+        # Verification requires a fresh post-action observation that has advanced beyond pre-action state,
+        # except for terminal/non-mutating actions (COMPLETE_GOAL, ABORT_TASK, WAIT) which evaluate state.
         pre_id = getattr(pre_state, "snapshot_id", None)
         post_id = getattr(post_state, "snapshot_id", None)
-        if pre_id and post_id and pre_id == post_id:
+        is_terminal_or_wait = action.action_type in (
+            AbstractActionType.COMPLETE_GOAL,
+            AbstractActionType.COMPLETE,
+            AbstractActionType.ABORT_TASK,
+            AbstractActionType.ABORT,
+            AbstractActionType.ABORT_UNACHIEVABLE,
+            AbstractActionType.WAIT,
+            AbstractActionType.WAIT_SETTLE,
+        )
+        if pre_id and post_id and pre_id == post_id and not is_terminal_or_wait:
             return ActionExecutionOutcome(
                 action_id=action.action_id,
                 dispatch_success=True,
@@ -236,27 +247,35 @@ class AgentStateTransitionVerifier:
                 post_state=post_state,
                 post_observation=post_observation,
             )
-            verified = ver_res.exact_match or (ver_res.confidence >= 0.85)
+            # CRITICAL REALITY INVARIANT:
+            # Only EXACT_MATCH or NORMALIZED_MATCH can verify text effect.
+            # PARTIAL_MATCH, MISMATCH, or NO_TEXT_EVIDENCE must NEVER mark effect verified!
+            verified = dispatch_success and (ver_res.match_state in (TextMatchState.EXACT_MATCH, TextMatchState.NORMALIZED_MATCH))
+            ver_res.dispatch_success = dispatch_success
+            ver_res.expected_effect_observed = verified
+
             if verified:
-                reason = f"Expected text '{expected_text}' verified via {ver_res.primary_source} (match confidence: {ver_res.confidence:.2f})"
+                reason = f"Expected text '{expected_text}' verified via {ver_res.primary_source} [{ver_res.match_state.value}] (confidence: {ver_res.confidence:.2f})"
             else:
                 observed_sample = ver_res.observed_text or (ver_res.observed_text_candidates[0] if ver_res.observed_text_candidates else "NONE")
-                reason = f"Expected text '{expected_text}' NOT observed in post-action state. Observed: '{observed_sample}' (exact_match=False)"
+                reason = f"Expected text '{expected_text}' NOT observed in post-action state [{ver_res.match_state.value}]. Observed: '{observed_sample}'"
             
             observed_delta["text_verification"] = ver_res.model_dump()
             observed_delta["expected_text"] = expected_text
             observed_delta["observed_text"] = ver_res.observed_text
             observed_delta["exact_match"] = ver_res.exact_match
+            observed_delta["match_state"] = ver_res.match_state.value
+            observed_delta["text_typed_length"] = len(expected_text)
 
         elif act_type in (AbstractActionType.SEND_HOTKEY, AbstractActionType.HOTKEY):
             combo = str(action.parameters.get("hotkey", action.parameters.get("combination", "")))
-            verified = True
+            verified = dispatch_success
             reason = f"Successfully dispatched hotkey combination '{combo}'"
             observed_delta["hotkey"] = combo
 
         elif act_type == AbstractActionType.SCROLL:
             direction = str(action.parameters.get("direction", "down"))
-            verified = True
+            verified = dispatch_success
             reason = f"Successfully dispatched scroll {direction}"
             observed_delta["scroll_direction"] = direction
 
@@ -278,22 +297,94 @@ class AgentStateTransitionVerifier:
             reason = "Goal unachievable abort condition verified"
 
         else:
-            verified = True
+            verified = dispatch_success
             reason = f"Action {act_type.value} verified"
 
         duration_ms = (time.perf_counter() - t_start) * 1000.0
+        
+        if not dispatch_success:
+            final_status = OutcomeStatus.DISPATCH_FAILED
+        elif verified:
+            final_status = OutcomeStatus.EFFECT_VERIFIED
+        else:
+            final_status = OutcomeStatus.EFFECT_UNVERIFIED
+
         return ActionExecutionOutcome(
             action_id=action.action_id,
-            dispatch_success=True,
+            dispatch_success=dispatch_success,
             expected_effect_observed=verified,
             goal_satisfied=(act_type in (AbstractActionType.COMPLETE_GOAL, AbstractActionType.COMPLETE) and verified),
-            outcome_status=OutcomeStatus.EFFECT_VERIFIED if verified else OutcomeStatus.EFFECT_UNVERIFIED,
+            outcome_status=final_status,
             verified=verified,
             verification_strategy=strategy,
             verification_reason=reason,
             observed_delta=observed_delta,
             duration_ms=duration_ms,
         )
+
+    @staticmethod
+    def classify_text_match(expected_text: str, candidate_text: str) -> Tuple[TextMatchState, float]:
+        """Strict categorical evaluation of text match states according to production reality rules.
+        
+        Evaluates exact sequence preservation:
+        - EXACT_MATCH: Identical sequence or exact bounded substring.
+        - NORMALIZED_MATCH: Presentation differences only (whitespace collapse, line endings, case).
+        - PARTIAL_MATCH: Some tokens/words present, but sequence is missing, corrupted, or contains stuck keys.
+        - MISMATCH: Candidate text exists but differs.
+        - NO_TEXT_EVIDENCE: Empty or whitespace text.
+        """
+        if not candidate_text or not candidate_text.strip():
+            return TextMatchState.NO_TEXT_EVIDENCE, 0.0
+
+        cand_str = candidate_text.strip()
+        exp_str = expected_text.strip()
+
+        # 1. Exact string match
+        if exp_str == cand_str:
+            return TextMatchState.EXACT_MATCH, 1.0
+
+        import re
+
+        # Word-boundary bounded substring match (exact case)
+        escaped_exp = re.escape(exp_str)
+        if re.search(rf"(?<![A-Za-z0-9]){escaped_exp}(?![A-Za-z0-9])", cand_str):
+            return TextMatchState.EXACT_MATCH, 1.0
+
+        # 2. Normalized match (whitespace collapse, line endings)
+        def _normalize(s: str) -> str:
+            s_clean = s.replace("\r\n", "\n").replace("\r", "\n")
+            return " ".join(s_clean.strip().split())
+
+        norm_exp = _normalize(exp_str)
+        norm_cand = _normalize(cand_str)
+
+        if norm_exp == norm_cand:
+            return TextMatchState.NORMALIZED_MATCH, 1.0
+
+        escaped_norm = re.escape(norm_exp)
+        if re.search(rf"(?<![A-Za-z0-9]){escaped_norm}(?![A-Za-z0-9])", norm_cand):
+            return TextMatchState.NORMALIZED_MATCH, 1.0
+
+        # Case-insensitive normalized match
+        if norm_exp.lower() == norm_cand.lower():
+            return TextMatchState.NORMALIZED_MATCH, 0.98
+
+        if re.search(rf"(?<![A-Za-z0-9]){escaped_norm}(?![A-Za-z0-9])", norm_cand, re.IGNORECASE):
+            return TextMatchState.NORMALIZED_MATCH, 0.98
+
+        # 3. Partial or Mismatch evaluation
+        exp_words = [w.lower() for w in norm_exp.split() if w]
+        cand_lower = norm_cand.lower()
+        if not exp_words:
+            return TextMatchState.NO_TEXT_EVIDENCE, 0.0
+
+        matched_words = [w for w in exp_words if re.search(rf"(?<![A-Za-z0-9]){re.escape(w)}(?![A-Za-z0-9])", cand_lower)]
+        if matched_words:
+            ratio = len(matched_words) / len(exp_words)
+            # PARTIAL_MATCH confidence strictly below verification threshold (capped at 0.60)
+            return TextMatchState.PARTIAL_MATCH, min(ratio * 0.60, 0.60)
+
+        return TextMatchState.MISMATCH, 0.0
 
     def _verify_text_in_state(
         self,
@@ -303,17 +394,16 @@ class AgentStateTransitionVerifier:
     ) -> TextVerificationResult:
         """Inspect post-action perception evidence (UIA + OCR) to verify expected text."""
         exp_clean = expected_text.strip().lower()
-        exp_words = exp_clean.split()
         obs_id = getattr(post_observation, "observation_id", getattr(post_state, "observation_id", "obs_unknown"))
 
         candidates: List[str] = []
         sources: List[str] = []
-        exact_match = False
+        best_state = TextMatchState.NO_TEXT_EVIDENCE
+        best_confidence = 0.0
         primary_source = None
         best_observed_text = None
-        best_confidence = 0.0
 
-        # 1. Inspect Native UI Automation elements from post_observation
+        # 1. Inspect Native UI Automation elements from post_observation (Priority 1 & 2)
         if post_observation:
             uia_elements = getattr(post_observation, "uia_elements", None) or []
             perceived_elements = getattr(post_observation, "perceived_elements", None) or []
@@ -323,32 +413,31 @@ class AgentStateTransitionVerifier:
                 for txt in (str(val).strip(), str(nm).strip()):
                     if txt and txt not in candidates:
                         candidates.append(txt)
-                        txt_lower = txt.lower()
                         if "UIA" not in sources:
                             sources.append("UIA")
                         
-                        if exp_clean == txt_lower:
-                            exact_match = True
+                        m_state, m_conf = self.classify_text_match(expected_text, txt)
+                        if m_state == TextMatchState.EXACT_MATCH:
+                            best_state = TextMatchState.EXACT_MATCH
+                            best_confidence = 1.0
                             primary_source = "UIA"
                             best_observed_text = txt
-                            best_confidence = 1.0
                             break
-                        elif exp_clean in txt_lower:
-                            exact_match = True
+                        elif m_state == TextMatchState.NORMALIZED_MATCH and best_state != TextMatchState.EXACT_MATCH:
+                            best_state = TextMatchState.NORMALIZED_MATCH
+                            best_confidence = max(best_confidence, m_conf)
                             primary_source = "UIA"
                             best_observed_text = txt
-                            best_confidence = 1.0
-                            break
-                        elif exp_words and all(w in txt_lower for w in exp_words):
-                            if best_confidence < 0.90:
-                                best_confidence = 0.90
-                                primary_source = "UIA"
-                                best_observed_text = txt
-                if exact_match:
+                        elif m_conf > best_confidence:
+                            best_state = m_state
+                            best_confidence = m_conf
+                            primary_source = "UIA"
+                            best_observed_text = txt
+                if best_state == TextMatchState.EXACT_MATCH:
                     break
 
-        # 2. Inspect OCR tokens from post_state or post_observation
-        if not exact_match:
+        # 2. Inspect OCR tokens from post_state or post_observation (Priority 3)
+        if best_state not in (TextMatchState.EXACT_MATCH, TextMatchState.NORMALIZED_MATCH):
             ocr_tokens: List[str] = []
             if hasattr(post_state, "ocr_tokens") and post_state.ocr_tokens:
                 ocr_tokens = [str(t) for t in post_state.ocr_tokens]
@@ -360,39 +449,39 @@ class AgentStateTransitionVerifier:
                     sources.append("OCR")
                 combined_ocr = " ".join(ocr_tokens)
                 candidates.append(combined_ocr)
-                combined_lower = combined_ocr.lower()
-
-                if exp_clean == combined_lower or exp_clean in combined_lower:
-                    exact_match = True
-                    primary_source = "OCR"
-                    best_observed_text = combined_ocr
+                
+                m_state, m_conf = self.classify_text_match(expected_text, combined_ocr)
+                if m_state == TextMatchState.EXACT_MATCH:
+                    best_state = TextMatchState.EXACT_MATCH
                     best_confidence = 1.0
-                elif exp_words and all(w in combined_lower for w in exp_words):
-                    exact_match = True
                     primary_source = "OCR"
                     best_observed_text = combined_ocr
-                    best_confidence = 0.95
-                else:
-                    # Partial / Levenshtein / character overlap check
-                    overlap = sum(1 for w in exp_words if w in combined_lower)
-                    conf = overlap / max(len(exp_words), 1)
-                    if conf > best_confidence:
-                        best_confidence = conf
-                        primary_source = "OCR"
-                        best_observed_text = combined_ocr
+                elif m_state == TextMatchState.NORMALIZED_MATCH and best_state != TextMatchState.EXACT_MATCH:
+                    best_state = TextMatchState.NORMALIZED_MATCH
+                    best_confidence = max(best_confidence, m_conf)
+                    primary_source = "OCR"
+                    best_observed_text = combined_ocr
+                elif m_conf > best_confidence:
+                    best_state = m_state
+                    best_confidence = m_conf
+                    primary_source = "OCR"
+                    best_observed_text = combined_ocr
 
         if not primary_source and candidates:
             primary_source = sources[0] if sources else "PERCEPTION"
             best_observed_text = candidates[0]
 
+        is_exact = (best_state == TextMatchState.EXACT_MATCH)
         return TextVerificationResult(
             expected_text=expected_text,
             normalized_expected_text=exp_clean,
             observed_text_candidates=candidates[:10],
             evidence_sources=sources,
-            exact_match=exact_match,
+            match_state=best_state,
+            exact_match=is_exact,
             confidence=best_confidence,
             observation_id=str(obs_id),
             primary_source=primary_source,
             observed_text=best_observed_text,
         )
+

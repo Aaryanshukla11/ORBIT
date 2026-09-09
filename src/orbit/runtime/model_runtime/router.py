@@ -144,7 +144,7 @@ class ModelRouter:
         active_runtime = self._session_manager.get_active_runtime()
         if active_runtime is not None and active_runtime.is_initialized:
             desc = active_runtime.descriptor
-            is_local = desc.provider in {ModelProviderKind.OLLAMA, ModelProviderKind.LM_STUDIO, ModelProviderKind.LOCAL_FILE}
+            is_local = self.is_local_descriptor(desc)
             tier_matches = (
                 (effective_policy.tier == ModelRoutingTier.PREFER_LOCAL and is_local)
                 or (effective_policy.tier == ModelRoutingTier.PERFORMANCE_CLOUD and not is_local)
@@ -192,19 +192,27 @@ class ModelRouter:
             f"No AI model runtime available matching capabilities {req_caps} with privacy policy {effective_policy.privacy}"
         )
 
+    @staticmethod
+    def is_local_descriptor(desc: ModelDescriptor) -> bool:
+        """Deterministically determine if a model descriptor is hosted locally."""
+        prov_val = desc.provider.value if hasattr(desc.provider, "value") else str(desc.provider)
+        return (
+            desc.provider in {ModelProviderKind.OLLAMA, ModelProviderKind.LM_STUDIO, ModelProviderKind.LOCAL_FILE}
+            or prov_val.upper() in {"OLLAMA", "LM_STUDIO", "LOCAL_FILE"}
+            or "LOCAL" in prov_val.upper()
+            or desc.source_type == ModelSourceType.LOCAL_RUNTIME
+        )
+
     def _is_candidate_compliant(self, desc: ModelDescriptor, policy: RoutingPolicy) -> bool:
         """Check if candidate model satisfies capability and privacy constraints."""
+        is_local = self.is_local_descriptor(desc)
         # Privacy check
         if policy.privacy.strictly_local:
-            if desc.source_type != ModelSourceType.LOCAL_RUNTIME and desc.provider not in {
-                ModelProviderKind.OLLAMA,
-                ModelProviderKind.LM_STUDIO,
-                ModelProviderKind.LOCAL_FILE,
-            }:
+            if not is_local:
                 return False
 
         if not policy.privacy.allow_cloud_transfer:
-            if desc.source_type == ModelSourceType.CLOUD_PROVIDER or desc.provider in {
+            if not is_local or desc.source_type == ModelSourceType.CLOUD_PROVIDER or desc.provider in {
                 ModelProviderKind.CLOUD,
                 ModelProviderKind.CLOUD_OPENAI,
                 ModelProviderKind.CLOUD_ANTHROPIC,
@@ -213,23 +221,22 @@ class ModelRouter:
                 return False
 
         # Required capabilities check
-        if policy.required_capabilities:
-            desc_caps = set(desc.capabilities)
-            # If vision is required, ensure candidate supports vision
-            if ModelCapability.VISION in policy.required_capabilities and ModelCapability.VISION not in desc_caps:
+        for req_cap in policy.required_capabilities:
+            if req_cap not in desc.capabilities:
+                if req_cap == ModelCapability.TEXT_GENERATION and ModelCapability.CHAT in desc.capabilities:
+                    continue
                 return False
-            # Check other required capabilities
-            for cap in policy.required_capabilities:
-                if cap not in desc_caps and cap != ModelCapability.TEXT_GENERATION:
-                    # Allow general chat models to satisfy text generation
-                    return False
 
         return True
 
-    def _rank_candidates(self, candidates: List[ModelDescriptor], policy: RoutingPolicy) -> List[ModelDescriptor]:
+    def _rank_candidates(
+        self,
+        candidates: List[ModelDescriptor],
+        policy: RoutingPolicy,
+    ) -> List[ModelDescriptor]:
         """Sort candidates based on routing tier and capability richness."""
         def score(desc: ModelDescriptor) -> int:
-            is_local = desc.provider in {ModelProviderKind.OLLAMA, ModelProviderKind.LM_STUDIO, ModelProviderKind.LOCAL_FILE}
+            is_local = self.is_local_descriptor(desc)
             points = 0
             if policy.tier == ModelRoutingTier.PREFER_LOCAL:
                 points += 100 if is_local else 10

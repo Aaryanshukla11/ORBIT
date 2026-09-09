@@ -118,16 +118,6 @@ class TextTypingExecutor:
                 # Dispatch Down + Up Unicode pair via SendInput
                 down_res, up_res = NativeKeyboardDispatchGateway.dispatch_unicode_pair(unit)
 
-                # Also deliver character directly to target edit controls for robust reception
-                if sys.platform == "win32":
-                    WM_CHAR = 0x0102
-                    targets_to_send = child_edits if child_edits else ([expected_hwnd] if expected_hwnd else [])
-                    for target_ch in targets_to_send:
-                        try:
-                            ctypes.windll.user32.SendMessageW(target_ch, WM_CHAR, unit, 0)
-                        except Exception:
-                            pass
-
                 if down_res.success and up_res.success:
                     pass
                 elif down_res.success and not up_res.success:
@@ -147,6 +137,18 @@ class TextTypingExecutor:
             if attached_thread and sys.platform == "win32":
                 try:
                     ctypes.windll.user32.AttachThreadInput(cur_thread, target_thread, False)
+                except Exception:
+                    pass
+
+            # Guaranteed generic modifier release on physical keyboard
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+                    u32 = ctypes.windll.user32
+                    # 0x10=SHIFT, 0x11=CTRL, 0x12=MENU (ALT), 0x5B=LWIN, 0x5C=RWIN
+                    for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C):
+                        u32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
                 except Exception:
                     pass
 

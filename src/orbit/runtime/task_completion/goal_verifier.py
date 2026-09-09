@@ -30,6 +30,9 @@ from orbit.runtime.task_understanding.models import (
     TaskUnderstandingResult,
 )
 
+from orbit.runtime.agent.contracts import TextMatchState
+from orbit.runtime.agent.verifier import AgentStateTransitionVerifier
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,19 +90,35 @@ class GoalVerifier:
             import re
             m = re.search(r"type\s+['\"]?([^'\"\n]+)['\"]?", prompt, re.IGNORECASE)
             if m:
-                target_text = m.group(1).strip().lower()
-                target_words = target_text.split()
+                target_text = m.group(1).strip()
                 # Strict Anti-False-Positive Invariant:
-                # Goal satisfaction for text entry requires independent observation in post-action screen perception.
-                # Action history or intended parameters NEVER independently satisfy text entry goals.
+                # Goal satisfaction for text entry requires coherent sequence match on live screen perception.
+                # Loose word bags or partial matches (e.g. 'ORBIT 333333333333333333') MUST NOT satisfy the goal.
                 obs_id = getattr(current_observation, "observation_id", "obs_unknown")
-                if target_text in all_screen_text or (target_words and all(w in all_screen_text for w in target_words)):
+                
+                cand_texts = [all_screen_text] + uia_texts
+                if ocr_tokens:
+                    cand_texts.append(" ".join(ocr_tokens))
+                
+                best_match = TextMatchState.NO_TEXT_EVIDENCE
+                best_conf = 0.0
+                for c_txt in cand_texts:
+                    m_state, m_conf = AgentStateTransitionVerifier.classify_text_match(target_text, c_txt)
+                    if m_state in (TextMatchState.EXACT_MATCH, TextMatchState.NORMALIZED_MATCH):
+                        best_match = m_state
+                        best_conf = m_conf
+                        break
+                    elif m_conf > best_conf:
+                        best_match = m_state
+                        best_conf = m_conf
+
+                if best_match in (TextMatchState.EXACT_MATCH, TextMatchState.NORMALIZED_MATCH):
                     is_satisfied = True
-                    evidence_records.append(f"Target text '{target_text}' verified in screen perception (OCR/UIA) [obs_id={obs_id}]")
+                    evidence_records.append(f"Target text '{target_text}' verified in screen perception [{best_match.value}] [obs_id={obs_id}]")
                 else:
                     is_satisfied = False
                     evidence_records.append(
-                        f"Target text '{target_text}' NOT observed in screen perception [obs_id={obs_id}]. "
+                        f"Target text '{target_text}' NOT verified in screen perception [{best_match.value}] [obs_id={obs_id}]. "
                         f"Visible text sample: '{all_screen_text[:80]}...'"
                     )
 
@@ -114,7 +133,7 @@ class GoalVerifier:
                             is_satisfied = True
                             evidence_records.append(f"Application '{app}' verified open on desktop")
 
-        # 3. Check drawing tasks
+        # 3. Check drawing tasks (3-Level Verification)
         if not is_satisfied and "draw" in prompt:
             canvas_st = getattr(current_observation, "canvas_status", "")
             if canvas_st in ("READY_FOR_DRAWING", "DRAWING_COMPLETED"):
@@ -124,8 +143,21 @@ class GoalVerifier:
                     and getattr(s.action_dispatched.action_type, "value", str(s.action_dispatched.action_type)) in ("DRAW_STROKES", "DRAW")
                     for s in step_history
                 ):
-                    is_satisfied = True
-                    evidence_records.append("Drawing strokes verified on canvas surface")
+                    import re
+                    complex_keywords = [
+                        "portrait", "face", "boy", "girl", "man", "woman", "person",
+                        "human", "dog", "cat", "animal", "landscape", "scenery", "realistic"
+                    ]
+                    is_complex_request = any(re.search(rf"\b{kw}\b", prompt) for kw in complex_keywords)
+                    if is_complex_request:
+                        is_satisfied = False
+                        evidence_records.append(
+                            "Level 3 Semantic Goal Verification FAILED: Canvas contains primitive geometric strokes, "
+                            "which do not semantically satisfy the requested complex entity (portrait/face/person)."
+                        )
+                    else:
+                        is_satisfied = True
+                        evidence_records.append("Drawing strokes verified on canvas surface matching requested geometry")
 
         # 4. Check calculation tasks
         if not is_satisfied and ("calculate" in prompt or "multiplied" in prompt):
@@ -377,6 +409,8 @@ class GoalVerifier:
                 post_snapshot=post_snapshot,
                 pre_image=pre_image,
                 post_image=post_image,
+                understanding=understanding,
+                plan=plan,
             )
 
         # D. General Plan Goal Verification
@@ -758,6 +792,8 @@ class GoalVerifier:
         post_snapshot: ObservationSnapshot,
         pre_image: Optional[Image.Image] = None,
         post_image: Optional[Image.Image] = None,
+        understanding: Optional[TaskUnderstandingResult] = None,
+        plan: Optional[ExecutableTaskPlan] = None,
     ) -> GoalVerificationResult:
         """Verify drawing / creative canvas changes by isolating the canvas region and validating stroke pixels."""
         if post_image is None and pre_image is None:
@@ -859,6 +895,33 @@ class GoalVerifier:
                         evidence=evidence,
                     )
 
+                # Level 3 Semantic Goal Verification Gate
+                raw_text = ""
+                if understanding and hasattr(understanding, "raw_request") and understanding.raw_request:
+                    raw_text = getattr(understanding.raw_request, "raw_text", "").lower()
+
+                import re
+                complex_keywords = [
+                    "portrait", "face", "boy", "girl", "man", "woman", "person",
+                    "human", "dog", "cat", "animal", "landscape", "scenery", "realistic"
+                ]
+                is_complex_request = any(re.search(rf"\b{kw}\b", raw_text) for kw in complex_keywords)
+                if is_complex_request:
+                    logger.warning(
+                        "Semantic Goal Verification FAILED: Canvas pixel delta detected, but geometric strokes cannot satisfy '%s'",
+                        raw_text,
+                    )
+                    return GoalVerificationResult(
+                        status=TaskCompletionStatus.FAILED,
+                        is_completed=False,
+                        failure_reason=(
+                            f"Physical drawing strokes were rendered on canvas (Level 2 verified), "
+                            f"but Level 3 Semantic Goal Verification failed: primitive strokes cannot satisfy '{raw_text}'."
+                        ),
+                        failure_code="SEMANTIC_GOAL_NOT_SATISFIED",
+                        evidence=evidence,
+                    )
+
                 return GoalVerificationResult(
                     status=TaskCompletionStatus.COMPLETED,
                     is_completed=True,
@@ -872,6 +935,34 @@ class GoalVerifier:
                 target_app=target_app,
                 visual_changes=["Canvas contains verified non-blank drawing strokes"],
             )
+
+            # Level 3 Semantic Goal Verification Gate (no pre-image path)
+            raw_text = ""
+            if understanding and hasattr(understanding, "raw_request") and understanding.raw_request:
+                raw_text = getattr(understanding.raw_request, "raw_text", "").lower()
+
+            import re
+            complex_keywords = [
+                "portrait", "face", "boy", "girl", "man", "woman", "person",
+                "human", "dog", "cat", "animal", "landscape", "scenery", "realistic"
+            ]
+            is_complex_request = any(re.search(rf"\b{kw}\b", raw_text) for kw in complex_keywords)
+            if is_complex_request:
+                logger.warning(
+                    "Semantic Goal Verification FAILED: Non-blank canvas confirmed, but primitive strokes cannot satisfy '%s'",
+                    raw_text,
+                )
+                return GoalVerificationResult(
+                    status=TaskCompletionStatus.FAILED,
+                    is_completed=False,
+                    failure_reason=(
+                        f"Non-blank drawing canvas confirmed (Level 2 verified), "
+                        f"but Level 3 Semantic Goal Verification failed: primitive strokes cannot satisfy '{raw_text}'."
+                    ),
+                    failure_code="SEMANTIC_GOAL_NOT_SATISFIED",
+                    evidence=evidence,
+                )
+
             return GoalVerificationResult(
                 status=TaskCompletionStatus.COMPLETED,
                 is_completed=True,

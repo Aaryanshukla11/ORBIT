@@ -31,6 +31,8 @@ from orbit.runtime.models.models import (
 from orbit.runtime.model_providers.ollama import (
     OllamaModelNotFoundError,
     OllamaProvider,
+    OllamaProviderError,
+    OllamaTimeoutError,
     OllamaUnavailableError,
 )
 
@@ -60,7 +62,7 @@ class OllamaRuntimeAdapter(BaseModelRuntime):
 
     async def initialize(
         self,
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float = 60.0,
         preload_weights: bool = True,
     ) -> RuntimeInitializationResult:
         """Perform lazy initialization and optional weight preloading."""
@@ -113,9 +115,72 @@ class OllamaRuntimeAdapter(BaseModelRuntime):
             # 3. Optional weight preloading
             if preload_weights:
                 try:
-                    await self._provider.load_model(target_name)
+                    loaded = await self._provider.load_model(target_name, timeout_seconds=timeout_seconds)
+                    if not loaded:
+                        self._status = ModelRuntimeStatus.FAILED
+                        duration_ms = (time.perf_counter() - start_time) * 1000.0
+                        return RuntimeInitializationResult(
+                            is_success=False,
+                            model_id=self.model_id,
+                            status=self._status,
+                            duration_ms=duration_ms,
+                            error_message=f"Failed to preload model '{target_name}' on Ollama (provider returned failure)",
+                        )
+                except OllamaTimeoutError as ex:
+                    self._status = ModelRuntimeStatus.FAILED
+                    duration_ms = (time.perf_counter() - start_time) * 1000.0
+                    logger.error("Preload timeout for %s: %s", self.model_id, ex)
+                    return RuntimeInitializationResult(
+                        is_success=False,
+                        model_id=self.model_id,
+                        status=self._status,
+                        duration_ms=duration_ms,
+                        error_message=f"Preload timeout: {ex}",
+                    )
+                except OllamaModelNotFoundError as ex:
+                    self._status = ModelRuntimeStatus.UNAVAILABLE
+                    duration_ms = (time.perf_counter() - start_time) * 1000.0
+                    logger.error("Model not found on Ollama for %s: %s", self.model_id, ex)
+                    return RuntimeInitializationResult(
+                        is_success=False,
+                        model_id=self.model_id,
+                        status=self._status,
+                        duration_ms=duration_ms,
+                        error_message=f"Model not found: {ex}",
+                    )
+                except OllamaUnavailableError as ex:
+                    self._status = ModelRuntimeStatus.UNAVAILABLE
+                    duration_ms = (time.perf_counter() - start_time) * 1000.0
+                    logger.error("Ollama connection failed for %s: %s", self.model_id, ex)
+                    return RuntimeInitializationResult(
+                        is_success=False,
+                        model_id=self.model_id,
+                        status=self._status,
+                        duration_ms=duration_ms,
+                        error_message=f"Connection refused/unreachable: {ex}",
+                    )
+                except OllamaProviderError as ex:
+                    self._status = ModelRuntimeStatus.FAILED
+                    duration_ms = (time.perf_counter() - start_time) * 1000.0
+                    logger.error("Ollama provider error for %s: %s", self.model_id, ex)
+                    return RuntimeInitializationResult(
+                        is_success=False,
+                        model_id=self.model_id,
+                        status=self._status,
+                        duration_ms=duration_ms,
+                        error_message=f"Ollama provider error: {ex}",
+                    )
                 except Exception as ex:
-                    logger.warning("Weight preloading failed for %s: %s (will continue)", target_name, ex)
+                    self._status = ModelRuntimeStatus.FAILED
+                    duration_ms = (time.perf_counter() - start_time) * 1000.0
+                    logger.error("Unexpected error during weight preloading for %s: %s", self.model_id, ex)
+                    return RuntimeInitializationResult(
+                        is_success=False,
+                        model_id=self.model_id,
+                        status=self._status,
+                        duration_ms=duration_ms,
+                        error_message=f"Preload error: {ex}",
+                    )
 
             self._status = ModelRuntimeStatus.READY
             duration_ms = (time.perf_counter() - start_time) * 1000.0
