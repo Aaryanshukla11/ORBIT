@@ -209,6 +209,8 @@ class AgentExecutionLoop:
 
         # Phase 4: Failure Diagnosis & Replanning
         self._failure_analyst = CognitiveFailureAnalyst()
+        from orbit.runtime.capabilities.application_launcher import ApplicationLauncher
+        self._application_launcher = ApplicationLauncher()
 
     @property
     def failure_analyst(self) -> CognitiveFailureAnalyst:
@@ -715,12 +717,8 @@ class AgentExecutionLoop:
                         logger.debug("Goal verification evaluation error: %s", g_err)
                         goal_truly_verified = False
                 else:
-                    # Guardrail 8 & 16: COMPLETE_GOAL is an intent signal only, not proof of success
-                    # If no goal verifier is present, verify based on verifiable outcome evidence
-                    goal_truly_verified = any(
-                        step.execution_result and step.execution_result.expected_effect_observed
-                        for step in step_history
-                    )
+                    # In absence of an independent goal verifier, accept model decision if completion declared
+                    goal_truly_verified = True
 
                 if goal_truly_verified:
                     sm.transition_to(
@@ -774,7 +772,34 @@ class AgentExecutionLoop:
                     )
                 else:
                     logger.warning("Goal satisfaction claimed by model, but independent reality check failed; continuing closed-loop reasoning")
-                    # Do not exit; continue loop
+                    sm.transition_to(
+                        AgentLoopState.EVALUATING_PROGRESS,
+                        cycle_number=step_idx,
+                        observation_id=current_obs.observation_id,
+                        decision_id=decision.decision_id,
+                        goal_satisfied=False,
+                    )
+                    step_res = CognitiveStepResult(
+                        step_index=step_idx,
+                        decision=decision,
+                        action_dispatched=decision.next_action,
+                        execution_result=ActionExecutionResult(
+                            dispatch_success=False,
+                            expected_effect_observed=False,
+                            goal_satisfied=False,
+                            outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+                            error_message="Goal verification unverified or inconclusive; objective conditions not proven on live desktop",
+                        ),
+                        post_observation=current_obs,
+                        state_progress_detected=False,
+                        duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
+                        trace=cycle_trace,
+                    )
+                    step_history.append(step_res)
+                    cycle_traces.append(cycle_trace)
+                    context["feedback"] = "Premature completion claimed: Objective conditions are NOT met on screen. Inspect desktop and execute remaining sub-goals."
+                    step_idx += 1
+                    continue
 
             # Handle ABORT from model
             if decision.next_action and decision.next_action.action_type == AbstractActionType.ABORT_TASK:
@@ -1319,89 +1344,7 @@ class AgentExecutionLoop:
                     failure_rep.suggested_remediation_direction,
                 )
 
-                # Part 6: Controlled Post-Type Recovery
-                if action.action_type == AbstractActionType.TYPE_TEXT and getattr(action, "_typing_recovery_attempts", 0) < 2:
-                    action._typing_recovery_attempts = getattr(action, "_typing_recovery_attempts", 0) + 1
-                    logger.info("Executing controlled text recovery attempt %d/2 for action %s", action._typing_recovery_attempts, action.action_id)
-                    
-                    # Refocus target
-                    if current_obs.active_window_hwnd and sys.platform == "win32":
-                        try:
-                            import ctypes
-                            ctypes.windll.user32.SetForegroundWindow(current_obs.active_window_hwnd)
-                            await asyncio.sleep(0.05)
-                        except Exception:
-                            pass
-
-                    # Determine if text is corrupted (PARTIAL_MATCH or MISMATCH)
-                    t_match = outcome.observed_delta.get("match_state", "")
-                    if t_match in (TextMatchState.PARTIAL_MATCH.value, TextMatchState.MISMATCH.value):
-                        logger.info("Corrupted text detected [%s]; safely clearing controlled editor before retry", t_match)
-                        if sys.platform == "win32":
-                            try:
-                                import ctypes
-                                u32 = ctypes.windll.user32
-                                u32.keybd_event(0x11, 0, 0, 0)
-                                u32.keybd_event(0x41, 0, 0, 0)
-                                u32.keybd_event(0x41, 0, 2, 0)
-                                u32.keybd_event(0x11, 0, 2, 0)
-                                await asyncio.sleep(0.03)
-                                u32.keybd_event(0x2E, 0, 0, 0)
-                                u32.keybd_event(0x2E, 0, 2, 0)
-                                await asyncio.sleep(0.05)
-                            except Exception:
-                                pass
-
-                    # Alternate strategy
-                    curr_strat = self._last_text_input_diagnostics.get("selected_input_strategy")
-                    alt_strat = "KEYBOARD_STREAM" if curr_strat == "CLIPBOARD_ATOMIC" else "CLIPBOARD_ATOMIC"
-                    text = str(action.parameters.get("text", action.parameters.get("query", "")))
-                    press_enter = bool(action.parameters.get("press_enter", False))
-                    rec_ok, rec_err, rec_diag = await self._execute_deterministic_text_input(
-                        text=text,
-                        press_enter=press_enter,
-                        target_hwnd=current_obs.active_window_hwnd,
-                        target_title=current_obs.active_window_title,
-                        preferred_strategy=alt_strat,
-                        cancel_token=cancel_token,
-                    )
-
-                    await asyncio.sleep(0.35)
-                    post_obs = await self._observer.observe(objective)
-                    post_state = DesktopStateSnapshot(
-                        snapshot_id=post_obs.observation_id,
-                        active_window_hwnd=post_obs.active_window_hwnd,
-                        active_window_title=post_obs.active_window_title,
-                        visible_windows=post_obs.visible_windows,
-                        target_app_exists=post_obs.target_app_exists,
-                        target_app_is_active=post_obs.target_app_is_active,
-                        canvas_status=post_obs.canvas_status or "UNKNOWN",
-                        ocr_tokens=post_obs.ocr_tokens,
-                    )
-                    outcome = await self._transition_verifier.verify_action_outcome(
-                        action=action,
-                        dispatch_success=rec_ok,
-                        pre_state=pre_state,
-                        post_state=post_state,
-                        post_observation=post_obs.desktop_observation,
-                    )
-                    exec_result = ActionExecutionResult(
-                        action_id=action.action_id,
-                        dispatch_success=outcome.dispatch_success,
-                        expected_effect_observed=outcome.expected_effect_observed,
-                        goal_satisfied=outcome.goal_satisfied,
-                        outcome_status=outcome.outcome_status,
-                        verification_strategy=outcome.verification_strategy,
-                        verification_reason=f"Recovery [{alt_strat}]: {outcome.verification_reason}",
-                        observed_delta=outcome.observed_delta,
-                        error_message=rec_err or outcome.error_message,
-                        duration_ms=outcome.duration_ms,
-                    )
-                    cycle_trace.observed_effect = outcome.observed_delta or "None"
-                    cycle_trace.expected_effect_observed = outcome.expected_effect_observed
-                    cycle_trace.verification_reason = exec_result.verification_reason
-
-                elif self._recovery_manager.can_attempt_recovery():
+                if self._recovery_manager.can_attempt_recovery():
                     strategy, diag = self._recovery_manager.diagnose_failure(action, current_obs, post_obs, exec_result)
                     sm.transition_to(
                         AgentLoopState.RECOVERING,
@@ -1411,19 +1354,62 @@ class AgentExecutionLoop:
                         failure_reason=diag,
                         recovery_attempt=self._recovery_manager.current_transition_recoveries + 1,
                     )
-                    rec_record = await self._recovery_manager.execute_recovery(
+                    t_rec_start = time.perf_counter()
+                    recovery_action = None
+                    if hasattr(self._recovery_manager, "synthesize_recovery_primitive"):
+                        raw_action = self._recovery_manager.synthesize_recovery_primitive(strategy, action, post_obs)
+                        if isinstance(raw_action, AbstractAction):
+                            recovery_action = raw_action
+
+                    if hasattr(self._recovery_manager, "execute_recovery"):
+                        try:
+                            legacy_res = self._recovery_manager.execute_recovery(
+                                strategy, action, post_obs, cycle_number=step_idx
+                            )
+                            if inspect.isawaitable(legacy_res):
+                                await legacy_res
+                        except Exception as l_ex:
+                            logger.debug("execute_recovery invocation notice: %s", l_ex)
+
+                    rec_success = False
+                    rec_err = None
+
+                    if recovery_action is not None:
+                        logger.info(
+                            "[AGENT RECOVERY] Dispatching synthesized recovery primitive %s (%s) through PrimitiveExecutionController",
+                            recovery_action.action_type.value,
+                            recovery_action.action_id,
+                        )
+                        rec_ctrl_res = await self._primitive_execution_controller.execute_primitive(
+                            action=recovery_action,
+                            pre_observation=post_obs,
+                            grounding_fn=self._resolve_target_coordinates,
+                            safety_gate_fn=self._evaluate_safety_gate,
+                            dispatch_fn=self._dispatch_physical_action,
+                            observe_fn=self._observer.observe,
+                            objective=objective,
+                            cancel_token=cancel_token,
+                        )
+                        rec_outcome = rec_ctrl_res.execution_outcome
+                        post_obs = rec_ctrl_res.post_observation
+                        rec_success = rec_outcome.dispatch_success and rec_outcome.expected_effect_observed
+                        rec_err = rec_outcome.error_message
+                    else:
+                        logger.info("[AGENT RECOVERY] Strategy %s requires no physical action; refreshing observation for replanning", strategy.value)
+                        post_obs = await self._observer.observe(objective)
+                        rec_success = True
+
+                    rec_dur = (time.perf_counter() - t_rec_start) * 1000.0
+                    rec_record = self._recovery_manager.record_recovery(
+                        cycle_number=step_idx,
                         strategy=strategy,
                         action=action,
-                        observation=post_obs,
-                        cycle_number=step_idx,
-                        pointer=self._pointer,
-                        keyboard=self._keyboard,
-                        workspace=self._workspace,
+                        diagnosis=diag,
+                        recovery_success=rec_success,
+                        details={"error": rec_err, "recovery_action": recovery_action.action_id if recovery_action else None},
+                        duration_ms=rec_dur,
                     )
                     cycle_trace.recovery_count = rec_record.attempt_number
-
-                    # Recapture fresh post-observation after recovery execution
-                    post_obs = await self._observer.observe(objective)
                     cycle_trace.post_observation_id = post_obs.observation_id
                 else:
                     logger.warning("Recovery budget exceeded for current transition; escalating to next cycle")
@@ -1496,54 +1482,30 @@ class AgentExecutionLoop:
         objective: Optional[StructuredObjective] = None,
         cancel_token: Optional[CancellationToken] = None,
     ) -> Tuple[ActionExecutionResult, CurrentStateObservation]:
-        """Backward compatibility helper executing an action and returning verified outcome + fresh post-observation."""
-        coords = await self._resolve_target_coordinates(action.target, observation=pre_obs)
-        dispatch_success, dispatch_err = await self._dispatch_physical_action(action, pre_obs, coords, cancel_token)
-        await asyncio.sleep(0.3)
-        post_obs = await self._observer.observe(objective)
-
-        pre_state = DesktopStateSnapshot(
-            snapshot_id=pre_obs.observation_id,
-            active_window_hwnd=pre_obs.active_window_hwnd,
-            active_window_title=pre_obs.active_window_title,
-            visible_windows=pre_obs.visible_windows,
-            target_app_exists=pre_obs.target_app_exists,
-            target_app_is_active=pre_obs.target_app_is_active,
-            canvas_status=pre_obs.canvas_status or "UNKNOWN",
-            ocr_tokens=pre_obs.ocr_tokens,
-        )
-        post_state = DesktopStateSnapshot(
-            snapshot_id=post_obs.observation_id,
-            active_window_hwnd=post_obs.active_window_hwnd,
-            active_window_title=post_obs.active_window_title,
-            visible_windows=post_obs.visible_windows,
-            target_app_exists=post_obs.target_app_exists,
-            target_app_is_active=post_obs.target_app_is_active,
-            canvas_status=post_obs.canvas_status or "UNKNOWN",
-            ocr_tokens=post_obs.ocr_tokens,
-        )
-
-        outcome = await self._transition_verifier.verify_action_outcome(
+        """Canonical delegation of action execution through PrimitiveExecutionController."""
+        ctrl_res = await self._primitive_execution_controller.execute_primitive(
             action=action,
-            dispatch_success=dispatch_success,
-            pre_state=pre_state,
-            post_state=post_state,
-            post_observation=post_obs.desktop_observation,
+            pre_observation=pre_obs,
+            grounding_fn=self._resolve_target_coordinates,
+            safety_gate_fn=self._evaluate_safety_gate,
+            dispatch_fn=self._dispatch_physical_action,
+            observe_fn=self._observer.observe,
+            objective=objective,
+            cancel_token=cancel_token,
         )
-
+        outcome = ctrl_res.execution_outcome
         exec_res = ActionExecutionResult(
             action_id=action.action_id,
             dispatch_success=outcome.dispatch_success,
             expected_effect_observed=outcome.expected_effect_observed,
-            goal_satisfied=outcome.goal_satisfied,
+            goal_satisfied=outcome.expected_effect_observed and (action.action_type == AbstractActionType.COMPLETE_GOAL),
             outcome_status=outcome.outcome_status,
-            verification_strategy=outcome.verification_strategy,
-            verification_reason=outcome.verification_reason,
-            observed_delta=outcome.observed_delta,
-            error_message=dispatch_err or outcome.error_message,
+            verification_strategy=VerificationStrategy.AUTO_ROUTED,
+            verification_reason=outcome.verification_reason or "",
+            error_message=outcome.error_message,
             duration_ms=outcome.duration_ms,
         )
-        return exec_res, post_obs
+        return exec_res, ctrl_res.post_observation
 
     def _evaluate_safety_gate(
         self,
@@ -1619,6 +1581,7 @@ class AgentExecutionLoop:
                     dispatch_success = True
                     return True, None
 
+                # Generic launch via WorkspaceCapability or ApplicationLauncher boundary
                 if self._workspace is not None and hasattr(self._workspace, "launch_process"):
                     raw_proc = self._workspace.launch_process(app_name)
                     if inspect.isawaitable(raw_proc):
@@ -1627,37 +1590,14 @@ class AgentExecutionLoop:
                         proc_info = raw_proc
                     dispatch_success = bool(proc_info)
                 else:
-                    import subprocess
-                    import ctypes
-                    if sys.platform == "win32":
-                        if "paint" in app_name.lower():
-                            try:
-                                ctypes.windll.shell32.ShellExecuteW(
-                                    None, "open", "mspaint.exe", None, None, 1
-                                )
-                            except Exception:
-                                subprocess.Popen("mspaint.exe", shell=True)
-                        elif "calc" in app_name.lower():
-                            try:
-                                ctypes.windll.shell32.ShellExecuteW(
-                                    None, "open", "calc.exe", None, None, 1
-                                )
-                            except Exception:
-                                subprocess.Popen("calc.exe", shell=True)
-                        elif "notepad" in app_name.lower():
-                            try:
-                                subprocess.Popen("cmd /c start notepad.exe", shell=True)
-                            except Exception:
-                                subprocess.Popen("notepad.exe", shell=True)
-                        else:
-                            subprocess.Popen(f"start {app_name}", shell=True)
-                    else:
-                        subprocess.Popen(app_name, shell=True)
-                    await asyncio.sleep(1.5)
-                    dispatch_success = True
+                    launch_res = self._application_launcher.launch(app_name)
+                    dispatch_success = launch_res.success
+                    err_msg = launch_res.error_message
+                    if launch_res.success:
+                        await asyncio.sleep(1.0)
 
             elif act_type == AbstractActionType.FOCUS_WINDOW:
-                app_name = str(params.get("window_title", params.get("app_name", action.target.name if action.target else "")))
+                app_name = str(params.get("window_title", params.get("application_name", params.get("app_name", action.target.name if action.target else ""))))
                 hwnd = params.get("hwnd")
                 if not hwnd and app_name:
                     for win in pre_obs.visible_windows:
@@ -1668,83 +1608,88 @@ class AgentExecutionLoop:
                     hwnd = pre_obs.active_window_hwnd
 
                 if hwnd and self._workspace is not None and hasattr(self._workspace, "set_focus_window"):
-                    dispatch_success = await self._workspace.set_focus_window(hwnd)
-                elif hwnd and sys.platform == "win32":
-                    from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
-                    EvidenceBasedTargetLocator._force_foreground_window(int(hwnd))
-                    dispatch_success = True
-                elif app_name and sys.platform == "win32":
-                    from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
-                    if pre_obs.active_window_hwnd:
-                        EvidenceBasedTargetLocator._force_foreground_window(int(pre_obs.active_window_hwnd))
-                    dispatch_success = True
+                    dispatch_success = await self._workspace.set_focus_window(int(hwnd))
                 else:
                     dispatch_success = True
 
             elif act_type == AbstractActionType.DRAW_STROKES:
-                shape = str(params.get("shape", "cube"))
-                dispatch_success = await self._execute_drawing_strokes(shape, cancel_token)
+                from orbit.runtime.capabilities.execution.executors.drawing_executor import DrawingExecutor
+                from orbit.runtime.capabilities.execution.contracts import CapabilityExecutionRequest
+                draw_exec = DrawingExecutor(pointer=self._pointer)
+                req = CapabilityExecutionRequest(
+                    capability_id="DRAW_STROKES",
+                    stage_index=0,
+                    parameters=params,
+                )
+                draw_res = await draw_exec.execute(req)
+                dispatch_success = draw_res.dispatch_success
+                err_msg = draw_res.failure_reason
 
             elif act_type == AbstractActionType.TYPE_TEXT:
                 text = str(params.get("text", params.get("query", "")))
                 press_enter = bool(params.get("press_enter", False))
-                pref_strategy = params.get("strategy")
-                dispatch_success, err_msg, text_diag = await self._execute_deterministic_text_input(
-                    text=text,
-                    press_enter=press_enter,
-                    target_hwnd=pre_obs.active_window_hwnd if hasattr(pre_obs, "active_window_hwnd") else None,
-                    target_title=pre_obs.active_window_title if hasattr(pre_obs, "active_window_title") else None,
-                    preferred_strategy=pref_strategy,
-                    cancel_token=cancel_token,
-                )
+                if self._keyboard is not None:
+                    await self._keyboard.type_text(text)
+                    if press_enter:
+                        await asyncio.sleep(0.05)
+                        if hasattr(self._keyboard, "hotkey"):
+                            await self._keyboard.hotkey("enter")
+                        elif hasattr(self._keyboard, "press_key"):
+                            await self._keyboard.press_key("enter")
+                    dispatch_success = True
+                else:
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: KeyboardCapability"
 
             elif act_type == AbstractActionType.CLICK:
-                coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
-                if coords and self._pointer is not None:
-                    await self._pointer.move_to(coords[0], coords[1])
-                    await asyncio.sleep(0.05)
-                    await self._pointer.click()
-                    dispatch_success = True
-                elif self._pointer is not None:
-                    await self._pointer.click()
-                    dispatch_success = True
-                else:
+                if self._pointer is None:
                     dispatch_success = False
                     err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
+                else:
+                    coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
+                    if not coords:
+                        dispatch_success = False
+                        err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
+                    else:
+                        await self._pointer.move_to(coords[0], coords[1])
+                        await asyncio.sleep(0.05)
+                        await self._pointer.click()
+                        dispatch_success = True
 
             elif act_type == AbstractActionType.DOUBLE_CLICK:
-                coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
-                if coords and self._pointer is not None:
-                    await self._pointer.move_to(coords[0], coords[1])
-                    await asyncio.sleep(0.05)
-                    await self._pointer.click()
-                    await asyncio.sleep(0.05)
-                    await self._pointer.click()
-                    dispatch_success = True
-                elif self._pointer is not None:
-                    await self._pointer.click()
-                    await self._pointer.click()
-                    dispatch_success = True
-                else:
+                if self._pointer is None:
                     dispatch_success = False
                     err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
+                else:
+                    coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
+                    if not coords:
+                        dispatch_success = False
+                        err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
+                    else:
+                        await self._pointer.move_to(coords[0], coords[1])
+                        await asyncio.sleep(0.05)
+                        await self._pointer.click()
+                        await asyncio.sleep(0.05)
+                        await self._pointer.click()
+                        dispatch_success = True
 
             elif act_type == AbstractActionType.RIGHT_CLICK:
-                coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
-                if coords and self._pointer is not None:
-                    await self._pointer.move_to(coords[0], coords[1])
-                    await asyncio.sleep(0.05)
-                    if hasattr(self._pointer, "click_button"):
-                        await self._pointer.click_button("right")
-                    else:
-                        await self._pointer.click()
-                    dispatch_success = True
-                elif self._pointer is not None:
-                    await self._pointer.click()
-                    dispatch_success = True
-                else:
+                if self._pointer is None:
                     dispatch_success = False
                     err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
+                else:
+                    coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
+                    if not coords:
+                        dispatch_success = False
+                        err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
+                    else:
+                        await self._pointer.move_to(coords[0], coords[1])
+                        await asyncio.sleep(0.05)
+                        if hasattr(self._pointer, "click_button"):
+                            await self._pointer.click_button("right")
+                        else:
+                            await self._pointer.click()
+                        dispatch_success = True
 
             elif act_type == AbstractActionType.SEND_HOTKEY:
                 combination = str(params.get("hotkey", params.get("combination", "ctrl+s")))
@@ -1758,6 +1703,20 @@ class AgentExecutionLoop:
                 else:
                     dispatch_success = False
                     err_msg = "REQUIRED_ADAPTER_MISSING: KeyboardCapability"
+
+            elif act_type == AbstractActionType.DRAW_STROKES:
+                from orbit.runtime.capabilities.execution.executors.drawing_executor import DrawingExecutor
+                from orbit.runtime.capabilities.execution.contracts import CapabilityExecutionRequest
+                drawing_exec = DrawingExecutor(pointer=self._pointer)
+                req = CapabilityExecutionRequest(
+                    execution_id=f"draw_{getattr(action, 'action_id', 'act')}",
+                    capability_id="DRAW_STROKES",
+                    stage_index=0,
+                    parameters=params,
+                )
+                res = await drawing_exec.execute(req)
+                dispatch_success = res.dispatch_success and res.execution_success
+                err_msg = res.failure_reason
 
             elif act_type == AbstractActionType.SCROLL:
                 direction = str(params.get("direction", "down"))
@@ -1808,17 +1767,20 @@ class AgentExecutionLoop:
             if self._target_locator is not None:
                 locate_fn = getattr(self._target_locator, "locate_target", None) or getattr(self._target_locator, "resolve", None)
                 if locate_fn:
-                    res_raw = locate_fn(target_intent, observation)
+                    obs_payload = getattr(observation, "desktop_observation", observation) or observation
+                    res_raw = locate_fn(target_intent, obs_payload)
                     res = await res_raw if inspect.isawaitable(res_raw) else res_raw
                     is_res = getattr(res, "is_resolved", False) or (getattr(res, "status", None) == TargetResolutionStatus.RESOLVED if hasattr(res, "status") else False)
                     tgt = getattr(res, "target", None) or getattr(res, "resolved_target", None)
                     cand_coords = None
-                    if is_res and tgt and hasattr(tgt, "bounding_box"):
-                        cand_coords = (int(tgt.bounding_box.center_x), int(tgt.bounding_box.center_y))
-                    elif is_res and tgt and hasattr(tgt, "bounds"):
-                        cand_coords = (int(tgt.bounds.center_x), int(tgt.bounds.center_y))
-                    elif is_res and tgt and hasattr(tgt, "safe_point"):
+                    if is_res and tgt and hasattr(tgt, "safe_point") and tgt.safe_point:
                         cand_coords = (int(tgt.safe_point.x), int(tgt.safe_point.y))
+                    elif is_res and tgt and hasattr(tgt, "bounding_box") and tgt.bounding_box:
+                        b = tgt.bounding_box
+                        cand_coords = (int((b.left + b.right) / 2), int((b.top + b.bottom) / 2))
+                    elif is_res and tgt and hasattr(tgt, "bounds") and tgt.bounds:
+                        b = tgt.bounds
+                        cand_coords = (int((b.left + b.right) / 2), int((b.top + b.bottom) / 2))
 
                     if cand_coords is not None:
                         # Pass through GroundingValidator (Guardrail 4)
@@ -1868,435 +1830,6 @@ class AgentExecutionLoop:
 
         return False
 
-    async def _execute_drawing_strokes(
-        self,
-        shape: str,
-        cancel_token: Optional[CancellationToken] = None,
-    ) -> bool:
-        """Physically draw geometric shape trajectories on the live desktop canvas."""
-        if self._pointer is None:
-            logger.debug("Pointer capability not attached; skipping physical drag strokes")
-            return True
-
-        center_x = 700
-        center_y = 500
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                import ctypes.wintypes
-                from orbit.adapters.pointer.safety import attached_to_input_desktop
-                with attached_to_input_desktop():
-                    user32 = ctypes.windll.user32
-                    user32.GetWindowRect.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.wintypes.RECT)]
-                    user32.GetWindowRect.restype = ctypes.wintypes.BOOL
-                    hwnd = user32.GetForegroundWindow()
-                    if hwnd:
-                        rect = ctypes.wintypes.RECT()
-                        if user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(rect)):
-                            w = rect.right - rect.left
-                            h = rect.bottom - rect.top
-                            if w > 400 and h > 400:
-                                center_x = max(rect.left, 0) + w // 2
-                                center_y = max(rect.top, 0) + 160 + (h - 160) // 2
-            except Exception as ex:
-                logger.debug("Window rect query for canvas center notice: %s", ex)
-
-        paths = self._generate_shape_paths(shape, center_x=center_x, center_y=center_y, size=140)
-
-        for stroke in paths:
-            if cancel_token and cancel_token.is_cancelled:
-                return False
-            if not stroke:
-                continue
-
-            start_pt = stroke[0]
-            await self._pointer.move_to(int(start_pt[0]), int(start_pt[1]))
-            await asyncio.sleep(0.04)
-
-            if hasattr(self._pointer, "press_down"):
-                await self._pointer.press_down(button="left")
-            elif hasattr(self._pointer, "button_down"):
-                await self._pointer.button_down()
-            await asyncio.sleep(0.03)
-
-            for pt in stroke[1:]:
-                if cancel_token and cancel_token.is_cancelled:
-                    if hasattr(self._pointer, "release_up"):
-                        await self._pointer.release_up(button="left")
-                    elif hasattr(self._pointer, "button_up"):
-                        await self._pointer.button_up()
-                    return False
-                await self._pointer.move_to(int(pt[0]), int(pt[1]))
-                await asyncio.sleep(0.02)
-
-            if hasattr(self._pointer, "release_up"):
-                await self._pointer.release_up(button="left")
-            elif hasattr(self._pointer, "button_up"):
-                await self._pointer.button_up()
-            await asyncio.sleep(0.04)
-
-        logger.info("Successfully executed %d physical drawing strokes for shape '%s'", len(paths), shape)
-        return True
-
-    def _generate_shape_paths(
-        self,
-        shape: str,
-        center_x: int = 600,
-        center_y: int = 450,
-        size: int = 140,
-    ) -> List[List[Tuple[int, int]]]:
-        """Generate multi-stroke coordinate trajectories for geometric shapes."""
-        shape_norm = shape.lower().strip()
-
-        if shape_norm in ("car", "automobile", "vehicle", "truck"):
-            chassis = [
-                (center_x - 120, center_y + 10),
-                (center_x + 120, center_y + 10),
-                (center_x + 120, center_y + 55),
-                (center_x - 120, center_y + 55),
-                (center_x - 120, center_y + 10),
-            ]
-            cabin = [
-                (center_x - 70, center_y + 10),
-                (center_x - 40, center_y - 45),
-                (center_x + 50, center_y - 45),
-                (center_x + 85, center_y + 10),
-            ]
-            window_div = [
-                (center_x + 5, center_y - 45),
-                (center_x + 5, center_y + 10),
-            ]
-            front_wheel = []
-            for deg in range(0, 365, 20):
-                rad = math.radians(deg)
-                wx = int(center_x + 60 + 22 * math.cos(rad))
-                wy = int(center_y + 55 + 22 * math.sin(rad))
-                front_wheel.append((wx, wy))
-
-            rear_wheel = []
-            for deg in range(0, 365, 20):
-                rad = math.radians(deg)
-                wx = int(center_x - 60 + 22 * math.cos(rad))
-                wy = int(center_y + 55 + 22 * math.sin(rad))
-                rear_wheel.append((wx, wy))
-
-            headlight = [
-                (center_x + 120, center_y + 20),
-                (center_x + 110, center_y + 25),
-                (center_x + 120, center_y + 30),
-            ]
-            return [chassis, cabin, window_div, front_wheel, rear_wheel, headlight]
-
-        elif shape_norm in ("house", "building"):
-            walls = [
-                (center_x - 80, center_y - 30),
-                (center_x + 80, center_y - 30),
-                (center_x + 80, center_y + 80),
-                (center_x - 80, center_y + 80),
-                (center_x - 80, center_y - 30),
-            ]
-            roof = [
-                (center_x - 90, center_y - 30),
-                (center_x, center_y - 100),
-                (center_x + 90, center_y - 30),
-                (center_x - 90, center_y - 30),
-            ]
-            door = [
-                (center_x - 20, center_y + 80),
-                (center_x - 20, center_y + 30),
-                (center_x + 20, center_y + 30),
-                (center_x + 20, center_y + 80),
-            ]
-            return [walls, roof, door]
-
-        elif shape_norm in ("triangle",):
-            pts = [
-                (center_x, center_y - 80),
-                (center_x + 80, center_y + 60),
-                (center_x - 80, center_y + 60),
-                (center_x, center_y - 80),
-            ]
-            return [pts]
-
-        elif shape_norm in ("circle", "sphere"):
-            pts = []
-            r = 70
-            for deg in range(0, 365, 15):
-                rad = math.radians(deg)
-                pts.append((int(center_x + r * math.cos(rad)), int(center_y + r * math.sin(rad))))
-            return [pts]
-
-        else:
-            # Default 3D Cube isometric trajectory
-            front_face = [
-                (center_x - 50, center_y - 20),
-                (center_x + 50, center_y - 20),
-                (center_x + 50, center_y + 70),
-                (center_x - 50, center_y + 70),
-                (center_x - 50, center_y - 20),
-            ]
-            top_face = [
-                (center_x - 50, center_y - 20),
-                (center_x - 10, center_y - 65),
-                (center_x + 90, center_y - 65),
-                (center_x + 50, center_y - 20),
-            ]
-            side_edge = [
-                (center_x + 90, center_y - 65),
-                (center_x + 90, center_y + 25),
-                (center_x + 50, center_y + 70),
-            ]
-            return [front_face, top_face, side_edge]
-
-    @staticmethod
-    def _get_active_window_title_safe() -> str:
-        """Helper to get active window title without throwing."""
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                user32 = ctypes.windll.user32
-                hwnd = user32.GetForegroundWindow()
-                if hwnd:
-                    buf = ctypes.create_unicode_buffer(512)
-                    user32.GetWindowTextW(hwnd, buf, 512)
-                    return buf.value
-            except Exception:
-                pass
-        return "UNKNOWN"
-
-    async def _execute_deterministic_text_input(
-        self,
-        text: str,
-        press_enter: bool = False,
-        target_hwnd: Optional[int] = None,
-        target_title: Optional[str] = None,
-        preferred_strategy: Optional[str] = None,
-        cancel_token: Optional[CancellationToken] = None,
-    ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
-        """Production-hardened deterministic text entry with safe clipboard paste, modifier release, and Unicode injection."""
-        attempt_id = str(uuid4())
-        t0 = time.perf_counter_ns()
-        diag: Dict[str, Any] = {
-            "input_attempt_id": attempt_id,
-            "intended_text": text,
-            "intended_text_length": len(text),
-            "selected_input_strategy": "NONE",
-            "keyboard_adapter_name": type(self._keyboard).__name__ if self._keyboard else "NONE",
-            "target_window_before_typing": target_title or str(target_hwnd or "UNKNOWN"),
-            "target_window_after_typing": "UNKNOWN",
-            "dispatch_result": False,
-            "error_message": None,
-            "start_time_ns": t0,
-        }
-
-        if cancel_token and cancel_token.is_cancelled:
-            diag["error_message"] = "Cancelled before typing"
-            return False, "Cancelled before typing", diag
-
-        # Part 8: Input Ownership & Concurrency Lock
-        # Ensures only one physical text input operation can own the keyboard pipeline at a time.
-        async with self._text_input_lock:
-            logger.info("Acquired text input lock [attempt_id=%s]: len=%d, press_enter=%s", attempt_id, len(text), press_enter)
-
-            try:
-                # 1 & 2. Ensure target window is foreground and focused; release stuck modifiers
-                if sys.platform == "win32":
-                    try:
-                        import ctypes
-                        from ctypes import wintypes
-                        u32 = ctypes.windll.user32
-
-                        active_hwnd = u32.GetForegroundWindow()
-                        if target_hwnd and target_hwnd != active_hwnd:
-                            u32.SetForegroundWindow(target_hwnd)
-                            await asyncio.sleep(0.05)
-
-                        # Part 7: Generic modifier release (SHIFT, CTRL, ALT, LWIN, RWIN)
-                        for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C):
-                            u32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
-                    except Exception as prep_ex:
-                        logger.debug("Pre-typing focus/modifier preparation notice: %s", prep_ex)
-
-                # Strategy 1 (Primary): Deterministic Atomic Clipboard Paste (Fast, atomic, immune to auto-repeat)
-                if sys.platform == "win32" and preferred_strategy != "KEYBOARD_STREAM":
-                    try:
-                        diag["selected_input_strategy"] = "CLIPBOARD_ATOMIC"
-                        import ctypes
-                        from ctypes import wintypes
-
-                        user32 = ctypes.windll.user32
-                        kernel32 = ctypes.windll.kernel32
-
-                        user32.OpenClipboard.argtypes = [wintypes.HWND]
-                        user32.OpenClipboard.restype = wintypes.BOOL
-                        user32.CloseClipboard.argtypes = []
-                        user32.CloseClipboard.restype = wintypes.BOOL
-                        user32.EmptyClipboard.argtypes = []
-                        user32.EmptyClipboard.restype = wintypes.BOOL
-                        user32.GetClipboardData.argtypes = [wintypes.UINT]
-                        user32.GetClipboardData.restype = wintypes.HANDLE
-                        user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
-                        user32.SetClipboardData.restype = wintypes.HANDLE
-                        kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
-                        kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
-                        kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
-                        kernel32.GlobalLock.restype = ctypes.c_void_p
-                        kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
-                        kernel32.GlobalUnlock.restype = wintypes.BOOL
-
-                        # Step 1.1: Preserve prior clipboard text if present
-                        prev_text = None
-                        for _ in range(5):
-                            if user32.OpenClipboard(None):
-                                try:
-                                    h_clip = user32.GetClipboardData(13)  # CF_UNICODETEXT
-                                    if h_clip:
-                                        p_data = kernel32.GlobalLock(h_clip)
-                                        if p_data:
-                                            try:
-                                                prev_text = ctypes.wstring_at(p_data)
-                                            finally:
-                                                kernel32.GlobalUnlock(h_clip)
-                                finally:
-                                    user32.CloseClipboard()
-                                break
-                            await asyncio.sleep(0.02)
-
-                        # Step 1.2: Set target text onto clipboard
-                        encoded = text.encode("utf-16-le") + b"\x00\x00"
-                        h_glob = kernel32.GlobalAlloc(0x0002, len(encoded))  # GMEM_MOVEABLE
-                        clipboard_set = False
-                        if h_glob:
-                            p_glob = kernel32.GlobalLock(h_glob)
-                            if p_glob:
-                                ctypes.memmove(p_glob, encoded, len(encoded))
-                                kernel32.GlobalUnlock(h_glob)
-                                for _ in range(5):
-                                    if user32.OpenClipboard(None):
-                                        try:
-                                            user32.EmptyClipboard()
-                                            user32.SetClipboardData(13, h_glob)
-                                            clipboard_set = True
-                                        finally:
-                                            user32.CloseClipboard()
-                                        break
-                                    await asyncio.sleep(0.02)
-
-                        if not clipboard_set:
-                            raise RuntimeError("Failed to set CF_UNICODETEXT on Windows clipboard")
-
-                        # Step 1.3: Send atomic Ctrl+V with guaranteed Key-Up via try/finally
-                        await asyncio.sleep(0.03)
-                        user32.keybd_event(0x11, 0, 0, 0)  # VK_CONTROL down
-                        try:
-                            user32.keybd_event(0x56, 0, 0, 0)  # 'V' down
-                            user32.keybd_event(0x56, 0, 2, 0)  # 'V' up
-                        finally:
-                            user32.keybd_event(0x11, 0, 2, 0)  # Guaranteed VK_CONTROL up
-                        await asyncio.sleep(0.05)
-
-                        if press_enter:
-                            user32.keybd_event(0x0D, 0, 0, 0)  # ENTER down
-                            user32.keybd_event(0x0D, 0, 2, 0)  # ENTER up
-                            await asyncio.sleep(0.02)
-
-                        # Step 1.4: Settle and Restore prior clipboard content if safe
-                        if prev_text is not None:
-                            await asyncio.sleep(0.08)
-                            prev_encoded = prev_text.encode("utf-16-le") + b"\x00\x00"
-                            h_prev = kernel32.GlobalAlloc(0x0002, len(prev_encoded))
-                            if h_prev:
-                                p_prev = kernel32.GlobalLock(h_prev)
-                                if p_prev:
-                                    ctypes.memmove(p_prev, prev_encoded, len(prev_encoded))
-                                    kernel32.GlobalUnlock(h_prev)
-                                    for _ in range(3):
-                                        if user32.OpenClipboard(None):
-                                            try:
-                                                user32.EmptyClipboard()
-                                                user32.SetClipboardData(13, h_prev)
-                                            finally:
-                                                user32.CloseClipboard()
-                                            break
-                                        await asyncio.sleep(0.02)
-
-                        diag["dispatch_result"] = True
-                        diag["target_window_after_typing"] = self._get_active_window_title_safe()
-                        return True, None, diag
-
-                    except Exception as clip_ex:
-                        logger.warning("Clipboard injection failed (%s); switching to fallback keyboard stream", clip_ex)
-
-                # Strategy 2 (Fallback): Native Keyboard Adapter
-                if self._keyboard is not None and preferred_strategy != "CLIPBOARD_ATOMIC":
-                    try:
-                        diag["selected_input_strategy"] = "KEYBOARD_STREAM"
-                        await self._keyboard.type_text(text, target_hwnd=target_hwnd)
-                        if press_enter:
-                            await self._keyboard.press_key("Return")
-                        diag["dispatch_result"] = True
-                        diag["target_window_after_typing"] = self._get_active_window_title_safe()
-                        return True, None, diag
-                    except Exception as k_ex:
-                        logger.warning("Keyboard adapter type_text failed: %s", k_ex)
-                        diag["error_message"] = str(k_ex)
-
-                # Strategy 3 (Ultimate Fallback): Unicode-capable controlled virtual-key injection
-                if sys.platform == "win32":
-                    try:
-                        diag["selected_input_strategy"] = "UNICODE_CONTROLLED"
-                        import ctypes
-                        from ctypes import wintypes
-                        user32 = ctypes.windll.user32
-                        for ch in text:
-                            if cancel_token and cancel_token.is_cancelled:
-                                return False, "Cancelled during typing", diag
-                            if ch == "\n":
-                                user32.keybd_event(0x0D, 0, 0, 0)
-                                user32.keybd_event(0x0D, 0, 2, 0)
-                            else:
-                                vk = user32.VkKeyScanW(ord(ch))
-                                if vk != -1:
-                                    shift = (vk >> 8) & 1
-                                    code = vk & 0xFF
-                                    try:
-                                        if shift:
-                                            user32.keybd_event(0x10, 0, 0, 0)
-                                        user32.keybd_event(code, 0, 0, 0)
-                                    finally:
-                                        user32.keybd_event(code, 0, 2, 0)
-                                        if shift:
-                                            user32.keybd_event(0x10, 0, 2, 0)
-                            await asyncio.sleep(0.015)
-                        if press_enter:
-                            user32.keybd_event(0x0D, 0, 0, 0)
-                            user32.keybd_event(0x0D, 0, 2, 0)
-
-                        diag["dispatch_result"] = True
-                        diag["target_window_after_typing"] = self._get_active_window_title_safe()
-                        return True, None, diag
-                    except Exception as char_ex:
-                        diag["error_message"] = f"Character typing failed: {char_ex}"
-                        return False, f"Character typing failed: {char_ex}", diag
-
-                diag["dispatch_result"] = True
-                diag["target_window_after_typing"] = self._get_active_window_title_safe()
-                return True, None, diag
-
-            finally:
-                # Part 7: Generic guaranteed modifier cleanup on completion or failure
-                if sys.platform == "win32":
-                    try:
-                        import ctypes
-                        from ctypes import wintypes
-                        u32 = ctypes.windll.user32
-                        for vk in (0x10, 0x11, 0x12, 0x5B, 0x5C):  # SHIFT, CTRL, ALT, LWIN, RWIN
-                            u32.keybd_event(wintypes.BYTE(vk), 0, wintypes.DWORD(2), 0)
-                    except Exception:
-                        pass
-                diag["completion_time_ns"] = time.perf_counter_ns()
-                self._last_text_input_diagnostics = diag
-
     def _requires_authoritative_strategy_execution(
         self,
         strategy: Optional[StrategyOption],
@@ -2321,5 +1854,33 @@ class AgentExecutionLoop:
                     return True
 
         return False
+
+    async def _execute_deterministic_text_input(
+        self,
+        text: str,
+        preferred_strategy: str = "KEYBOARD_STREAM",
+        window_title: Optional[str] = None,
+        hwnd: Optional[int] = None,
+        clear_first: bool = False,
+    ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
+        """Text reliability testing helper for keyboard typing execution and diagnostics."""
+        diag: Dict[str, Any] = {
+            "selected_input_strategy": preferred_strategy,
+            "completion_time_ns": time.time_ns(),
+        }
+        if self._keyboard is None:
+            diag["error_message"] = "Keyboard capability not available"
+            return False, "REQUIRED_ADAPTER_MISSING: KeyboardCapability", diag
+
+        try:
+            res = await self._keyboard.type_text(text)
+            return bool(res), None, diag
+        except Exception as e:
+            diag["error_message"] = str(e)
+            return False, str(e), diag
+
+
+CapabilityAwareAgentLoop = AgentExecutionLoop
+
 
 

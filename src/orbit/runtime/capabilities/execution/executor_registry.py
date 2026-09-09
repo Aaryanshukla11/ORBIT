@@ -15,6 +15,7 @@ from orbit.runtime.capabilities.execution.contracts import CapabilityExecutor
 from orbit.runtime.capabilities.execution.executors.app_launch_executor import ApplicationLaunchExecutor
 from orbit.runtime.capabilities.execution.executors.clipboard_paste_executor import ClipboardPasteExecutor
 from orbit.runtime.capabilities.execution.executors.composite_executor import CompositeCapabilityExecutor
+from orbit.runtime.capabilities.execution.executors.drawing_executor import DrawingExecutor
 from orbit.runtime.capabilities.execution.executors.geometry_drawing_executor import GeometryDrawingExecutor
 from orbit.runtime.capabilities.execution.executors.semantic_click_executor import SemanticClickExecutor
 from orbit.runtime.capabilities.execution.executors.text_input_executor import TextInputExecutor
@@ -97,7 +98,8 @@ class CapabilityExecutorRegistry:
         # 4. TYPE_TEXT
         reg.register_executor(TextInputExecutor(keyboard=keyboard))
 
-        # 5. DRAW_BASIC_GEOMETRY
+        # 5. DRAW_STROKES (Canonical) & DRAW_BASIC_GEOMETRY
+        reg.register_executor(DrawingExecutor(pointer=pointer))
         reg.register_executor(GeometryDrawingExecutor(pointer=pointer))
 
         # 6. CLIPBOARD_PASTE

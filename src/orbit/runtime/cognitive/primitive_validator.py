@@ -194,4 +194,24 @@ class PrimitiveValidator:
         elif action_type == AbstractActionType.BROWSER_NAVIGATE:
             if "url" not in params:
                 return "Missing required parameter 'url'"
+        elif action_type == AbstractActionType.DRAW_STROKES:
+            strokes = params.get("strokes")
+            if not strokes and not params.get("shape") and not params.get("target"):
+                return "DRAW_STROKES requires 'target' and normalized 'strokes' geometry"
+            if strokes is not None:
+                if not isinstance(strokes, list):
+                    return "Parameter 'strokes' must be a list of stroke point sequences"
+                for s_idx, stroke in enumerate(strokes):
+                    if not isinstance(stroke, list):
+                        return f"Stroke {s_idx} must be a list of 2-numeric points (u, v)"
+                    for p_idx, pt in enumerate(stroke):
+                        if isinstance(pt, dict):
+                            return f"Stroke {s_idx} point {p_idx} cannot be a dictionary (raw coordinate dictionaries are prohibited)"
+                        if not isinstance(pt, (list, tuple)) or len(pt) != 2:
+                            return f"Stroke {s_idx} point {p_idx} must be a 2-tuple of numeric coordinates (u, v)"
+                        u, v = pt
+                        if not isinstance(u, (int, float)) or not isinstance(v, (int, float)):
+                            return f"Stroke {s_idx} point {p_idx} coordinates must be numbers"
+                        if u < 0.0 or u > 1.0 or v < 0.0 or v > 1.0:
+                            return f"Stroke {s_idx} point {p_idx} ({u}, {v}) violates normalized canvas bounds [0.0, 1.0]"
         return None
