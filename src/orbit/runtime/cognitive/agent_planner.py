@@ -74,43 +74,43 @@ class AgentPlanner:
 
         # 1. Canvas / Drawing candidate
         shape = str(objective.parameters.get("shape", "")).lower()
-        unfeasible_keywords = ["portrait", "portrait_of_boy", "face", "person", "human", "realistic", "landscape"]
-        raw_prompt_lower = objective.raw_prompt.lower()
-        is_unfeasible_drawing = any(k in shape for k in unfeasible_keywords) or any(k in raw_prompt_lower for k in ["portrait", "photo of"])
-
-        if is_unfeasible_drawing:
-            # Complex non-geometric drawing cannot be satisfied by standard vector strokes; reject early
-            return []
-
-        if any(w in text for w in ("draw", "sketch", "paint canvas", "strokes", "illustration")):
+        if (
+            any(w in text for w in ("draw", "sketch", "paint canvas", "strokes", "illustration", "cube", "square", "rectangle", "circle", "shape"))
+            or objective.parameters.get("action_type") == "draw"
+            or bool(shape)
+        ):
             # Extract strokes from parameters or creative payload
             strokes = objective.parameters.get("strokes") or [
                 [(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8), (0.2, 0.2)]
             ]
             candidates.append(
-                    CandidatePlan(
-                        subgoal_id=subgoal.sub_id,
-                        intent_strategy="CANVAS_RENDERING",
-                        proposed_primitives=[AbstractActionType.DRAW_STROKES],
-                        targets=[
-                            SemanticTarget(
-                                name=subgoal.target_entity or "Paint",
-                                role="canvas",
-                                context="mspaint",
-                            )
-                        ],
-                        expected_outcome=ActionOutcomeContract(
-                            expected_state_transition="Drawing strokes rendered on canvas",
-                            verification_strategy=VerificationStrategy.CANVAS_CHANGE,
-                        ),
-                        estimated_complexity=3,
-                        creative_payload={"strokes": strokes},
-                        rationale="Render vector strokes directly onto targeted canvas",
-                    )
+                CandidatePlan(
+                    subgoal_id=subgoal.sub_id,
+                    intent_strategy="CANVAS_RENDERING",
+                    proposed_primitives=[AbstractActionType.DRAW_STROKES],
+                    targets=[
+                        SemanticTarget(
+                            name=subgoal.target_entity or "Paint",
+                            role="canvas",
+                            context="mspaint",
+                        )
+                    ],
+                    expected_outcome=ActionOutcomeContract(
+                        expected_state_transition="Drawing strokes rendered on canvas",
+                        verification_strategy=VerificationStrategy.CANVAS_CHANGE,
+                    ),
+                    estimated_complexity=3,
+                    creative_payload={
+                        "strokes": strokes,
+                        "shape": shape,
+                        "raw_prompt": objective.raw_prompt,
+                    },
+                    rationale="Render vector strokes directly onto targeted canvas",
                 )
+            )
 
         # 2. Application launch candidate
-        if any(w in text for w in ("open", "launch", "start")) and any(
+        elif any(w in text for w in ("open", "launch", "start")) and any(
             app in text for app in ("notepad", "paint", "calculator", "calc", "word", "excel", "browser")
         ):
             app_name = subgoal.target_entity or "notepad"
@@ -130,7 +130,7 @@ class AgentPlanner:
             )
 
         # 3. Text composition candidate
-        if any(w in text for w in ("type", "write", "enter text", "compose")):
+        elif any(w in text for w in ("type", "write", "enter text", "compose")):
             text_to_type = objective.parameters.get("text") or "Hello ORBIT"
             candidates.append(
                 CandidatePlan(
@@ -155,21 +155,22 @@ class AgentPlanner:
             )
 
         # 4. Generic UI Click / Focus fallback candidate
-        target_name = subgoal.target_entity or "Main Window"
-        candidates.append(
-            CandidatePlan(
-                subgoal_id=subgoal.sub_id,
-                intent_strategy="GUI_INTERACTIVE",
-                proposed_primitives=subgoal.preferred_primitives or [AbstractActionType.CLICK],
-                targets=[SemanticTarget(name=target_name, role="control")],
-                expected_outcome=ActionOutcomeContract(
-                    expected_state_transition=f"Interacted with {target_name}",
-                    verification_strategy=VerificationStrategy.AUTO_ROUTED,
-                ),
-                estimated_complexity=2,
-                rationale=f"Interact with control '{target_name}'",
+        else:
+            target_name = subgoal.target_entity or "Main Window"
+            candidates.append(
+                CandidatePlan(
+                    subgoal_id=subgoal.sub_id,
+                    intent_strategy="GUI_INTERACTIVE",
+                    proposed_primitives=subgoal.preferred_primitives or [AbstractActionType.CLICK],
+                    targets=[SemanticTarget(name=target_name, role="control")],
+                    expected_outcome=ActionOutcomeContract(
+                        expected_state_transition=f"Interacted with {target_name}",
+                        verification_strategy=VerificationStrategy.AUTO_ROUTED,
+                    ),
+                    estimated_complexity=2,
+                    rationale=f"Interact with control '{target_name}'",
+                )
             )
-        )
 
         return candidates
 

@@ -1094,234 +1094,118 @@ class OrbitOrchestrator:
                 await self._handle_cancellation(task_id, cancel_token.reason)
                 return
 
-            # Step 2: Target Resolution & Plan Generation
-            target_intent_data = task.metadata.get("target_intent")
-            if target_intent_data:
-                # 1. Parse TargetIntent
-                if isinstance(target_intent_data, TargetIntent):
-                    intent = target_intent_data
-                elif isinstance(target_intent_data, dict):
-                    intent = TargetIntent(**target_intent_data)
-                else:
-                    raise ValueError(f"Invalid target_intent type: {type(target_intent_data)}")
-
-                exp_outcome = None
-                if intent:
-                    if isinstance(intent, dict):
-                        exp_outcome = intent.get("expected_outcome")
-                    else:
-                        exp_outcome = getattr(intent, "expected_outcome", None)
-                if exp_outcome is not None and isinstance(exp_outcome, dict):
+            # Conversational Mode: If conversational intent or Chatbot mode, query active LLM directly
+            if task.metadata.get("conversational"):
+                active_ctx = self._model_session_manager.get_active_context() if hasattr(self._model_session_manager, "get_active_context") else None
+                if active_ctx:
                     try:
-                        exp_outcome = ExpectedOutcome.model_validate(exp_outcome)
-                    except Exception:
-                        exp_outcome = None
-                elif not isinstance(exp_outcome, ExpectedOutcome):
-                    exp_outcome = None
+                        resp = await self._model_session_manager.generate(
+                            ModelGenerateRequest(
+                                prompt=task.prompt,
+                                system_prompt="You are ORBIT, an executive AI desktop co-pilot. Respond directly, politely, and helpfully to the user.",
+                            )
+                        )
+                        rec = await self._history_store.get_record_by_task_id(task_id)
+                        if rec:
+                            rec.status = ExecutionStatus.COMPLETED
+                            rec.completed_at = datetime.now(timezone.utc)
+                            await self._history_store.save_record(rec)
 
-                exec_policy = task.metadata.get("execution_policy")
-                if exec_policy is not None and isinstance(exec_policy, dict):
-                    try:
-                        exec_policy = ExecutionPolicy.model_validate(exec_policy)
-                    except Exception:
-                        exec_policy = None
+                        await self._task_manager.update_status(task_id, TaskStatus.COMPLETED)
+                        await self._emit_task_event(task_id, TaskStatus.COMPLETED)
+                        await self._emit_event(
+                            EventType.MODEL_GENERATE_RESPONSE,
+                            session_id=session_id,
+                            correlation_id=task_id,
+                            payload={"text": resp.content, "task_id": task_id},
+                        )
+                        return
+                    except Exception as gen_err:
+                        logger.warning("Conversational model turn exception: %s", gen_err)
 
-                act_type = task.metadata.get("action_type", "pointer_click")
-                act_params = task.metadata.get("action_parameters", {})
+            # Production Path: Execute Natural Language Autonomous Task end-to-end via unified AgentExecutionLoop
+            logger.info("Executing autonomous task %s via AgentExecutionLoop: '%s'", task_id, task.prompt)
+            agent_res: AgentExecutionResult = await self._agent_loop.run(
+                prompt=task.prompt,
+                session_id=session_id,
+                task_id=task_id,
+                context=task.metadata,
+                cancel_token=cancel_token,
+            )
 
-                # Delegate to ClosedLoopExecutionEngine
-                exec_result: ClosedLoopExecutionResult = await self._execution_engine.execute_task_action(
-                    session_id=session_id,
-                    task_id=task_id,
-                    prompt=task.prompt,
-                    target_intent=intent,
-                    action_type=act_type,
-                    action_parameters=act_params,
-                    expected_outcome=exp_outcome,
-                    policy=exec_policy,
-                    cancel_token=cancel_token,
-                )
+            task.metadata["agent_execution_result"] = agent_res.model_dump()
+            task.metadata["task_objective"] = agent_res.objective.model_dump()
 
-                task.metadata["execution_result"] = exec_result.model_dump()
-
-                if not exec_result.is_success:
-                    err_code = exec_result.failure_code or exec_result.final_state.value
-                    err_msg = exec_result.failure_reason or f"Closed-loop execution failed in state {err_code}"
-                    error_detail = ErrorDetail(
-                        code=err_code,
-                        message=err_msg,
-                        recoverable=False,
-                        details={
-                            "final_state": exec_result.final_state.value,
-                            "total_attempts": exec_result.total_attempts,
-                            "total_recoveries": exec_result.total_recoveries,
-                            "elapsed_duration_ms": exec_result.elapsed_duration_ms,
-                        },
+            # Emit Plan if formulated from step history
+            if agent_res.step_history:
+                try:
+                    ui_plan = ExecutionPlan(
+                        plan_id=agent_res.objective.objective_id,
+                        task_id=task_id,
+                        description=agent_res.objective.user_goal or task.prompt,
+                        steps=[
+                            Step(
+                                step_id=f"step_{s.step_index}",
+                                step_index=s.step_index,
+                                description=s.decision.decision_summary or f"Step {s.step_index + 1}",
+                            )
+                            for s in agent_res.step_history
+                        ],
                     )
-                    terminal_status = (
-                        TaskStatus.CANCELLED
-                        if exec_result.final_state == ExecutionState.CANCELLED
-                        else TaskStatus.FAILED
-                    )
-                    await self._task_manager.update_status(task_id, terminal_status, error=error_detail)
-                    await self._emit_task_event(task_id, terminal_status, error=error_detail)
-                    return
-
-                # Record verified plan representation
-                if exec_result.resolved_target:
-                    plan = self._build_target_resolved_plan(
-                        task_id, task.prompt, exec_result.resolved_target, expected_outcome=exp_outcome
-                    )
-                    await self._task_manager.set_plan(task_id, plan)
+                    await self._task_manager.set_plan(task_id, ui_plan)
                     await self._emit_event(
                         EventType.PLAN_UPDATED,
                         session_id=session_id,
                         correlation_id=task_id,
-                        payload=PlanUpdatedPayload(task_id=task_id, plan=plan).model_dump(),
+                        payload=PlanUpdatedPayload(task_id=task_id, plan=ui_plan).model_dump(),
                     )
+                except Exception as plan_err:
+                    logger.debug("Plan conversion notice: %s", plan_err)
 
-                # Transition to VERIFYING then COMPLETED
-                await self._task_manager.update_status(task_id, TaskStatus.VERIFYING)
-                await self._emit_task_event(task_id, TaskStatus.VERIFYING)
-
-                await self._task_manager.update_status(task_id, TaskStatus.COMPLETED)
-                await self._emit_task_event(task_id, TaskStatus.COMPLETED)
-                return
-            elif task.metadata.get("is_synthetic_development") or task.metadata.get("allow_synthetic_fallback"):
-                wsp_gen = 0
-                wsp_cap = self._registry.get_optional(CapabilityType.WORKSPACE)
-                if wsp_cap and hasattr(wsp_cap, "get_desktop_generation"):
-                    wsp_gen = wsp_cap.get_desktop_generation()
-                plan = self._build_synthetic_plan(task_id, task.prompt, generation_id=wsp_gen)
-                await self._task_manager.set_plan(task_id, plan)
+            # Update history store record
+            rec = await self._history_store.get_record_by_task_id(task_id)
+            is_successful = agent_res.is_success
+            comp_status = agent_res.final_status
+            if rec:
+                if comp_status and comp_status.value in ExecutionStatus.__members__:
+                    rec.status = ExecutionStatus[comp_status.value]
+                else:
+                    rec.status = ExecutionStatus.COMPLETED if is_successful else ExecutionStatus.FAILED
+                rec.completed_at = datetime.now(timezone.utc)
+                rec.duration_ms = agent_res.elapsed_duration_ms
+                rec.failure_reason = agent_res.failure_reason
+                rec.failure_code = agent_res.failure_code
+                rec.total_steps = len(agent_res.step_history)
+                rec.steps_completed = len(agent_res.step_history) if is_successful else max(0, len(agent_res.step_history) - 1)
+                await self._history_store.save_record(rec)
                 await self._emit_event(
-                    EventType.PLAN_UPDATED,
+                    EventType.EXECUTION_RECORD_UPDATED,
                     session_id=session_id,
                     correlation_id=task_id,
-                    payload=PlanUpdatedPayload(task_id=task_id, plan=plan).model_dump(),
+                    payload={"record": rec.model_dump(mode="json")},
                 )
-                for step in plan.steps:
-                    for action in step.actions:
-                        await self._execute_action(session_id, action, cancel_token)
-                await self._task_manager.update_status(task_id, TaskStatus.VERIFYING)
+
+            if is_successful:
+                await self._task_manager.update_status(task_id, TaskStatus.VERIFYING, metadata=task.metadata)
                 await self._emit_task_event(task_id, TaskStatus.VERIFYING)
-                await self._task_manager.update_status(task_id, TaskStatus.COMPLETED)
+                await self._task_manager.update_status(task_id, TaskStatus.COMPLETED, metadata=task.metadata)
                 await self._emit_task_event(task_id, TaskStatus.COMPLETED)
-                return
             else:
-                # Conversational Mode: If conversational intent or Chatbot mode, query active LLM directly
-                if task.metadata.get("conversational"):
-                    active_ctx = self._model_session_manager.get_active_context() if hasattr(self._model_session_manager, "get_active_context") else None
-                    if active_ctx:
-                        try:
-                            resp = await self._model_session_manager.generate(
-                                ModelGenerateRequest(
-                                    prompt=task.prompt,
-                                    system_prompt="You are ORBIT, an executive AI desktop co-pilot. Respond directly, politely, and helpfully to the user.",
-                                )
-                            )
-                            rec = await self._history_store.get_record_by_task_id(task_id)
-                            if rec:
-                                rec.status = ExecutionStatus.COMPLETED
-                                rec.completed_at = datetime.now(timezone.utc)
-                                await self._history_store.save_record(rec)
-
-                            await self._task_manager.update_status(task_id, TaskStatus.COMPLETED)
-                            await self._emit_task_event(task_id, TaskStatus.COMPLETED)
-                            await self._emit_event(
-                                EventType.MODEL_GENERATE_RESPONSE,
-                                session_id=session_id,
-                                correlation_id=task_id,
-                                payload={"text": resp.content, "task_id": task_id},
-                            )
-                            return
-                        except Exception as gen_err:
-                            logger.warning("Conversational model turn exception: %s", gen_err)
-
-                # Production Path: Execute Natural Language Autonomous Task end-to-end via unified AgentExecutionLoop
-                logger.info("Executing autonomous task %s via AgentExecutionLoop: '%s'", task_id, task.prompt)
-                agent_res: AgentExecutionResult = await self._agent_loop.run(
-                    prompt=task.prompt,
-                    session_id=session_id,
-                    task_id=task_id,
-                    context=task.metadata,
-                    cancel_token=cancel_token,
+                err_code = agent_res.failure_code or "TASK_EXECUTION_FAILED"
+                err_msg = agent_res.failure_reason or "Task goal could not be verified or completed"
+                logger.warning("Task %s failed physical execution: [%s] %s", task_id, err_code, err_msg)
+                err_detail = ErrorDetail(
+                    code=err_code,
+                    message=err_msg,
+                    recoverable=False,
                 )
-
-                task.metadata["agent_execution_result"] = agent_res.model_dump()
-                task.metadata["task_objective"] = agent_res.objective.model_dump()
-
-
-                # Emit Plan if formulated from step history
-                if agent_res.step_history:
-                    try:
-                        ui_plan = ExecutionPlan(
-                            plan_id=agent_res.objective.objective_id,
-                            task_id=task_id,
-                            description=agent_res.objective.user_goal or task.prompt,
-                            steps=[
-                                Step(
-                                    step_id=f"step_{s.step_index}",
-                                    step_index=s.step_index,
-                                    description=s.decision.decision_summary or f"Step {s.step_index + 1}",
-                                )
-                                for s in agent_res.step_history
-                            ],
-                        )
-                        await self._task_manager.set_plan(task_id, ui_plan)
-                        await self._emit_event(
-                            EventType.PLAN_UPDATED,
-                            session_id=session_id,
-                            correlation_id=task_id,
-                            payload=PlanUpdatedPayload(task_id=task_id, plan=ui_plan).model_dump(),
-                        )
-                    except Exception as plan_err:
-                        logger.debug("Plan conversion notice: %s", plan_err)
-
-                # Update history store record
-                rec = await self._history_store.get_record_by_task_id(task_id)
-                is_successful = agent_res.is_success
-                comp_status = agent_res.final_status
-                if rec:
-                    if comp_status and comp_status.value in ExecutionStatus.__members__:
-                        rec.status = ExecutionStatus[comp_status.value]
-                    else:
-                        rec.status = ExecutionStatus.COMPLETED if is_successful else ExecutionStatus.FAILED
-                    rec.completed_at = datetime.now(timezone.utc)
-                    rec.duration_ms = agent_res.elapsed_duration_ms
-                    rec.failure_reason = agent_res.failure_reason
-                    rec.failure_code = agent_res.failure_code
-                    rec.total_steps = len(agent_res.step_history)
-                    rec.steps_completed = len(agent_res.step_history) if is_successful else max(0, len(agent_res.step_history) - 1)
-                    await self._history_store.save_record(rec)
-                    await self._emit_event(
-                        EventType.EXECUTION_RECORD_UPDATED,
-                        session_id=session_id,
-                        correlation_id=task_id,
-                        payload={"record": rec.model_dump(mode="json")},
-                    )
-
-                if is_successful:
-                    await self._task_manager.update_status(task_id, TaskStatus.VERIFYING, metadata=task.metadata)
-                    await self._emit_task_event(task_id, TaskStatus.VERIFYING)
-                    await self._task_manager.update_status(task_id, TaskStatus.COMPLETED, metadata=task.metadata)
-                    await self._emit_task_event(task_id, TaskStatus.COMPLETED)
-                else:
-                    err_code = agent_res.failure_code or "TASK_EXECUTION_FAILED"
-                    err_msg = agent_res.failure_reason or "Task goal could not be verified or completed"
-                    logger.warning("Task %s failed physical execution: [%s] %s", task_id, err_code, err_msg)
-                    err_detail = ErrorDetail(
-                        code=err_code,
-                        message=err_msg,
-                        recoverable=False,
-                    )
-                    terminal_status = (
-                        TaskStatus.CANCELLED
-                        if (comp_status and comp_status.value == "CANCELLED")
-                        else TaskStatus.FAILED
-                    )
-                    await self._task_manager.update_status(task_id, terminal_status, error=err_detail, metadata=task.metadata)
-                    await self._emit_task_event(task_id, terminal_status, error=err_detail)
+                terminal_status = (
+                    TaskStatus.CANCELLED
+                    if (comp_status and comp_status.value == "CANCELLED")
+                    else TaskStatus.FAILED
+                )
+                await self._task_manager.update_status(task_id, terminal_status, error=err_detail, metadata=task.metadata)
+                await self._emit_task_event(task_id, terminal_status, error=err_detail)
 
         except Exception as ex:
             logger.exception("Task execution failed for task %s: %s", task_id, ex)

@@ -76,14 +76,24 @@ class SemanticFeasibilityEvaluator:
                         f"Sequence matches recently failed sequence on sub-goal '{failed_rec.sub_goal_title}'"
                     )
 
-        # 3. Canvas rendering checks
+        # 3. Canvas rendering checks (ASTRA-6 Semantic Feasibility Authority)
         if AbstractActionType.DRAW_STROKES in candidate.proposed_primitives:
-            if not candidate.creative_payload or "strokes" not in candidate.creative_payload:
+            payload = candidate.creative_payload or {}
+            shape = str(payload.get("shape", "")).lower()
+            raw_prompt = str(payload.get("raw_prompt", payload.get("prompt", ""))).lower()
+            unfeasible_keywords = ["portrait", "portrait_of_boy", "face", "person", "human", "realistic", "landscape", "photo of"]
+
+            if any(k in shape for k in unfeasible_keywords) or any(k in raw_prompt for k in ["portrait", "photo of"]):
+                return 0.0, [
+                    f"Goal is NOT FEASIBLY EXECUTABLE (unsupported complex drawing shape '{shape or 'complex'}' exceeds vector stroke drawing capabilities)"
+                ]
+
+            if not payload or "strokes" not in payload:
                 score -= 0.5
                 rejection_reasons.append("DRAW_STROKES primitive missing normalized stroke payload")
             else:
-                strokes = candidate.creative_payload.get("strokes", [])
-                # Verify coordinates are normalized
+                strokes = payload.get("strokes", [])
+                # Verify coordinates are normalized in [0, 1]
                 for stroke in strokes:
                     for pt in stroke:
                         if isinstance(pt, (list, tuple)) and len(pt) == 2:

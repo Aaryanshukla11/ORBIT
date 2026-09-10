@@ -48,6 +48,9 @@ from orbit.runtime.agent.perception_router import (
 )
 from orbit.runtime.agent.progress_graph import (
     ProgressGraph,
+    ProgressNode,
+    ProgressSnapshot,
+    SubObjective,
     SubgoalNode,
     SubgoalStatus,
 )
@@ -104,6 +107,9 @@ __all__ = [
     "AgentStateTransitionVerifier",
     # 5. Progress Graph
     "ProgressGraph",
+    "ProgressNode",
+    "ProgressSnapshot",
+    "SubObjective",
     "SubgoalNode",
     "SubgoalStatus",
 ]

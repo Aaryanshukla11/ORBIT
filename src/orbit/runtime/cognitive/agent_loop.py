@@ -184,6 +184,9 @@ class AgentExecutionLoop:
             model_client=self._session_manager,
         )
 
+        from orbit.runtime.capabilities.application_launcher import ApplicationLauncher
+        self._application_launcher = ApplicationLauncher()
+
         # Wire CanvasDrawingProvider with pointer into environment registry
         if self._pointer is not None:
             drawing_provider = CanvasDrawingProvider(pointer=self._pointer)
@@ -200,6 +203,10 @@ class AgentExecutionLoop:
             validator=self._primitive_validator,
             verifier=self._multi_evidence_verifier,
             provider_registry=self._environment_registry,
+            pointer=self._pointer,
+            keyboard=self._keyboard,
+            workspace=self._workspace,
+            application_launcher=self._application_launcher,
         )
 
         # Phase 3: Target Grounding Infrastructure
@@ -208,8 +215,6 @@ class AgentExecutionLoop:
 
         # Phase 4: Failure Diagnosis & Replanning
         self._failure_analyst = CognitiveFailureAnalyst()
-        from orbit.runtime.capabilities.application_launcher import ApplicationLauncher
-        self._application_launcher = ApplicationLauncher()
 
     @property
     def failure_analyst(self) -> CognitiveFailureAnalyst:
@@ -1118,7 +1123,6 @@ class AgentExecutionLoop:
                     objective=objective,
                     grounding_fn=self._resolve_target_coordinates,
                     safety_gate_fn=self._evaluate_safety_gate,
-                    dispatch_fn=self._dispatch_physical_action,
                     observe_fn=self._observer.observe,
                     cancel_token=cancel_token,
                 )
@@ -1334,7 +1338,6 @@ class AgentExecutionLoop:
                                 pre_observation=post_obs,
                                 grounding_fn=self._resolve_target_coordinates,
                                 safety_gate_fn=self._evaluate_safety_gate,
-                                dispatch_fn=self._dispatch_physical_action,
                                 observe_fn=self._observer.observe,
                                 objective=objective,
                                 cancel_token=cancel_token,
@@ -1441,7 +1444,6 @@ class AgentExecutionLoop:
             pre_observation=pre_obs,
             grounding_fn=self._resolve_target_coordinates,
             safety_gate_fn=self._evaluate_safety_gate,
-            dispatch_fn=self._dispatch_physical_action,
             observe_fn=self._observer.observe,
             objective=objective,
             cancel_token=cancel_token,
@@ -1475,214 +1477,6 @@ class AgentExecutionLoop:
             if any(danger in app for danger in ("format", "diskpart", "shutdown", "regedit")):
                 return False, f"Destructive system application blocked by safety gate: '{app}'"
         return True, None
-
-    async def _dispatch_physical_action(
-        self,
-        action: AbstractAction,
-        pre_obs: CurrentStateObservation,
-        resolved_coords: Optional[Tuple[int, int]] = None,
-        cancel_token: Optional[CancellationToken] = None,
-    ) -> Tuple[bool, Optional[str]]:
-        """Dispatch physical OS action using Capability Adapters or Win32 low-level primitives."""
-        act_type = action.action_type
-        params = action.parameters
-        dispatch_success = False
-        err_msg: Optional[str] = None
-
-        logger.info(
-            "PHYSICAL ACTION DISPATCH: action_id=%s, type=%s, params=%s",
-            getattr(action, "action_id", "act"),
-            act_type.value if hasattr(act_type, "value") else str(act_type),
-            params,
-        )
-
-        try:
-            if act_type == AbstractActionType.LAUNCH_APPLICATION:
-                app_name = str(
-                    params.get(
-                        "application_name",
-                        params.get("app_name", action.target.name if action.target else "notepad"),
-                    )
-                ).strip()
-
-                # IDEMPOTENT APPLICATION LAUNCH: Check if application is already open
-                already_open_hwnd = None
-                already_open_title = ""
-                for win in pre_obs.visible_windows:
-                    w_title = (win.get("title") or "").lower()
-                    w_proc = (win.get("process_name") or "").lower()
-                    if app_name.lower() in w_title or app_name.lower() in w_proc:
-                        already_open_hwnd = win.get("hwnd")
-                        already_open_title = win.get("title", "")
-                        break
-
-                if not already_open_hwnd and pre_obs.active_window_title and app_name.lower() in pre_obs.active_window_title.lower():
-                    already_open_hwnd = pre_obs.active_window_hwnd
-                    already_open_title = pre_obs.active_window_title
-
-                if already_open_hwnd:
-                    logger.info(
-                        "[IDEMPOTENT LAUNCH] Application '%s' is ALREADY OPEN in window '%s' (HWND: %s). Reusing existing window, skipping physical launch.",
-                        app_name,
-                        already_open_title,
-                        already_open_hwnd,
-                    )
-                    if self._workspace is not None and hasattr(self._workspace, "set_focus_window"):
-                        await self._workspace.set_focus_window(int(already_open_hwnd))
-                    await asyncio.sleep(0.3)
-                    dispatch_success = True
-                    return True, None
-
-                # Generic launch via WorkspaceCapability or ApplicationLauncher boundary
-                if self._workspace is not None and hasattr(self._workspace, "launch_process"):
-                    raw_proc = self._workspace.launch_process(app_name)
-                    if inspect.isawaitable(raw_proc):
-                        proc_info = await raw_proc
-                    else:
-                        proc_info = raw_proc
-                    dispatch_success = bool(proc_info)
-                else:
-                    launch_res = self._application_launcher.launch(app_name)
-                    dispatch_success = launch_res.success
-                    err_msg = launch_res.error_message
-                    if launch_res.success:
-                        await asyncio.sleep(1.0)
-
-            elif act_type == AbstractActionType.FOCUS_WINDOW:
-                app_name = str(params.get("window_title", params.get("application_name", params.get("app_name", action.target.name if action.target else ""))))
-                hwnd = params.get("hwnd")
-                if not hwnd and app_name:
-                    for win in pre_obs.visible_windows:
-                        if self._observer._matches_app(win.get("title", ""), win.get("class_name", ""), app_name):
-                            hwnd = win.get("hwnd")
-                            break
-                if not hwnd:
-                    hwnd = pre_obs.active_window_hwnd
-
-                if hwnd and self._workspace is not None and hasattr(self._workspace, "set_focus_window"):
-                    dispatch_success = await self._workspace.set_focus_window(int(hwnd))
-                else:
-                    dispatch_success = True
-
-
-            elif act_type == AbstractActionType.TYPE_TEXT:
-                text = str(params.get("text", params.get("query", "")))
-                press_enter = bool(params.get("press_enter", False))
-                if self._keyboard is not None:
-                    await self._keyboard.type_text(text)
-                    if press_enter:
-                        await asyncio.sleep(0.05)
-                        if hasattr(self._keyboard, "hotkey"):
-                            await self._keyboard.hotkey("enter")
-                        elif hasattr(self._keyboard, "press_key"):
-                            await self._keyboard.press_key("enter")
-                    dispatch_success = True
-                else:
-                    dispatch_success = False
-                    err_msg = "REQUIRED_ADAPTER_MISSING: KeyboardCapability"
-
-            elif act_type == AbstractActionType.CLICK:
-                if self._pointer is None:
-                    dispatch_success = False
-                    err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
-                else:
-                    coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
-                    if not coords:
-                        dispatch_success = False
-                        err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
-                    else:
-                        await self._pointer.move_to(coords[0], coords[1])
-                        await asyncio.sleep(0.05)
-                        await self._pointer.click()
-                        dispatch_success = True
-
-            elif act_type == AbstractActionType.DOUBLE_CLICK:
-                if self._pointer is None:
-                    dispatch_success = False
-                    err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
-                else:
-                    coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
-                    if not coords:
-                        dispatch_success = False
-                        err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
-                    else:
-                        await self._pointer.move_to(coords[0], coords[1])
-                        await asyncio.sleep(0.05)
-                        await self._pointer.click()
-                        await asyncio.sleep(0.05)
-                        await self._pointer.click()
-                        dispatch_success = True
-
-            elif act_type == AbstractActionType.RIGHT_CLICK:
-                if self._pointer is None:
-                    dispatch_success = False
-                    err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
-                else:
-                    coords = resolved_coords or await self._resolve_target_coordinates(action.target, observation=pre_obs)
-                    if not coords:
-                        dispatch_success = False
-                        err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
-                    else:
-                        await self._pointer.move_to(coords[0], coords[1])
-                        await asyncio.sleep(0.05)
-                        if hasattr(self._pointer, "click_button"):
-                            await self._pointer.click_button("right")
-                        else:
-                            await self._pointer.click()
-                        dispatch_success = True
-
-            elif act_type == AbstractActionType.SEND_HOTKEY:
-                combination = str(params.get("hotkey", params.get("combination", "ctrl+s")))
-                if self._keyboard is not None:
-                    keys = combination.lower().split("+")
-                    for k in keys:
-                        await self._keyboard.press_key(k.strip())
-                    for k in reversed(keys):
-                        await self._keyboard.release_key(k.strip())
-                    dispatch_success = True
-                else:
-                    dispatch_success = False
-                    err_msg = "REQUIRED_ADAPTER_MISSING: KeyboardCapability"
-
-            elif act_type == AbstractActionType.DRAW_STROKES:
-                drawing_provider = await self._environment_registry.resolve_provider(AbstractActionType.DRAW_STROKES)
-                if drawing_provider is None:
-                    drawing_provider = CanvasDrawingProvider(pointer=self._pointer)
-                elif hasattr(drawing_provider, "set_pointer") and self._pointer is not None:
-                    drawing_provider.set_pointer(self._pointer)
-                res = await drawing_provider.execute(action)
-                dispatch_success = res.success
-                err_msg = res.error
-
-            elif act_type == AbstractActionType.SCROLL:
-                direction = str(params.get("direction", "down"))
-                if self._pointer is not None and hasattr(self._pointer, "scroll"):
-                    await self._pointer.scroll(direction=direction, amount=120)
-                    dispatch_success = True
-                elif self._pointer is not None:
-                    dispatch_success = True
-                else:
-                    dispatch_success = False
-                    err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
-
-            elif act_type in (AbstractActionType.WAIT, AbstractActionType.WAIT_SETTLE):
-                dur_ms = float(params.get("duration_sec", 0.5)) * 1000.0 if "duration_sec" in params else float(params.get("duration_ms", 500))
-                await asyncio.sleep(dur_ms / 1000.0)
-                dispatch_success = True
-
-            elif act_type == AbstractActionType.COMPLETE_GOAL:
-                dispatch_success = True
-
-            else:
-                dispatch_success = False
-                err_msg = f"UNKNOWN_ACTION_TYPE: {act_type.value if hasattr(act_type, 'value') else act_type}"
-
-        except Exception as ex:
-            logger.warning("Action physical dispatch error for %s: %s", act_type.value if hasattr(act_type, "value") else act_type, ex, exc_info=True)
-            dispatch_success = False
-            err_msg = str(ex)
-
-        return dispatch_success, err_msg
 
     async def _resolve_target_coordinates(
         self,
@@ -1766,10 +1560,6 @@ class AgentExecutionLoop:
 
         return False
 
-
-
-
-
     async def _execute_deterministic_text_input(
         self,
         text: str,
@@ -1778,21 +1568,23 @@ class AgentExecutionLoop:
         hwnd: Optional[int] = None,
         clear_first: bool = False,
     ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
-        """Text reliability testing helper for keyboard typing execution and diagnostics."""
+        """Text reliability testing helper routing through PrimitiveExecutionController."""
         diag: Dict[str, Any] = {
             "selected_input_strategy": preferred_strategy,
             "completion_time_ns": time.time_ns(),
         }
-        if self._keyboard is None:
-            diag["error_message"] = "Keyboard capability not available"
-            return False, "REQUIRED_ADAPTER_MISSING: KeyboardCapability", diag
-
-        try:
-            res = await self._keyboard.type_text(text)
-            return bool(res), None, diag
-        except Exception as e:
-            diag["error_message"] = str(e)
-            return False, str(e), diag
+        action = AbstractAction(
+            action_type=AbstractActionType.TYPE_TEXT,
+            parameters={"text": text},
+        )
+        dispatch_success, err_msg = await self._primitive_execution_controller.dispatch_physical_action(
+            action=action,
+            pre_obs=CurrentStateObservation(),
+        )
+        if not dispatch_success:
+            diag["error_message"] = err_msg or "Keyboard capability not available"
+            return False, err_msg or "Dispatch failed", diag
+        return True, None, diag
 
 
 CapabilityAwareAgentLoop = AgentExecutionLoop
