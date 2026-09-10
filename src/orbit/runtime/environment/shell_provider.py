@@ -16,7 +16,7 @@ import re
 import shlex
 import subprocess
 import sys
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from orbit.runtime.agent.contracts import AbstractAction
 from orbit.runtime.environment.registry import EnvironmentProvider, ProviderExecutionResult
@@ -61,7 +61,34 @@ class RestrictedShellPolicy:
         "out-gridview",
         "appactivate",
         "msgbox",
+        "system.windows",
+        "system.drawing",
+        "presentationframework",
+        "showdialog",
+        "messagebox",
     }
+
+    # Prohibited indirect launchers and script hosts (Phase 0 Rule #10)
+    FORBIDDEN_INDIRECT_EXEC: Set[str] = {
+        "wscript", "wscript.exe",
+        "cscript", "cscript.exe",
+        "mshta", "mshta.exe",
+        "rundll32", "rundll32.exe",
+        "regsvr32", "regsvr32.exe",
+        "certutil", "certutil.exe",
+        "schtasks", "schtasks.exe",
+        "bitsadmin", "bitsadmin.exe",
+    }
+
+    # Prohibited dynamic evaluation, encoded commands, process spawning, command substitution
+    FORBIDDEN_DYNAMIC_PATTERNS: List[re.Pattern] = [
+        re.compile(r"(?:\b|^)(?:invoke-expression|iex|invoke-command|icm)\b", re.IGNORECASE),
+        re.compile(r"(?:\b|^)(?:start-process|start-job)\b", re.IGNORECASE),
+        re.compile(r"\bwmic\s+process\s+call\s+create\b", re.IGNORECASE),
+        re.compile(r"-(?:enc|encodedcommand)\b", re.IGNORECASE),
+        re.compile(r"frombase64string", re.IGNORECASE),
+        re.compile(r"\$\(.*?\)", re.IGNORECASE),  # subshell command substitution
+    ]
 
     # Prohibited destructive system commands
     FORBIDDEN_DESTRUCTIVE_COMMANDS: Set[str] = {
@@ -116,6 +143,23 @@ class RestrictedShellPolicy:
                     f"COMMAND_NOT_PERMITTED: Physical OS bypass attempt. "
                     f"UI automation pattern '{ui_kw}' is prohibited in environment shell. "
                     f"Physical interaction must route through canonical primitives."
+                )
+
+        # Check for indirect executable launching and script hosts (Phase 0 Rule #10)
+        for indirect_bin in self.FORBIDDEN_INDIRECT_EXEC:
+            pattern = rf"(?:\b|^){re.escape(indirect_bin)}(?:\b|$)"
+            if re.search(pattern, cleaned):
+                return False, (
+                    f"COMMAND_NOT_PERMITTED: Indirect execution bypass attempt. "
+                    f"Binary/script host '{indirect_bin}' is prohibited in environment shell."
+                )
+
+        # Check for dynamic evaluation, encoded PowerShell, and command substitution
+        for dyn_pat in self.FORBIDDEN_DYNAMIC_PATTERNS:
+            if dyn_pat.search(cleaned):
+                return False, (
+                    f"COMMAND_NOT_PERMITTED: Security policy violation. "
+                    f"Dynamic evaluation, subshell substitution, or encoded execution detected."
                 )
 
         # Check for destructive system commands

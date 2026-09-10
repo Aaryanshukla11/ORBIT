@@ -91,12 +91,6 @@ from orbit.runtime.targeting import (
 from orbit.runtime.task_completion.goal_verifier import GoalVerifier
 from orbit.runtime.task_completion.models import TaskCompletionStatus
 from orbit.runtime.capabilities import FeasibilityAnalyzer
-from orbit.runtime.capabilities.execution import (
-    CapabilityExecutorRegistry,
-    StageRecoveryManager,
-    StrategyExecutionEngine,
-    StrategyExecutionResult,
-)
 from orbit.runtime.cognitive.decomposer import HierarchicalGoalDecomposer
 from orbit.runtime.cognitive.primitive_composer import PrimitiveComposer, ComposedPrimitiveSequence
 from orbit.runtime.cognitive.primitive_validator import PrimitiveValidator
@@ -170,20 +164,9 @@ class AgentExecutionLoop:
         self._text_input_lock = asyncio.Lock()
         self._last_text_input_diagnostics: Dict[str, Any] = {}
 
-        # Authoritative Capability Execution Registry & Strategy Execution Engine (M1.9)
-        self._executor_registry = executor_registry or CapabilityExecutorRegistry.create_default(
-            workspace=self._workspace,
-            pointer=self._pointer,
-            keyboard=self._keyboard,
-            target_locator=self._target_locator,
-            capability_registry=getattr(self._feasibility_analyzer, "_registry", None),
-        )
-        self._strategy_execution_engine = strategy_execution_engine or StrategyExecutionEngine(
-            executor_registry=self._executor_registry,
-            observer=self._observer,
-            event_bus=self._event_bus,
-            recovery_manager=StageRecoveryManager(max_recovery_attempts=2),
-        )
+        # Legacy capability execution engine is strictly an offline testing reference (zero production authority)
+        self._executor_registry = executor_registry
+        self._strategy_execution_engine = strategy_execution_engine
 
         # Phase 1: Primitive-Centric General Agent Foundation Components
         self._world_model = world_model or AgentWorldModel()
@@ -392,84 +375,6 @@ class AgentExecutionLoop:
                 feasibility.matched_strategy.semantic_goal_coverage,
                 feasibility.matched_strategy.estimated_success_probability,
             )
-        # -----------------------------------------------------------------
-        # Offline Strategy Execution Test Bridge (Strictly opt-in via test context)
-        # -----------------------------------------------------------------
-        if self._requires_authoritative_strategy_execution(feasibility.matched_strategy, context):
-            selected_strat = feasibility.matched_strategy
-            logger.info(
-                "[STRATEGY EXECUTION BRIDGE] Executing strategy '%s' via StrategyExecutionEngine (explicit test opt-in)",
-                selected_strat.name,
-            )
-            sm.transition_to(AgentLoopState.OBSERVING, cycle_number=0)
-            strat_res = await self._strategy_execution_engine.execute_strategy(
-                strategy=selected_strat,
-                objective=objective,
-                context=context,
-                cancel_token=cancel_token,
-                session_id=session_id,
-            )
-
-            final_obs = await self._observer.observe(objective)
-            goal_verified = strat_res.is_success
-
-            if self._goal_verifier is not None:
-                try:
-                    g_eval = await self._goal_verifier.verify_goal_achievement(
-                        task_id=effective_task_id,
-                        objective=objective,
-                        current_observation=final_obs,
-                        step_history=[],
-                    )
-                    is_sat = getattr(g_eval, "is_satisfied", getattr(g_eval, "is_completed", False)) or (getattr(g_eval, "status", None) == TaskCompletionStatus.COMPLETED)
-                    goal_verified = bool(is_sat)
-                except Exception as g_err:
-                    logger.debug("Final goal verification error post-strategy execution: %s", g_err)
-
-            if strat_res.is_success and goal_verified:
-                sm.transition_to(
-                    AgentLoopState.EVALUATING_PROGRESS,
-                    cycle_number=len(strat_res.stage_results),
-                    goal_satisfied=True,
-                )
-                sm.transition_to(
-                    AgentLoopState.COMPLETED,
-                    cycle_number=len(strat_res.stage_results),
-                    goal_satisfied=True,
-                )
-                return AgentExecutionResult(
-                    task_id=effective_task_id,
-                    objective=objective,
-                    is_success=True,
-                    total_steps=len(strat_res.stage_results),
-                    step_history=[],
-                    final_status=TaskCompletionStatus.COMPLETED,
-                    elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
-                    state_transitions=sm.history,
-                    cycle_traces=[],
-                    recovery_records=[],
-                )
-            elif not strat_res.is_success:
-                sm.transition_to(
-                    AgentLoopState.FAILED,
-                    cycle_number=len(strat_res.stage_results),
-                    failure_reason=strat_res.failure_reason,
-                )
-                return AgentExecutionResult(
-                    task_id=effective_task_id,
-                    objective=objective,
-                    is_success=False,
-                    total_steps=len(strat_res.stage_results),
-                    step_history=[],
-                    final_status=TaskCompletionStatus.FAILED,
-                    failure_reason=strat_res.failure_reason,
-                    failure_code=strat_res.failure_code or "STRATEGY_EXECUTION_FAILED",
-                    elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
-                    state_transitions=sm.history,
-                    cycle_traces=[],
-                    recovery_records=[],
-                )
-
         step_history: List[CognitiveStepResult] = []
         cycle_traces: List[CycleExecutionTrace] = []
         consecutive_identical_actions = 0
@@ -901,10 +806,7 @@ class AgentExecutionLoop:
                         f"Application '{app_target_name}' is ALREADY RUNNING and usable on desktop "
                         f"(HWND: {already_open_hwnd}, Window: '{already_open_title}'). Re-launching is blocked."
                     )
-                    # Focus existing window if not foreground
-                    if already_open_hwnd and sys.platform == "win32":
-                        from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
-                        EvidenceBasedTargetLocator._force_foreground_window(int(already_open_hwnd))
+                    # Application is already running; re-launching is blocked
 
             # 3. General semantic check: Identical action and target already successfully executed
             if not is_redundant and step_history and action.action_type not in (
@@ -1572,9 +1474,8 @@ class AgentExecutionLoop:
                         already_open_title,
                         already_open_hwnd,
                     )
-                    if sys.platform == "win32":
-                        from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
-                        EvidenceBasedTargetLocator._force_foreground_window(int(already_open_hwnd))
+                    if self._workspace is not None and hasattr(self._workspace, "set_focus_window"):
+                        await self._workspace.set_focus_window(int(already_open_hwnd))
                     await asyncio.sleep(0.3)
                     dispatch_success = True
                     return True, None
@@ -1816,15 +1717,7 @@ class AgentExecutionLoop:
 
         return False
 
-    def _requires_authoritative_strategy_execution(
-        self,
-        strategy: Optional[Any],
-        context: Dict[str, Any],
-    ) -> bool:
-        """StrategyExecutionEngine is excluded from production autonomous execution; only permitted for explicit offline test contexts."""
-        if strategy is None or not getattr(strategy, "stages", None):
-            return False
-        return bool(context.get("authoritative_strategy_execution") is True)
+
 
 
 

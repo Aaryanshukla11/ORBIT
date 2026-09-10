@@ -293,60 +293,9 @@ class EvidenceBasedTargetLocator:
 
     @staticmethod
     def _force_foreground_window(hwnd: int) -> bool:
-        """Robustly bring window to foreground using Win32 thread input attachment and Alt key simulation."""
-        if sys.platform != "win32" or not hwnd:
-            return False
-        try:
-            u32 = ctypes.windll.user32
-            k32 = ctypes.windll.kernel32
-            if not u32.IsWindow(hwnd):
-                return False
-
-            root_hwnd = u32.GetAncestor(hwnd, 2)  # GA_ROOT = 2
-            if not root_hwnd or not u32.IsWindow(root_hwnd):
-                root_hwnd = hwnd
-
-            if u32.IsIconic(root_hwnd):
-                u32.ShowWindow(root_hwnd, 9)  # SW_RESTORE
-            else:
-                u32.ShowWindow(root_hwnd, 5)  # SW_SHOW
-
-            cur_fg = u32.GetForegroundWindow()
-            if cur_fg == root_hwnd or cur_fg == hwnd:
-                return True
-
-            cur_tid = k32.GetCurrentThreadId()
-            fg_tid = u32.GetWindowThreadProcessId(cur_fg, None) if cur_fg else 0
-            target_tid = u32.GetWindowThreadProcessId(root_hwnd, None)
-
-            if fg_tid and fg_tid != cur_tid:
-                u32.AttachThreadInput(cur_tid, fg_tid, True)
-            if target_tid and target_tid != cur_tid:
-                u32.AttachThreadInput(cur_tid, target_tid, True)
-
-            # Bypass Windows SetForegroundWindow lock using Alt key simulation
-            VK_MENU = 0x12
-            KEYEVENTF_KEYUP = 0x0002
-            u32.keybd_event(VK_MENU, 0, 0, 0)
-            u32.SetForegroundWindow(root_hwnd)
-            u32.BringWindowToTop(root_hwnd)
-            u32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
-
-            if hwnd != root_hwnd and u32.IsWindow(hwnd):
-                u32.SetFocus(hwnd)
-            else:
-                u32.SetFocus(root_hwnd)
-
-            if fg_tid and fg_tid != cur_tid:
-                u32.AttachThreadInput(cur_tid, fg_tid, False)
-            if target_tid and target_tid != cur_tid:
-                u32.AttachThreadInput(cur_tid, target_tid, False)
-
-            time.sleep(0.05)
-            final_fg = u32.GetForegroundWindow()
-            return final_fg == root_hwnd or final_fg == hwnd or (u32.GetAncestor(final_fg, 2) == root_hwnd)
-        except Exception:
-            return False
+        """Compatibility delegation: physical window focus belongs exclusively in WorkspaceAdapter."""
+        from orbit.adapters.workspace.adapter import force_foreground_window
+        return force_foreground_window(hwnd)
 
     def _resolve_window(
         self,
@@ -435,9 +384,7 @@ class EvidenceBasedTargetLocator:
         else:
             matched_win = candidates[0]
 
-        if sys.platform == "win32" and matched_win.hwnd:
-            self._force_foreground_window(matched_win.hwnd)
-
+        # Passive target resolution only; physical window activation routes through WorkspaceAdapter
         try:
             tbox = TargetBoundingBox.from_bounding_box(matched_win.extended_bounds)
             safe_pt = calculate_safe_action_point(
@@ -705,9 +652,7 @@ class EvidenceBasedTargetLocator:
         target_win = self._find_target_window(snapshot, intent)
         target_hwnd = target_win.hwnd if target_win else intent.target_hwnd
 
-        if sys.platform == "win32" and target_hwnd:
-            self._force_foreground_window(target_hwnd)
-
+        # Passive element resolution only; physical window activation routes through WorkspaceAdapter
         # Extract target window bounding box for spatial containment filtering
         win_box = None
         if target_win and target_win.extended_bounds:

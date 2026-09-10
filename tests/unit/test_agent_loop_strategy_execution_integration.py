@@ -1,4 +1,4 @@
-"""Integration tests for authoritative strategy execution within AgentExecutionLoop (M1.9 Component 6)."""
+"""Negative and boundary integration tests verifying StrategyExecutionEngine is unreachable from AgentExecutionLoop (Phase 0 Rules #3, #14, #15)."""
 
 from unittest.mock import AsyncMock, MagicMock
 import pytest
@@ -25,8 +25,8 @@ from orbit.runtime.task_completion.models import TaskCompletionStatus
 
 
 @pytest.mark.asyncio
-async def test_agent_loop_authoritatively_executes_strategy_via_engine():
-    """When a viable strategy requires authoritative execution, StrategyExecutionEngine drives it."""
+async def test_agent_loop_never_dispatches_to_strategy_execution_engine():
+    """Prove that StrategyExecutionEngine cannot be reached from production AgentLoop (Phase 0 Rule #3 & #15)."""
     # 1. Prepare Mock Strategy & Feasibility
     strategy = StrategyOption(
         strategy_id="STRAT_COMPOSITE_TEST",
@@ -58,34 +58,16 @@ async def test_agent_loop_authoritatively_executes_strategy_via_engine():
     # 2. Mock Strategy Execution Engine
     strat_exec_engine = MagicMock()
     strat_exec_engine.can_execute_strategy.return_value = True
-    strat_exec_engine.execute_strategy = AsyncMock(
-        return_value=StrategyExecutionResult(
-            strategy_id=strategy.strategy_id,
-            strategy_name=strategy.name,
-            is_success=True,
-            total_stages=1,
-            completed_stages_count=1,
-            stage_results=[
-                CapabilityExecutionResult(
-                    capability_id="IMAGE_GENERATE_AND_INSERT",
-                    stage_index=0,
-                    dispatch_success=True,
-                    execution_success=True,
-                    stage_status=StageOutcomeStatus.EFFECT_VERIFIED,
-                    output={"image_path": "C:\\test.png"},
-                )
-            ],
-            final_stage_status=StageOutcomeStatus.EFFECT_VERIFIED,
-        )
-    )
+    strat_exec_engine.execute_strategy = AsyncMock()
 
     # 3. Mock Observer & Goal Verifier
+    obs = CurrentStateObservation(observation_id="obs_0")
     observer = MagicMock()
-    observer.observe = AsyncMock(return_value=CurrentStateObservation(observation_id="obs_final"))
+    observer.observe = AsyncMock(return_value=obs)
 
     goal_verifier = MagicMock()
     goal_verifier.verify_goal_achievement = AsyncMock(
-        return_value=MagicMock(is_satisfied=True, status=TaskCompletionStatus.COMPLETED)
+        return_value=MagicMock(is_satisfied=False, status=TaskCompletionStatus.FAILED)
     )
 
     loop = AgentExecutionLoop(
@@ -94,69 +76,41 @@ async def test_agent_loop_authoritatively_executes_strategy_via_engine():
         observer=observer,
         goal_verifier=goal_verifier,
     )
+    loop._planner = MagicMock()
+    loop._planner.synthesize_candidate_plans = AsyncMock(return_value=[])
 
-    # Run loop
+    # Run loop with context requesting authoritative strategy execution
     result = await loop.run(
         prompt="Open Paint and draw a portrait of a boy",
         context={"authoritative_strategy_execution": True},
     )
 
-    assert result.is_success is True
-    assert result.final_status == TaskCompletionStatus.COMPLETED
-    # Strategy engine was directly invoked
-    strat_exec_engine.execute_strategy.assert_called_once()
-    # Goal verifier checked final reality
-    goal_verifier.verify_goal_achievement.assert_called_once()
+    # CRITICAL: StrategyExecutionEngine was NOT invoked. It is completely unreachable.
+    strat_exec_engine.execute_strategy.assert_not_called()
+    assert strat_exec_engine.can_execute_strategy.call_count == 0
 
 
 @pytest.mark.asyncio
-async def test_agent_loop_strategy_failure_halts_closed():
-    """If StrategyExecutionEngine reports failure, loop returns FAILED without false success."""
-    strategy = StrategyOption(
-        strategy_id="STRAT_COMPOSITE_TEST",
-        name="Composite Strategy",
-        description="Fails",
-        stages=[StrategyStage(stage_index=0, name="S1", capability_id="C1", description="1", expected_outcome="1")],
-        is_available=True,
-    )
-
-    feasibility_analyzer = MagicMock()
-    feasibility_analyzer.evaluate_feasibility.return_value = FeasibilityAssessment(
-        is_feasible=True,
-        status=FeasibilityStatus.FEASIBLE,
-        matched_strategy=strategy,
-        explanation="Strategy viable",
-    )
-
+async def test_agent_loop_strategy_execution_engine_is_not_an_execution_authority():
+    """Prove that passing strategy_execution_engine to AgentExecutionLoop does not create an execution authority."""
     strat_exec_engine = MagicMock()
-    strat_exec_engine.can_execute_strategy.return_value = True
-    strat_exec_engine.execute_strategy = AsyncMock(
-        return_value=StrategyExecutionResult(
-            strategy_id=strategy.strategy_id,
-            strategy_name=strategy.name,
-            is_success=False,
-            total_stages=1,
-            completed_stages_count=0,
-            failure_code="STAGE_OUTCOME_UNVERIFIED",
-            failure_reason="Canvas did not receive image",
-            final_stage_status=StageOutcomeStatus.EFFECT_UNVERIFIED,
-        )
-    )
+    strat_exec_engine.execute_strategy = AsyncMock()
 
+    obs = CurrentStateObservation(observation_id="obs_0")
     observer = MagicMock()
-    observer.observe = AsyncMock(return_value=CurrentStateObservation(observation_id="obs_0"))
+    observer.observe = AsyncMock(return_value=obs)
 
     loop = AgentExecutionLoop(
-        feasibility_analyzer=feasibility_analyzer,
         strategy_execution_engine=strat_exec_engine,
         observer=observer,
     )
 
-    result = await loop.run(
-        prompt="Open Paint and insert art",
+    # Run loop
+    await loop.run(
+        prompt="Arbitrary user instruction",
         context={"authoritative_strategy_execution": True},
     )
 
-    assert result.is_success is False
-    assert result.final_status == TaskCompletionStatus.FAILED
-    assert result.failure_code == "STAGE_OUTCOME_UNVERIFIED"
+    # The engine must never be called
+    strat_exec_engine.execute_strategy.assert_not_called()
+

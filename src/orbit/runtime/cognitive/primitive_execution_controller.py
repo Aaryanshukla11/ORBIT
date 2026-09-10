@@ -90,6 +90,31 @@ class PrimitiveExecutionController:
         """Execute a single primitive under strict closed-loop invariants."""
         t_start = time.perf_counter()
 
+        # Step 0: Cancellation Gate
+        if cancel_token is not None:
+            is_canc = getattr(cancel_token, "is_cancelled", False)
+            if callable(is_canc):
+                is_canc = is_canc()
+            if is_canc:
+                reason = getattr(cancel_token, "reason", "Operation cancelled")
+                logger.warning("[EXECUTION CONTROLLER] Execution aborted due to cancellation: %s", reason)
+                outcome = ActionExecutionOutcome(
+                    action_id=action.action_id,
+                    dispatch_success=False,
+                    expected_effect_observed=False,
+                    outcome_status=OutcomeStatus.DISPATCH_FAILED,
+                    error_message=f"Aborted: {reason}",
+                    failure_code="OPERATION_CANCELLED",
+                    duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                )
+                return ControllerExecutionResult(
+                    action_dispatched=action,
+                    execution_outcome=outcome,
+                    post_observation=pre_observation,
+                    should_continue=False,
+                    failure_report={"phase": "CANCELLATION", "reason": reason},
+                )
+
         # Step 1: Primitive Validation Gate
         val_res: PrimitiveValidationResult = self._validator.validate_action(action)
         if not val_res.is_valid:

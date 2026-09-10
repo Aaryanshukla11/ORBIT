@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import logging
 import sys
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from orbit.adapters.base import (
     BaseCapabilityAdapter,
@@ -52,6 +53,62 @@ from orbit.contracts.capabilities import (
 from orbit.models.common import BoundingBox
 
 logger = logging.getLogger(__name__)
+
+
+def force_foreground_window(hwnd: int) -> bool:
+    """Robustly bring window to foreground using Win32 thread input attachment and Alt key simulation."""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    try:
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        if not u32.IsWindow(hwnd):
+            return False
+
+        root_hwnd = u32.GetAncestor(hwnd, 2)  # GA_ROOT = 2
+        if not root_hwnd or not u32.IsWindow(root_hwnd):
+            root_hwnd = hwnd
+
+        if u32.IsIconic(root_hwnd):
+            u32.ShowWindow(root_hwnd, 9)  # SW_RESTORE
+        else:
+            u32.ShowWindow(root_hwnd, 5)  # SW_SHOW
+
+        cur_fg = u32.GetForegroundWindow()
+        if cur_fg == root_hwnd or cur_fg == hwnd:
+            return True
+
+        cur_tid = k32.GetCurrentThreadId()
+        fg_tid = u32.GetWindowThreadProcessId(cur_fg, None) if cur_fg else 0
+        target_tid = u32.GetWindowThreadProcessId(root_hwnd, None)
+
+        if fg_tid and fg_tid != cur_tid:
+            u32.AttachThreadInput(cur_tid, fg_tid, True)
+        if target_tid and target_tid != cur_tid:
+            u32.AttachThreadInput(cur_tid, target_tid, True)
+
+        # Bypass Windows SetForegroundWindow lock using Alt key simulation
+        VK_MENU = 0x12
+        KEYEVENTF_KEYUP = 0x0002
+        u32.keybd_event(VK_MENU, 0, 0, 0)
+        u32.SetForegroundWindow(root_hwnd)
+        u32.BringWindowToTop(root_hwnd)
+        u32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+
+        if hwnd != root_hwnd and u32.IsWindow(hwnd):
+            u32.SetFocus(hwnd)
+        else:
+            u32.SetFocus(root_hwnd)
+
+        if fg_tid and fg_tid != cur_tid:
+            u32.AttachThreadInput(cur_tid, fg_tid, False)
+        if target_tid and target_tid != cur_tid:
+            u32.AttachThreadInput(cur_tid, target_tid, False)
+
+        return True
+    except Exception as ex:
+        logger.warning("[WORKSPACE ADAPTER] force_foreground_window failed for HWND %s: %s", hwnd, ex)
+        return False
 
 
 class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
@@ -354,10 +411,9 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
         if sys.platform != "win32":
             return True
         try:
-            from orbit.runtime.targeting.locator import EvidenceBasedTargetLocator
-            EvidenceBasedTargetLocator._force_foreground_window(int(hwnd))
+            success = force_foreground_window(int(hwnd))
             await asyncio.sleep(0.3)
-            return True
+            return success
         except Exception as ex:
             logger.warning("set_focus_window error for HWND %s: %s", hwnd, ex)
             return False
