@@ -169,8 +169,13 @@ def get_default_environment_registry() -> EnvironmentProviderRegistry:
     from orbit.runtime.environment.file_providers import LocalFileProvider
     from orbit.runtime.environment.shell_provider import ShellExecutionProvider
     from orbit.runtime.environment.image_providers import ArtifactImageGenProvider
+    from orbit.runtime.environment.drawing_provider import CanvasDrawingProvider
 
     registry = EnvironmentProviderRegistry()
+
+    # Drawing Provider
+    drawing_provider = CanvasDrawingProvider()
+    registry.register(AbstractActionType.DRAW_STROKES, drawing_provider, priority=50)
 
     # Spreadsheet Providers
     csv_provider = CsvSpreadsheetProvider()

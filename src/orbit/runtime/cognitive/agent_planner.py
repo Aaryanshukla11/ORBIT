@@ -73,32 +73,41 @@ class AgentPlanner:
         text = f"{subgoal.title} {subgoal.description}".lower()
 
         # 1. Canvas / Drawing candidate
+        shape = str(objective.parameters.get("shape", "")).lower()
+        unfeasible_keywords = ["portrait", "portrait_of_boy", "face", "person", "human", "realistic", "landscape"]
+        raw_prompt_lower = objective.raw_prompt.lower()
+        is_unfeasible_drawing = any(k in shape for k in unfeasible_keywords) or any(k in raw_prompt_lower for k in ["portrait", "photo of"])
+
+        if is_unfeasible_drawing:
+            # Complex non-geometric drawing cannot be satisfied by standard vector strokes; reject early
+            return []
+
         if any(w in text for w in ("draw", "sketch", "paint canvas", "strokes", "illustration")):
             # Extract strokes from parameters or creative payload
             strokes = objective.parameters.get("strokes") or [
                 [(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8), (0.2, 0.2)]
             ]
             candidates.append(
-                CandidatePlan(
-                    subgoal_id=subgoal.sub_id,
-                    intent_strategy="CANVAS_RENDERING",
-                    proposed_primitives=[AbstractActionType.DRAW_STROKES],
-                    targets=[
-                        SemanticTarget(
-                            name=subgoal.target_entity or "Paint",
-                            role="canvas",
-                            context="mspaint",
-                        )
-                    ],
-                    expected_outcome=ActionOutcomeContract(
-                        expected_state_transition="Drawing strokes rendered on canvas",
-                        verification_strategy=VerificationStrategy.CANVAS_CHANGE,
-                    ),
-                    estimated_complexity=3,
-                    creative_payload={"strokes": strokes},
-                    rationale="Render vector strokes directly onto targeted canvas",
+                    CandidatePlan(
+                        subgoal_id=subgoal.sub_id,
+                        intent_strategy="CANVAS_RENDERING",
+                        proposed_primitives=[AbstractActionType.DRAW_STROKES],
+                        targets=[
+                            SemanticTarget(
+                                name=subgoal.target_entity or "Paint",
+                                role="canvas",
+                                context="mspaint",
+                            )
+                        ],
+                        expected_outcome=ActionOutcomeContract(
+                            expected_state_transition="Drawing strokes rendered on canvas",
+                            verification_strategy=VerificationStrategy.CANVAS_CHANGE,
+                        ),
+                        estimated_complexity=3,
+                        creative_payload={"strokes": strokes},
+                        rationale="Render vector strokes directly onto targeted canvas",
+                    )
                 )
-            )
 
         # 2. Application launch candidate
         if any(w in text for w in ("open", "launch", "start")) and any(
@@ -187,6 +196,11 @@ class AgentPlanner:
         )
 
         if not best_candidate or not report.is_feasible:
+            reasons = list(report.rejection_reasons)
+            if not reasons or reasons == ["No candidate plans provided by planner"]:
+                shape = str(objective.parameters.get("shape", "")).lower()
+                reasons = [f"Goal is NOT FEASIBLY EXECUTABLE (unsupported complex drawing shape '{shape or 'complex'}' or missing primitives)"]
+                report = report.model_copy(update={"rejection_reasons": reasons})
             logger.warning(
                 "Subgoal '%s' has no semantically feasible plan candidates: %s",
                 subgoal.sub_id,

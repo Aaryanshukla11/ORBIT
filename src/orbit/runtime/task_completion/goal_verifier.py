@@ -21,18 +21,11 @@ if TYPE_CHECKING:
 from orbit.adapters.observation.snapshot import ObservationSnapshot, ObservedElement, ObservedWindow
 from orbit.runtime.perception import SemanticPerceptionEngine
 from orbit.runtime.perception.models import OCRResult, OCRTextRegion
-from orbit.runtime.plan_execution.models import PlanExecutionResult, PlanExecutionStatus
-from orbit.runtime.planning.models import ExecutableTaskPlan, PlanActionType
 from orbit.runtime.task_completion.evidence import CompletionEvidenceCollector
 from orbit.runtime.task_completion.models import (
     GoalVerificationResult,
     TaskCompletionEvidence,
     TaskCompletionStatus,
-)
-from orbit.runtime.task_understanding.models import (
-    StructuredTaskIntent,
-    TaskGoal,
-    TaskUnderstandingResult,
 )
 
 from orbit.runtime.agent.contracts import TextMatchState

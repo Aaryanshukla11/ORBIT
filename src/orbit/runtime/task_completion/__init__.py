@@ -1,6 +1,5 @@
-"""Task Completion Verification subsystem for ORBIT (M1.8 Step 5)."""
+"""Task Completion and Action Verification subsystem for ORBIT."""
 
-from orbit.runtime.task_completion.completion_engine import TaskCompletionEngine
 from orbit.runtime.task_completion.evidence import CompletionEvidenceCollector
 from orbit.runtime.task_completion.goal_verifier import GoalVerifier
 from orbit.runtime.task_completion.models import (
@@ -9,12 +8,17 @@ from orbit.runtime.task_completion.models import (
     TaskCompletionStatus,
     TaskExecutionResult,
 )
+from orbit.runtime.task_completion.multi_evidence_verifier import (
+    MultiEvidenceActionVerifier,
+    MultiEvidenceVerificationResult,
+)
 
 __all__ = [
     "CompletionEvidenceCollector",
     "GoalVerifier",
     "GoalVerificationResult",
-    "TaskCompletionEngine",
+    "MultiEvidenceActionVerifier",
+    "MultiEvidenceVerificationResult",
     "TaskCompletionEvidence",
     "TaskCompletionStatus",
     "TaskExecutionResult",

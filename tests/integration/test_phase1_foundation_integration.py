@@ -127,11 +127,8 @@ async def test_phase1_task_scoped_memory_and_secret_isolation_integration():
 @pytest.mark.asyncio
 async def test_phase1_clarification_blocks_ambiguous_intent_without_physical_dispatch():
     """Integration: Ambiguous intent triggers ClarificationManager, halting physical execution."""
-    from orbit.runtime.cognitive.clarification import ClarificationManager
-    from orbit.runtime.task_understanding.models import (
-        RawTaskRequest,
-        StructuredTaskIntent,
-        TaskGoal,
+    from orbit.runtime.cognitive.clarification import (
+        ClarificationManager,
         TaskUnderstandingResult,
         TaskUnderstandingStatus,
     )
@@ -139,19 +136,9 @@ async def test_phase1_clarification_blocks_ambiguous_intent_without_physical_dis
     mgr = ClarificationManager()
 
     ambig_res = TaskUnderstandingResult(
-        request_id="req_ambig_test",
-        raw_request=RawTaskRequest(raw_text="Click it"),
         status=TaskUnderstandingStatus.AMBIGUOUS,
-        intents=[
-            StructuredTaskIntent(
-                intent_id="i_ambig",
-                sequence_index=0,
-                goal=TaskGoal.CLICK_TARGET,
-                is_ambiguous=True,
-                unresolved_reason="Target has no locator or application context",
-            )
-        ],
         unresolved_constraints=["Ambiguous control reference 'it'"],
+        diagnostic_messages=["Target has no locator or application context"],
     )
 
     assert mgr.is_clarification_needed(ambig_res) is True

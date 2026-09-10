@@ -47,11 +47,7 @@ from orbit.runtime.cognitive.recovery import (
     RecoveryStrategy,
 )
 from orbit.runtime.capabilities.application_launcher import ApplicationLauncher
-from orbit.runtime.capabilities.execution.executors.drawing_executor import DrawingExecutor
-from orbit.runtime.capabilities.execution.contracts import (
-    CapabilityExecutionRequest,
-    StageOutcomeStatus,
-)
+from orbit.runtime.environment.drawing_provider import CanvasDrawingProvider
 from orbit.runtime.task_completion.models import (
     GoalVerificationResult,
     TaskCompletionStatus,
@@ -258,19 +254,16 @@ def test_drawing_structural_contract_rejects_invalid_coordinates():
 
 
 @pytest.mark.asyncio
-async def test_drawing_executor_fail_closed_if_pointer_missing():
-    """Prove DrawingExecutor fails closed if pointer is missing."""
-    executor = DrawingExecutor(pointer=None)
-    req = CapabilityExecutionRequest(
-        execution_id="draw_req",
-        capability_id="DRAW_STROKES",
-        stage_index=0,
-        parameters={"strokes": [[(0.1, 0.1), (0.9, 0.9)]]},
+async def test_drawing_provider_fail_closed_if_pointer_missing():
+    """Prove CanvasDrawingProvider fails closed if pointer is missing."""
+    provider = CanvasDrawingProvider(pointer=None)
+    action = AbstractAction(
+        action_type=AbstractActionType.DRAW_STROKES,
+        parameters={"strokes": [[(0.1, 0.1), (0.9, 0.9)]], "canvas_rect": [100, 100, 500, 500]},
     )
-    res = await executor.execute(req)
-    assert res.dispatch_success is False
-    assert res.stage_status == StageOutcomeStatus.FAILED
-    assert res.failure_code in ("REQUIRED_ADAPTER_MISSING", "CAPABILITY_UNAVAILABLE")
+    res = await provider.execute(action)
+    assert res.success is False
+    assert "MISSING_POINTER_ADAPTER" in res.error or "Pointer" in res.error
 
 
 # ==============================================================================
@@ -490,52 +483,20 @@ from orbit.runtime.cognitive.agent_planner import AgentPlanner
 from orbit.runtime.perception.vlm_grounding import VLMGroundingVerifier
 from orbit.runtime.environment.registry import EnvironmentProviderRegistry, get_default_environment_registry
 from orbit.runtime.environment.shell_provider import ShellExecutionProvider
-from orbit.runtime.capabilities.execution.executor_registry import CapabilityExecutorRegistry
-from orbit.runtime.capabilities.execution.strategy_execution_engine import StrategyExecutionEngine
 from orbit.runtime.task_completion.goal_verifier import GoalVerifier
 from orbit.adapters.observation.snapshot import ObservationSnapshot
 
 
-@pytest.mark.asyncio
-async def test_negative_rule15_1_strategy_execution_engine_unreachable():
-    """1. Prove that StrategyExecutionEngine cannot be reached from production AgentExecutionLoop."""
-    mock_engine = MagicMock(spec=StrategyExecutionEngine)
-    mock_engine.execute_strategy = AsyncMock()
-    mock_engine.can_execute_strategy = MagicMock(return_value=True)
-
-    obs = CurrentStateObservation(observation_id="obs_neg1")
-    mock_observer = MagicMock()
-    mock_observer.observe = AsyncMock(return_value=obs)
-
-    loop = AgentExecutionLoop(
-        strategy_execution_engine=mock_engine,
-        observer=mock_observer,
-    )
-    # Execute loop
-    await loop.run(prompt="Run test task", context={"authoritative_strategy_execution": True})
-
-    # Invariant: execute_strategy must NEVER be invoked
-    mock_engine.execute_strategy.assert_not_called()
+def test_negative_rule15_1_strategy_execution_engine_unreachable():
+    """1. Prove that StrategyExecutionEngine has been physically removed."""
+    with pytest.raises(ModuleNotFoundError):
+        import orbit.runtime.capabilities.execution.strategy_execution_engine  # noqa: F401
 
 
-@pytest.mark.asyncio
-async def test_negative_rule15_2_capability_executor_registry_cannot_execute_production_actions():
-    """2. Prove that CapabilityExecutorRegistry is NOT an execution authority for production AgentLoop."""
-    mock_registry = MagicMock(spec=CapabilityExecutorRegistry)
-    mock_registry.get_executor = MagicMock()
-
-    obs = CurrentStateObservation(observation_id="obs_neg2")
-    mock_observer = MagicMock()
-    mock_observer.observe = AsyncMock(return_value=obs)
-
-    loop = AgentExecutionLoop(
-        executor_registry=mock_registry,
-        observer=mock_observer,
-    )
-    await loop.run(prompt="Perform desktop action")
-
-    # Invariant: registry cannot be queried or used to dispatch physical actions
-    mock_registry.get_executor.assert_not_called()
+def test_negative_rule15_2_capability_executor_registry_cannot_execute_production_actions():
+    """2. Prove that CapabilityExecutorRegistry has been physically removed."""
+    with pytest.raises(ModuleNotFoundError):
+        import orbit.runtime.capabilities.execution.executor_registry  # noqa: F401
 
 
 @pytest.mark.asyncio

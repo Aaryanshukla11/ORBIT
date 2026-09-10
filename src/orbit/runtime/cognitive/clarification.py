@@ -7,14 +7,29 @@ immediately. Speculative physical dispatch under ambiguity is strictly forbidden
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import uuid4
+from enum import Enum
 from pydantic import BaseModel, Field
 
-from orbit.runtime.task_understanding.models import (
-    TaskUnderstandingResult,
-    TaskUnderstandingStatus,
-)
+
+class TaskUnderstandingStatus(str, Enum):
+    """Epistemic validity status of interpreted intent."""
+
+    VALID = "VALID"
+    AMBIGUOUS = "AMBIGUOUS"
+    UNSUPPORTED = "UNSUPPORTED"
+    INVALID = "INVALID"
+    FAILED = "FAILED"
+
+
+class TaskUnderstandingResult(BaseModel):
+    """Internal evaluation record of goal ambiguity and validity."""
+
+    status: TaskUnderstandingStatus = Field(default=TaskUnderstandingStatus.VALID)
+    unresolved_constraints: List[str] = Field(default_factory=list)
+    diagnostic_messages: List[str] = Field(default_factory=list)
+    intents: List[Any] = Field(default_factory=list)
 
 
 class ClarificationRequest(BaseModel):

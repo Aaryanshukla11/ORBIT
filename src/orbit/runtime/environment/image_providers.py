@@ -11,18 +11,63 @@ from __future__ import annotations
 
 import logging
 import os
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field
 
 from orbit.runtime.agent.contracts import AbstractAction
 from orbit.runtime.environment.registry import EnvironmentProvider, ProviderExecutionResult
-from orbit.runtime.capabilities.execution.image_gen_provider import (
-    ImageGenerationProvider,
-    NullImageGenerationProvider,
-    GeneratedImageResult,
-)
 
 logger = logging.getLogger(__name__)
+
+
+class GeneratedImageResult(BaseModel):
+    """Artifact result produced by an image generation provider."""
+
+    success: bool = Field(..., description="Whether generation succeeded")
+    image_path: Optional[str] = Field(default=None, description="Path to generated image on disk")
+    image_bytes: Optional[bytes] = Field(default=None, description="Raw image bytes if in memory")
+    width: Optional[int] = Field(default=None)
+    height: Optional[int] = Field(default=None)
+    mime_type: str = Field(default="image/png")
+    model_id: Optional[str] = Field(default=None)
+    error: Optional[str] = Field(default=None)
+
+
+class ImageGenerationProvider(ABC):
+    """Abstract interface for generative image backends."""
+
+    @abstractmethod
+    async def is_available(self) -> bool:
+        """Check if model backend is operational."""
+        ...
+
+    @abstractmethod
+    async def generate_image(
+        self,
+        prompt: str,
+        constraints: Optional[Dict[str, Any]] = None,
+    ) -> GeneratedImageResult:
+        """Synthesize image from prompt."""
+        ...
+
+
+class NullImageGenerationProvider(ImageGenerationProvider):
+    """No-op / unavailable image generation provider."""
+
+    async def is_available(self) -> bool:
+        return False
+
+    async def generate_image(
+        self,
+        prompt: str,
+        constraints: Optional[Dict[str, Any]] = None,
+    ) -> GeneratedImageResult:
+        return GeneratedImageResult(
+            success=False,
+            error="No image generation backend configured",
+        )
 
 
 class ArtifactImageGenProvider(EnvironmentProvider):
@@ -46,7 +91,7 @@ class ArtifactImageGenProvider(EnvironmentProvider):
 
     async def is_available(self) -> bool:
         """Check if backend generative model is operational."""
-        return self._backend.is_available()
+        return await self._backend.is_available()
 
     async def check_permissions(self, action: AbstractAction) -> bool:
         """Verify prompt is provided."""

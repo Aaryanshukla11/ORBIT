@@ -9,7 +9,7 @@ Guardrail 16: No Silent Fallback Success.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from orbit.runtime.agent.contracts import (
@@ -20,7 +20,9 @@ from orbit.runtime.agent.contracts import (
     OutcomeStatus,
     VerificationStrategy,
 )
-from orbit.runtime.cognitive.models import CurrentStateObservation
+
+if TYPE_CHECKING:
+    from orbit.runtime.cognitive.models import CurrentStateObservation
 
 logger = logging.getLogger(__name__)
 

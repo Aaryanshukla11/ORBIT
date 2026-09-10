@@ -68,12 +68,6 @@ from orbit.runtime.targeting import (
     TargetResolutionStatus,
     TargetStrategy,
 )
-from orbit.runtime.execution import (
-    ClosedLoopExecutionEngine,
-    ClosedLoopExecutionResult,
-    ExecutionPolicy,
-    ExecutionState,
-)
 from orbit.runtime.verification import (
     ActionVerificationResult,
     ActionVerifier,
@@ -82,31 +76,14 @@ from orbit.runtime.verification import (
     VerificationOutcome,
     VerificationStrategy,
 )
-from orbit.runtime.task_understanding import (
-    TaskUnderstandingEngine,
-    TaskUnderstandingResult,
-    TaskUnderstandingStatus,
-)
-from orbit.runtime.planning import (
-    ExecutableTaskPlan,
-    TaskPlanningEngine,
-)
-from orbit.runtime.plan_execution import (
-    PlanExecutionResult,
-    PlanExecutionStatus,
-    PlanExecutor,
-)
-from orbit.runtime.replanning import DynamicReplanner
 from orbit.runtime.task_completion import (
+    GoalVerificationResult,
     GoalVerifier,
-    TaskCompletionEngine,
     TaskExecutionResult,
 )
 from orbit.runtime.cognitive import (
     AgentExecutionLoop,
     AgentExecutionResult,
-    CognitiveExecutionLoop,
-    CognitiveExecutionResult,
 )
 from orbit.runtime.models import (
     ActiveModelSession,
@@ -162,8 +139,6 @@ class OrbitOrchestrator:
         perception_engine: Optional[SemanticPerceptionEngine] = None,
         target_locator: Optional[TargetLocator] = None,
         action_verifier: Optional[ActionVerifier] = None,
-        execution_engine: Optional[ClosedLoopExecutionEngine] = None,
-        replanner: Optional[DynamicReplanner] = None,
         model_manager: Optional[ModelManager] = None,
         model_session_manager: Optional[ModelSessionManager] = None,
         history_store: Optional[ExecutionHistoryStore] = None,
@@ -203,22 +178,6 @@ class OrbitOrchestrator:
 
         self._task_manager = TaskManager()
         self._system_sm = SystemStateMachine(SystemState.BOOTING)
-        self._task_understanding_engine = TaskUnderstandingEngine()
-        self._task_planning_engine = TaskPlanningEngine(understanding_engine=self._task_understanding_engine)
-        self._execution_engine = execution_engine or ClosedLoopExecutionEngine(
-            capability_registry=self._registry,
-            target_locator=self._target_locator,
-            action_verifier=self._action_verifier,
-            event_bus=self._event_bus,
-            clock=self._clock,
-            system_state_getter=lambda: self.system_state,
-        )
-        self._replanner = replanner or DynamicReplanner(observation=self.observation)
-        self._plan_executor = PlanExecutor(
-            execution_engine=self._execution_engine,
-            replanner=self._replanner,
-            event_bus=self._event_bus,
-        )
         cloud_provs = [
             CloudModelProvider(cloud_kind=CloudProviderKind.OPENAI),
             CloudModelProvider(cloud_kind=CloudProviderKind.ANTHROPIC),
@@ -240,15 +199,10 @@ class OrbitOrchestrator:
         if self._model_session_manager.event_bus is None:
             self._model_session_manager.set_event_bus(self._event_bus)
         self._model_session_manager.set_task_executing_predicate(lambda: self.is_task_executing)
-        self._task_completion_engine = TaskCompletionEngine(
-            plan_executor=self._plan_executor,
-            observation=self.observation,
-            task_understanding_engine=self._task_understanding_engine,
-            task_planning_engine=self._task_planning_engine,
-            perception_engine=self._perception_engine,
-            model_session_manager=self._model_session_manager,
-        )
         self._model_router = ModelRouter(session_manager=self._model_session_manager)
+        self._goal_verifier = GoalVerifier(
+            perception_engine=self._perception_engine,
+        )
         self._agent_loop = AgentExecutionLoop(
             router=self._model_router,
             model_session_manager=self._model_session_manager,
@@ -256,7 +210,7 @@ class OrbitOrchestrator:
             pointer=self.pointer,
             keyboard=self.keyboard,
             observation=self.observation,
-            goal_verifier=self._task_completion_engine.goal_verifier,
+            goal_verifier=self._goal_verifier,
             target_locator=self._target_locator,
             event_bus=self._event_bus,
         )
@@ -316,18 +270,6 @@ class OrbitOrchestrator:
         return self._task_manager
 
     @property
-    def task_understanding_engine(self) -> TaskUnderstandingEngine:
-        return self._task_understanding_engine
-
-    @property
-    def task_planning_engine(self) -> TaskPlanningEngine:
-        return self._task_planning_engine
-
-    @property
-    def plan_executor(self) -> PlanExecutor:
-        return self._plan_executor
-
-    @property
     def agent_loop(self) -> AgentExecutionLoop:
         return self._agent_loop
 
@@ -336,24 +278,8 @@ class OrbitOrchestrator:
         return self._model_router
 
     @property
-    def cognitive_loop(self) -> CognitiveExecutionLoop:
-        return self._cognitive_loop
-
-    @property
-    def task_completion_engine(self) -> TaskCompletionEngine:
-        return self._task_completion_engine
-
-    @property
-    def replanner(self) -> DynamicReplanner:
-        return self._replanner
-
-    @property
     def event_bus(self) -> EventBus:
         return self._event_bus
-
-    @property
-    def execution_engine(self) -> ClosedLoopExecutionEngine:
-        return self._execution_engine
 
     @property
     def registry(self) -> CapabilityRegistry:
@@ -739,38 +665,7 @@ class OrbitOrchestrator:
         )
         return True
 
-    def understand_task(
-        self,
-        prompt: str,
-        context: Optional[Dict[str, Any]] = None,
-    ) -> TaskUnderstandingResult:
-        """Interpret a natural-language prompt into a validated structured task representation (M1.8 Step 1)."""
-        return self._task_understanding_engine.understand(prompt, metadata=context or {})
 
-    def plan_task(
-        self,
-        understanding_or_prompt: Union[TaskUnderstandingResult, str],
-        task_id: Optional[str] = None,
-    ) -> ExecutableTaskPlan:
-        """Generate a validated, dependency-aware execution plan from structured understanding or raw prompt (M1.8 Step 2)."""
-        return self._task_planning_engine.plan_task(understanding_or_prompt, task_id=task_id)
-
-    async def execute_plan(
-        self,
-        plan: ExecutableTaskPlan,
-        session_id: str,
-        task_id: Optional[str] = None,
-        policy: Optional[ExecutionPolicy] = None,
-        cancel_token: Optional[CancellationToken] = None,
-    ) -> PlanExecutionResult:
-        """Execute a validated ExecutableTaskPlan sequentially with dynamic replanning and recovery (M1.8 Step 4)."""
-        return await self._plan_executor.execute_plan(
-            plan=plan,
-            session_id=session_id,
-            task_id=task_id,
-            policy=policy,
-            cancel_token=cancel_token,
-        )
 
     async def execute_agent_task(
         self,
@@ -818,15 +713,32 @@ class OrbitOrchestrator:
         policy: Optional[ExecutionPolicy] = None,
         cancel_token: Optional[CancellationToken] = None,
     ) -> TaskExecutionResult:
-        """Execute a natural-language task goal end-to-end with independent goal verification (M1.8 Step 5)."""
+        """Execute a natural-language task goal end-to-end with independent goal verification (ASTRA-6 Authoritative Loop)."""
         target_goal = goal or prompt or ""
-        return await self._task_completion_engine.execute_task(
-            goal=target_goal,
+        # Default authoritative production execution path: ASTRA AgentExecutionLoop
+        agent_res = await self._agent_loop.run(
+            prompt=target_goal,
             session_id=session_id,
             task_id=task_id,
             context=context,
-            policy=policy,
             cancel_token=cancel_token,
+        )
+        verification_result = GoalVerificationResult(
+            status=agent_res.final_status,
+            is_completed=agent_res.is_success,
+            failure_reason=agent_res.failure_reason,
+            failure_code=agent_res.failure_code,
+        )
+        return TaskExecutionResult(
+            task_id=agent_res.task_id,
+            session_id=session_id,
+            goal=target_goal,
+            goal_verification_result=verification_result,
+            completion_status=agent_res.final_status,
+            is_success=agent_res.is_success,
+            failure_reason=agent_res.failure_reason,
+            failure_code=agent_res.failure_code,
+            elapsed_duration_ms=agent_res.elapsed_duration_ms,
         )
 
     async def submit_task(
@@ -1325,176 +1237,6 @@ class OrbitOrchestrator:
                             return
                         except Exception as gen_err:
                             logger.warning("Conversational model turn exception: %s", gen_err)
-
-                # 1. Task Understanding Evaluation & Ambiguity Detection
-                task_understanding = None
-                try:
-                    if hasattr(self._task_understanding_engine, "understand_async"):
-                        task_understanding = await self._task_understanding_engine.understand_async(
-                            request=task.prompt,
-                            metadata=task.metadata,
-                        )
-                    else:
-                        task_understanding = self._task_understanding_engine.understand(
-                            request=task.prompt,
-                            metadata=task.metadata,
-                        )
-                    task.metadata["task_understanding"] = task_understanding.model_dump()
-                except Exception as und_err:
-                    logger.warning("Task understanding notice for task %s: %s", task_id, und_err)
-
-                # Check if task requested understand_only fail-closed check
-                if task.metadata.get("understand_only"):
-                    err_detail = ErrorDetail(
-                        code="UNDERSTAND_ONLY",
-                        message="Task halted after understanding phase (understand_only=True)",
-                        recoverable=False,
-                    )
-                    rec = await self._history_store.get_record_by_task_id(task_id)
-                    if rec:
-                        rec.status = ExecutionStatus.FAILED
-                        rec.failure_code = "UNDERSTAND_ONLY"
-                        rec.failure_reason = err_detail.message
-                        rec.completed_at = datetime.now(timezone.utc)
-                        await self._history_store.save_record(rec)
-                    await self._task_manager.update_status(task_id, TaskStatus.FAILED, error=err_detail, metadata=task.metadata)
-                    await self._emit_task_event(task_id, TaskStatus.FAILED, error=err_detail)
-                    return
-
-                # Check for unresolved ambiguity or unsupported task - fail closed with 0 physical dispatches
-                if task_understanding and task_understanding.status in {
-                    TaskUnderstandingStatus.AMBIGUOUS,
-                    TaskUnderstandingStatus.INVALID,
-                    TaskUnderstandingStatus.FAILED,
-                    TaskUnderstandingStatus.UNSUPPORTED,
-                }:
-                    try:
-                        ambig_plan = self._task_planning_engine.plan_task(
-                            understanding=task_understanding,
-                            task_id=task_id,
-                        )
-                        task.metadata["task_plan"] = ambig_plan.model_dump()
-                    except Exception as plan_err:
-                        logger.debug("Ambiguous planning notice: %s", plan_err)
-
-                    err_msg = (
-                        "; ".join(task_understanding.diagnostic_messages)
-                        if task_understanding.diagnostic_messages
-                        else "Task understanding contains unresolved ambiguity"
-                    )
-                    if task_understanding.status == TaskUnderstandingStatus.AMBIGUOUS:
-                        err_code = "PLANNING_AMBIGUOUS"
-                    elif task_understanding.status == TaskUnderstandingStatus.UNSUPPORTED:
-                        err_code = "PLANNING_UNSUPPORTED"
-                    else:
-                        err_code = "TASK_UNDERSTANDING_FAILED"
-                    err_detail = ErrorDetail(
-                        code=err_code,
-                        message=err_msg,
-                        recoverable=False,
-                    )
-                    rec = await self._history_store.get_record_by_task_id(task_id)
-                    if rec:
-                        rec.status = ExecutionStatus.FAILED
-                        rec.failure_code = err_code
-                        rec.failure_reason = err_msg
-                        rec.completed_at = datetime.now(timezone.utc)
-                        await self._history_store.save_record(rec)
-                    await self._task_manager.update_status(task_id, TaskStatus.FAILED, error=err_detail, metadata=task.metadata)
-                    await self._emit_task_event(task_id, TaskStatus.FAILED, error=err_detail)
-                    return
-
-                # Check if task requested plan-only or DAG execution bridge
-                if task.metadata.get("plan_only") or task.metadata.get("execute_plan") or task.metadata.get("use_dag_plan"):
-                    logger.info("Executing plan-based task %s via TaskCompletionEngine: '%s'", task_id, task.prompt)
-                    task_exec_res: TaskExecutionResult = await self._task_completion_engine.execute_task(
-                        goal=task.prompt,
-                        session_id=session_id,
-                        task_id=task_id,
-                        context=task.metadata,
-                        policy=task.metadata.get("execution_policy"),
-                        cancel_token=cancel_token,
-                    )
-                    task.metadata["task_execution_result"] = task_exec_res.model_dump()
-                    if task_exec_res.understanding:
-                        task.metadata["task_understanding"] = task_exec_res.understanding.model_dump()
-                    if task_exec_res.plan:
-                        task.metadata["task_plan"] = task_exec_res.plan.model_dump()
-                    if task_exec_res.plan_execution_result:
-                        task.metadata["plan_execution_result"] = task_exec_res.plan_execution_result.model_dump()
-
-                    # Emit Plan if formulated
-                    if task_exec_res.plan:
-                        try:
-                            ui_plan = ExecutionPlan(
-                                plan_id=task_exec_res.plan.plan_id,
-                                task_id=task_id,
-                                description=task_exec_res.plan.description or task.prompt,
-                                steps=[
-                                    Step(
-                                        step_id=s.step_id,
-                                        step_index=idx,
-                                        description=s.description or f"Step {idx + 1}",
-                                    )
-                                    for idx, s in enumerate(task_exec_res.plan.steps)
-                                ],
-                            )
-                            await self._task_manager.set_plan(task_id, ui_plan)
-                            await self._emit_event(
-                                EventType.PLAN_UPDATED,
-                                session_id=session_id,
-                                correlation_id=task_id,
-                                payload=PlanUpdatedPayload(task_id=task_id, plan=ui_plan).model_dump(),
-                            )
-                        except Exception as plan_err:
-                            logger.debug("Plan conversion notice: %s", plan_err)
-
-                    # Update history store record
-                    rec = await self._history_store.get_record_by_task_id(task_id)
-                    is_successful = getattr(task_exec_res, "is_success", False)
-                    comp_status = getattr(task_exec_res, "completion_status", None)
-                    if rec:
-                        if comp_status and comp_status.value in ExecutionStatus.__members__:
-                            rec.status = ExecutionStatus[comp_status.value]
-                        else:
-                            rec.status = ExecutionStatus.COMPLETED if is_successful else ExecutionStatus.FAILED
-                        rec.completed_at = datetime.now(timezone.utc)
-                        rec.duration_ms = getattr(task_exec_res, "elapsed_duration_ms", 0.0)
-                        rec.failure_reason = getattr(task_exec_res, "failure_reason", None)
-                        rec.failure_code = getattr(task_exec_res, "failure_code", None)
-                        if task_exec_res.plan:
-                            rec.total_steps = len(task_exec_res.plan.steps)
-                            rec.steps_completed = len(task_exec_res.plan.steps) if is_successful else 0
-                        await self._history_store.save_record(rec)
-                        await self._emit_event(
-                            EventType.EXECUTION_RECORD_UPDATED,
-                            session_id=session_id,
-                            correlation_id=task_id,
-                            payload={"record": rec.model_dump(mode="json")},
-                        )
-
-                    if is_successful:
-                        await self._task_manager.update_status(task_id, TaskStatus.VERIFYING, metadata=task.metadata)
-                        await self._emit_task_event(task_id, TaskStatus.VERIFYING)
-                        await self._task_manager.update_status(task_id, TaskStatus.COMPLETED, metadata=task.metadata)
-                        await self._emit_task_event(task_id, TaskStatus.COMPLETED)
-                    else:
-                        err_code = getattr(task_exec_res, "failure_code", "TASK_EXECUTION_FAILED") or "TASK_EXECUTION_FAILED"
-                        err_msg = getattr(task_exec_res, "failure_reason", "Task goal could not be verified or completed") or "Task goal could not be verified or completed"
-                        logger.warning("Task %s failed physical execution: [%s] %s", task_id, err_code, err_msg)
-                        err_detail = ErrorDetail(
-                            code=err_code,
-                            message=err_msg,
-                            recoverable=False,
-                        )
-                        terminal_status = (
-                            TaskStatus.CANCELLED
-                            if (comp_status and comp_status.value == "CANCELLED")
-                            else TaskStatus.FAILED
-                        )
-                        await self._task_manager.update_status(task_id, terminal_status, error=err_detail, metadata=task.metadata)
-                        await self._emit_task_event(task_id, terminal_status, error=err_detail)
-                    return
 
                 # Production Path: Execute Natural Language Autonomous Task end-to-end via unified AgentExecutionLoop
                 logger.info("Executing autonomous task %s via AgentExecutionLoop: '%s'", task_id, task.prompt)

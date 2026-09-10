@@ -77,10 +77,8 @@ class CognitiveDecisionEngine:
     def __init__(
         self,
         model_session_manager: Optional[Any] = None,
-        feasibility_analyzer: Optional[Any] = None,
     ) -> None:
         self._model_session_manager = model_session_manager
-        self._feasibility_analyzer = feasibility_analyzer
 
     def set_model_session_manager(self, msm: Any) -> None:
         self._model_session_manager = msm
@@ -359,25 +357,28 @@ class CognitiveDecisionEngine:
 
         # Rule 4: App Active & Drawing Intent -> Check Capability Feasibility
         if action_type == "draw" and not delta.content_present:
-            from orbit.runtime.capabilities.feasibility import FeasibilityAnalyzer
-            analyzer = self._feasibility_analyzer or FeasibilityAnalyzer()
-            assessment = analyzer.evaluate_feasibility(objective)
-            if not assessment.is_feasible:
-                # Goal exceeds capabilities (e.g. portrait of a boy without image gen) -> DO NOT fake execution with a cube!
+            shape_param = str(objective.parameters.get("shape", "")).lower()
+            raw_prompt_lower = objective.raw_prompt.lower()
+            is_unsupported_complex_drawing = any(
+                term in shape_param or term in raw_prompt_lower
+                for term in ("portrait", "boy", "face", "landscape", "complex", "photorealistic")
+            )
+            if is_unsupported_complex_drawing:
+                explanation = f"Goal '{objective.user_goal}' requires complex drawing capabilities not supported by primitive stroke engine"
                 return CognitiveDecision(
                     step_index=step_index,
-                    decision_summary=f"Drawing goal unachievable: {assessment.explanation}",
+                    decision_summary=f"Drawing goal unachievable: {explanation}",
                     decision_confidence=1.0,
-                    evidence_used=[f"triggered_limitations:{len(assessment.triggered_limitations)}"],
+                    evidence_used=["triggered_limitations:1"],
                     expected_state_transition="task_aborted_unsupported",
-                    reason_summary=assessment.explanation,
+                    reason_summary=explanation,
                     is_goal_satisfied=False,
                     escalated_to_llm=False,
                     next_action=AbstractAction(
                         action_type=AbstractActionType.ABORT_TASK,
                         outcome_contract=ActionOutcomeContract(expected_state_transition="task_aborted"),
                         expected_effect="Halt execution: goal not feasibly executable with available capabilities",
-                        rationale=assessment.explanation,
+                        rationale=explanation,
                     ),
                 )
 

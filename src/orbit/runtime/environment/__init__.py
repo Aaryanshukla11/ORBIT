@@ -19,8 +19,8 @@ from orbit.runtime.environment.shell_provider import (
 from orbit.runtime.environment.file_providers import (
     LocalFileProvider,
 )
-from orbit.runtime.environment.image_providers import (
-    ArtifactImageGenProvider,
+from orbit.runtime.environment.drawing_provider import (
+    CanvasDrawingProvider,
 )
 from orbit.runtime.environment.environment_operation_verifier import (
     EnvironmentOperationRequest,
@@ -40,6 +40,7 @@ __all__ = [
     "ShellSecurityViolation",
     "LocalFileProvider",
     "ArtifactImageGenProvider",
+    "CanvasDrawingProvider",
     "EnvironmentOperationRequest",
     "EnvironmentOperationType",
     "EnvironmentOperationVerifier",

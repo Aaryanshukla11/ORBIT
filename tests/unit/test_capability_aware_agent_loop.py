@@ -25,6 +25,8 @@ async def test_agent_loop_early_rejects_unfeasible_portrait_goal():
             parameters={"app_name": "Paint", "action_type": "draw", "shape": "portrait_of_boy"},
         )
     )
+    loop._observer = MagicMock()
+    loop._observer.observe = AsyncMock(return_value=CurrentStateObservation())
 
     result = await loop.run(prompt="Open Paint and draw a portrait of a boy")
 
