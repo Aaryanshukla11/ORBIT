@@ -227,12 +227,31 @@ class PrimitiveExecutionController:
                 else:
                     coords = resolved_coords
                     if not coords:
+                        tgt_coords = getattr(action.target, "coordinates", None) if action.target else None
+                        if tgt_coords:
+                            coords = (int(tgt_coords[0]), int(tgt_coords[1]))
+                        elif "x" in params and "y" in params:
+                            coords = (int(params["x"]), int(params["y"]))
+                    if not coords:
                         dispatch_success = False
                         err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
                     else:
                         await self._pointer.move_to(coords[0], coords[1])
-                        await asyncio.sleep(0.05)
-                        await self._pointer.click()
+                        btn = params.get("button", "left")
+                        if btn not in ("none", "move_only"):
+                            await asyncio.sleep(0.05)
+                            if hasattr(self._pointer, "click"):
+                                count = params.get("count", 1)
+                                try:
+                                    sig = inspect.signature(self._pointer.click)
+                                    if "button" in sig.parameters and "count" in sig.parameters:
+                                        await self._pointer.click(coords[0], coords[1], button=btn, count=count)
+                                    elif "x" in sig.parameters and "y" in sig.parameters:
+                                        await self._pointer.click(coords[0], coords[1])
+                                    else:
+                                        await self._pointer.click()
+                                except Exception:
+                                    await self._pointer.click()
                         dispatch_success = True
 
             elif act_type == AbstractActionType.DOUBLE_CLICK:
@@ -306,6 +325,11 @@ class PrimitiveExecutionController:
                     dispatch_success = False
                     err_msg = "REQUIRED_ADAPTER_MISSING: PointerCapability"
 
+            elif act_type in (AbstractActionType.SCREENSHOT, AbstractActionType.READ_UI_ELEMENT, AbstractActionType.READ_OCR_TEXT):
+                if self._observation_service is not None and hasattr(self._observation_service, "capture_observation"):
+                    await self._observation_service.capture_observation()
+                dispatch_success = True
+
             elif act_type in (AbstractActionType.WAIT, AbstractActionType.WAIT_SETTLE):
                 dur_ms = float(params.get("duration_sec", 0.5)) * 1000.0 if "duration_sec" in params else float(params.get("duration_ms", 500))
                 await asyncio.sleep(dur_ms / 1000.0)
@@ -313,6 +337,16 @@ class PrimitiveExecutionController:
 
             elif act_type == AbstractActionType.COMPLETE_GOAL:
                 dispatch_success = True
+
+            elif isinstance(act_type, AbstractActionType) and self._provider_registry is not None:
+                provider = await self._provider_registry.resolve_provider(act_type, action)
+                if provider is not None:
+                    res = await provider.execute(action)
+                    dispatch_success = res.success
+                    err_msg = res.error
+                else:
+                    dispatch_success = False
+                    err_msg = f"NO_AVAILABLE_PROVIDER: No provider available for {act_type.value if hasattr(act_type, 'value') else act_type}"
 
             else:
                 dispatch_success = False

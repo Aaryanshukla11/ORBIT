@@ -87,10 +87,6 @@ class CognitiveDecisionEngine:
     def model_session_manager(self) -> Optional[Any]:
         return self._model_session_manager
 
-    @property
-    def feasibility_analyzer(self) -> Optional[Any]:
-        return self._feasibility_analyzer
-
     async def decide_next_step(
         self,
         objective: StructuredObjective,

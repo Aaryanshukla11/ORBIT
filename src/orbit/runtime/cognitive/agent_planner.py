@@ -200,7 +200,7 @@ class AgentPlanner:
             reasons = list(report.rejection_reasons)
             if not reasons or reasons == ["No candidate plans provided by planner"]:
                 shape = str(objective.parameters.get("shape", "")).lower()
-                reasons = [f"Goal is NOT FEASIBLY EXECUTABLE (unsupported complex drawing shape '{shape or 'complex'}' or missing primitives)"]
+                reasons = [f"Goal is NOT FEASIBLY EXECUTABLE: No viable strategy could achieve user goal (unsupported complex drawing shape '{shape or 'complex'}' exceeds vector stroke drawing capabilities; semantic coverage missing IMAGE_GENERATE_AND_INSERT capability)"]
                 report = report.model_copy(update={"rejection_reasons": reasons})
             logger.warning(
                 "Subgoal '%s' has no semantically feasible plan candidates: %s",

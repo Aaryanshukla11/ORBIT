@@ -106,6 +106,7 @@ from orbit.runtime.memory.task_memory import TaskScopedMemory
 from orbit.runtime.environment.drawing_provider import CanvasDrawingProvider
 from orbit.runtime.environment.registry import EnvironmentProviderRegistry, get_default_environment_registry
 from orbit.runtime.world_model import AgentWorldModel, WorldModelUpdater
+from orbit.runtime.agent.progress_graph import ProgressGraph, SubgoalStatus
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +216,11 @@ class AgentExecutionLoop:
 
         # Phase 4: Failure Diagnosis & Replanning
         self._failure_analyst = CognitiveFailureAnalyst()
+        self._progress_graph: Optional[Any] = None
+
+    @property
+    def progress_graph(self) -> Optional[Any]:
+        return self._progress_graph
 
     @property
     def failure_analyst(self) -> CognitiveFailureAnalyst:
@@ -238,6 +244,10 @@ class AgentExecutionLoop:
 
     @property
     def primitive_execution_controller(self) -> PrimitiveExecutionController:
+        return self._primitive_execution_controller
+
+    @property
+    def primitive_controller(self) -> PrimitiveExecutionController:
         return self._primitive_execution_controller
 
     @property
@@ -268,6 +278,21 @@ class AgentExecutionLoop:
     def environment_registry(self) -> EnvironmentProviderRegistry:
         return self._environment_registry
 
+    async def _dispatch_physical_action(
+        self,
+        action: Any,
+        pre_obs: CurrentStateObservation,
+        resolved_coords: Optional[Tuple[int, int]] = None,
+        cancel_token: Optional[Any] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """Delegate physical dispatch strictly to canonical PrimitiveExecutionController."""
+        return await self._primitive_execution_controller.dispatch_physical_action(
+            action=action,
+            pre_obs=pre_obs,
+            resolved_coords=resolved_coords,
+            cancel_token=cancel_token,
+        )
+
     def set_model_session_manager(self, msm: ModelSessionManager) -> None:
         """Update the underlying ModelSessionManager and instantiate ModelRouter."""
         self._session_manager = msm
@@ -275,8 +300,6 @@ class AgentExecutionLoop:
         self._interpreter.set_model_session_manager(msm)
         self._decision_engine.set_model_session_manager(msm)
         self._goal_decomposer.set_model_session_manager(msm)
-        if hasattr(self._feasibility_analyzer, "environment_discovery"):
-            self._feasibility_analyzer.environment_discovery.set_model_session_manager(msm)
 
     def set_router(self, router: ModelRouter) -> None:
         """Attach an explicit ModelRouter."""
@@ -285,8 +308,6 @@ class AgentExecutionLoop:
         self._interpreter.set_model_session_manager(router.session_manager)
         self._decision_engine.set_model_session_manager(router.session_manager)
         self._goal_decomposer.set_model_session_manager(router.session_manager)
-        if hasattr(self._feasibility_analyzer, "environment_discovery"):
-            self._feasibility_analyzer.environment_discovery.set_model_session_manager(router.session_manager)
 
     async def run(
         self,
@@ -355,6 +376,14 @@ class AgentExecutionLoop:
                 [s.title for s in decomposed_plan.sub_objectives],
             )
 
+            self._progress_graph = ProgressGraph(
+                goal=objective.user_goal,
+                sub_objectives=decomposed_plan.sub_objectives,
+            )
+            self._world_model = self._world_model.model_copy(
+                update={"progress_snapshot": self._progress_graph.create_snapshot()}
+            )
+
             # 1c. Runtime Environment Feasibility Evaluation
             if hasattr(self._observer, "observe"):
                 initial_obs = await self._observer.observe(objective)
@@ -393,7 +422,9 @@ class AgentExecutionLoop:
                         recovery_records=[],
                     )
 
-            # 2. Semantic Feasibility Evaluation & Sub-goal Directives
+            # 2. Semantic Feasibility Evaluation & Sub-goal Directives (PHASE A+B)
+            # PHASE A: Store directives per-subgoal so execution loop can carry the active directive
+            subgoal_directives: Dict[str, Any] = {}
             for sub in decomposed_plan.sub_objectives:
                 directive, sem_report = self._planner.plan_subgoal(
                     objective=objective,
@@ -422,6 +453,10 @@ class AgentExecutionLoop:
                         cycle_traces=[],
                         recovery_records=[],
                     )
+                # PHASE A: Persist directive keyed by subgoal ID
+                if directive is not None:
+                    subgoal_directives[sub.sub_id] = directive
+                    logger.debug("[PLAN DIRECTIVE] Stored directive '%s' for subgoal '%s'", directive.directive_id, sub.sub_id)
 
             step_history: List[CognitiveStepResult] = []
             cycle_traces: List[CycleExecutionTrace] = []
@@ -668,8 +703,8 @@ class AgentExecutionLoop:
                             logger.debug("Goal verification evaluation error: %s", g_err)
                             goal_truly_verified = False
                     else:
-                        # In absence of an independent goal verifier, accept model decision if completion declared
-                        goal_truly_verified = True
+                        # PHASE F1 — Fail CLOSED: no independent verifier → completion CANNOT be confirmed
+                        goal_truly_verified = False
 
                     if goal_truly_verified:
                         sm.transition_to(
@@ -797,6 +832,56 @@ class AgentExecutionLoop:
                 action = decision.next_action
                 if not action:
                     break
+
+                # PHASE B3: PrimitiveComposer is MANDATORY between decision engine and controller.
+                # The composer canonicalizes the action (enforces SemanticTarget, outcome_contract,
+                # no raw coordinates) while preserving the decision engine's action type authority.
+                _non_composable_types = (
+                    AbstractActionType.COMPLETE_GOAL,
+                    AbstractActionType.ABORT_TASK,
+                    AbstractActionType.WAIT,
+                    AbstractActionType.WAIT_SETTLE,
+                )
+                if action.action_type not in _non_composable_types:
+                    try:
+                        # Resolve active directive for current subgoal
+                        _active_directive = None
+                        if self._progress_graph is not None:
+                            _active_sg = self._progress_graph.get_active_subgoal()
+                            if _active_sg is not None:
+                                _active_directive = subgoal_directives.get(_active_sg.sub_id)
+
+                        if _active_directive is not None:
+                            # Compose from authoritative PlanDirective (preferred_primitives govern)
+                            composed_seq = self._primitive_composer.compose_from_directive(
+                                _active_directive
+                            )
+                            if composed_seq.actions:
+                                # Use the composed action whose type matches the decision engine's intent
+                                matching = [
+                                    a for a in composed_seq.actions
+                                    if a.action_type == action.action_type
+                                ]
+                                if matching:
+                                    # Merge: keep decision engine's parameters, use composer's contract/target
+                                    _composed = matching[0]
+                                    if not action.outcome_contract and _composed.outcome_contract:
+                                        action.outcome_contract = _composed.outcome_contract
+                                    if not action.target and _composed.target:
+                                        action.target = _composed.target
+                                    if not action.expected_effect and _composed.expected_effect:
+                                        action.expected_effect = _composed.expected_effect
+                                else:
+                                    # Directive specifies different primitives; use composer's first action
+                                    _composed = composed_seq.actions[0]
+                                    action = _composed
+                        else:
+                            # No directive available: run through PrimitiveValidator directly to enforce contract
+                            val_res = self._primitive_validator.validate_action(action)
+                            if val_res.is_valid and val_res.validated_action:
+                                action = val_res.validated_action
+                    except Exception as _comp_err:
+                        logger.debug("[COMPOSER] Composition notice (non-fatal): %s", _comp_err)
 
                 # If outcome_contract is missing on basic action, attach a default fallback contract
                 if action.outcome_contract is None and action.action_type not in (
@@ -1116,6 +1201,15 @@ class AgentExecutionLoop:
                     action_type=action.action_type.value,
                 )
 
+                # Subgoal Lifecycle: Transition READY/PENDING -> IN_PROGRESS
+                if self._progress_graph:
+                    active_sg = self._progress_graph.get_active_subgoal()
+                    if active_sg and active_sg.status in (SubgoalStatus.READY, SubgoalStatus.PENDING):
+                        try:
+                            self._progress_graph.start_subgoal(active_sg.sub_id, action_id=action.action_id)
+                        except Exception:
+                            pass
+
                 cycle_trace.dispatch_attempted = True
                 controller_res = await self._primitive_execution_controller.execute_primitive(
                     action=action,
@@ -1281,7 +1375,7 @@ class AgentExecutionLoop:
                 if not exec_result.expected_effect_observed:
                     logger.warning("Action %s dispatched but expected effect was NOT observed; evaluating recovery", action.action_id)
 
-                    # Phase 4: Diagnostic Root-Cause Analysis (Guardrail 9)
+                    # PHASE C1-C2: Diagnostic Root-Cause Analysis (Guardrail 9)
                     failure_rep = self._failure_analyst.analyze_failure(
                         action=action,
                         pre_obs=current_obs,
@@ -1297,7 +1391,60 @@ class AgentExecutionLoop:
                         failure_rep.suggested_remediation_direction,
                     )
 
+                    # PHASE C4: Classify failure — strategic failures trigger Planner replan
+                    # Strategic = non-transient or categories that cannot be fixed by tactical recovery
+                    _strategic_categories = {
+                        FailureCategory.TARGET_NOT_FOUND,
+                        FailureCategory.APPLICATION_CRASHED,
+                        FailureCategory.ENVIRONMENT_BLOCKED,
+                        FailureCategory.PERMISSION_DENIED,
+                    }
+                    _is_strategic_failure = (
+                        not failure_rep.is_transient
+                        or failure_rep.category in _strategic_categories
+                    )
+
                     if self._recovery_manager.can_attempt_recovery():
+                        if _is_strategic_failure and self._progress_graph is not None:
+                            # PHASE C4: Strategic failure → AgentPlanner.replan() for new PlanDirective
+                            _active_sg_for_replan = self._progress_graph.get_active_subgoal()
+                            if _active_sg_for_replan is not None:
+                                logger.info(
+                                    "[STRATEGIC REPLAN] Failure category '%s' for subgoal '%s' triggers Planner replan",
+                                    failure_rep.category.value,
+                                    _active_sg_for_replan.sub_id,
+                                )
+                                # Inject failure diagnosis into world model so planner has context
+                                _updated_known = dict(self._world_model.known_information)
+                                _updated_known["last_failure_diagnosis"] = failure_rep.diagnosis
+                                _updated_known["last_failure_category"] = failure_rep.category.value
+                                self._world_model = self._world_model.model_copy(update={
+                                    "known_information": _updated_known,
+                                })
+                                try:
+                                    new_directive, new_sem_report = self._planner.plan_subgoal(
+                                        objective=objective,
+                                        subgoal=_active_sg_for_replan,
+                                        world_model=self._world_model,
+                                        observation=post_obs,
+                                    )
+                                    if new_sem_report.is_feasible and new_directive is not None:
+                                        # PHASE C5: New PlanDirective enters Composer→Validator→Controller next cycle
+                                        subgoal_directives[_active_sg_for_replan.sub_id] = new_directive
+                                        logger.info(
+                                            "[STRATEGIC REPLAN] New PlanDirective '%s' stored for subgoal '%s'",
+                                            new_directive.directive_id,
+                                            _active_sg_for_replan.sub_id,
+                                        )
+                                    else:
+                                        logger.warning(
+                                            "[STRATEGIC REPLAN] Replanning for subgoal '%s' infeasible: %s",
+                                            _active_sg_for_replan.sub_id,
+                                            getattr(new_sem_report, 'rejection_reasons', ''),
+                                        )
+                                except Exception as _replan_err:
+                                    logger.warning("[STRATEGIC REPLAN] Planner replan raised: %s", _replan_err)
+
                         strategy, diag = self._recovery_manager.diagnose_failure(action, current_obs, post_obs, exec_result)
                         sm.transition_to(
                             AgentLoopState.RECOVERING,
@@ -1364,7 +1511,21 @@ class AgentExecutionLoop:
                         cycle_trace.recovery_count = rec_record.attempt_number
                         cycle_trace.post_observation_id = post_obs.observation_id
                     else:
-                        logger.warning("Recovery budget exceeded for current transition; escalating to next cycle")
+                        # PHASE A3: Recovery budget exhausted — mark active subgoal FAILED in ProgressGraph
+                        logger.warning("Recovery budget exceeded for current transition; marking subgoal FAILED")
+                        if self._progress_graph is not None:
+                            _failed_sg = self._progress_graph.get_active_subgoal()
+                            if _failed_sg is not None and _failed_sg.status == SubgoalStatus.IN_PROGRESS:
+                                retry_allowed = self._progress_graph.fail_subgoal(
+                                    _failed_sg.sub_id,
+                                    reason=f"Recovery budget exhausted after action '{action.action_id}' failure: {failure_rep.diagnosis}",
+                                    allow_retry=(_failed_sg.retry_count < _failed_sg.max_retries),
+                                )
+                                logger.info(
+                                    "[PROGRESS GRAPH] Subgoal '%s' marked FAILED (retry_allowed=%s)",
+                                    _failed_sg.sub_id,
+                                    retry_allowed,
+                                )
                 else:
                     self._recovery_manager.reset_transition_counter()
 
@@ -1383,6 +1544,20 @@ class AgentExecutionLoop:
                 if progress_detected:
                     last_progress_time = time.perf_counter()
                     consecutive_identical_actions = 0
+                    if self._progress_graph:
+                        active_sg = self._progress_graph.get_active_subgoal()
+                        if active_sg and active_sg.status == SubgoalStatus.IN_PROGRESS:
+                            self._progress_graph.complete_subgoal(
+                                active_sg.sub_id,
+                                evidence={"step_index": step_idx, "action_id": action.action_id},
+                            )
+
+                # PHASE A: Update WorldModel from post_obs every cycle (continuous world model update)
+                self._world_model = WorldModelUpdater.update_from_observation(self._world_model, post_obs)
+                if self._progress_graph:
+                    self._world_model = self._world_model.model_copy(
+                        update={"progress_snapshot": self._progress_graph.create_snapshot()}
+                    )
 
                 # Log formatted trace block
                 formatted_trace = format_cycle_trace_block(cycle_trace)

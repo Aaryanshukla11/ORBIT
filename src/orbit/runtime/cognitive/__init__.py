@@ -39,9 +39,11 @@ from orbit.runtime.cognitive.state_machine import (
     AgentStateTransitionRecord,
     InvalidStateTransitionError,
 )
+from orbit.runtime.cognitive.primitive_execution_controller import PrimitiveExecutionController
 from orbit.runtime.cognitive.trace import CycleExecutionTrace, format_cycle_trace_block
 
 __all__ = [
+    "PrimitiveExecutionController",
     "AbstractAction",
     "AbstractActionType",
     "ActionExecutionResult",

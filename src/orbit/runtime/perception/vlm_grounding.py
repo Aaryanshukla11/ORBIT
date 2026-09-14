@@ -1,6 +1,6 @@
 """VLM Semantic Hypothesis & Physical Grounding Verification Subsystem.
 
-INVARIANT (ASTRA Dimension 7 & 18): Strict boundary between VLM semantic recommendation
+INVARIANT (ORBIT Dimension 7 & 18): Strict boundary between VLM semantic recommendation
 and physical OS execution. VLM outputs are treated strictly as unverified hypotheses.
 Physical dispatch occurs ONLY after authoritative UIA/geometric verification confirms
 target presence and bounds within the foreground window.
@@ -238,7 +238,7 @@ class VLMGroundingVerifier:
 class ExplorationPolicy(BaseModel):
     """Guarantees bounded autonomous exploration and deterministic termination.
 
-    INVARIANT (ASTRA Dimension 22): Exploration must terminate deterministically
+    INVARIANT (ORBIT Dimension 22): Exploration must terminate deterministically
     when: (1) target is discovered, (2) step budget is exhausted, or (3) state stagnates.
     """
 

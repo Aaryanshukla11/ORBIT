@@ -85,7 +85,7 @@ class SemanticFeasibilityEvaluator:
 
             if any(k in shape for k in unfeasible_keywords) or any(k in raw_prompt for k in ["portrait", "photo of"]):
                 return 0.0, [
-                    f"Goal is NOT FEASIBLY EXECUTABLE (unsupported complex drawing shape '{shape or 'complex'}' exceeds vector stroke drawing capabilities)"
+                    f"Goal is NOT FEASIBLY EXECUTABLE: No viable strategy could achieve user goal (unsupported complex drawing shape '{shape or 'complex'}' exceeds vector stroke drawing capabilities; semantic coverage missing IMAGE_GENERATE_AND_INSERT capability)"
                 ]
 
             if not payload or "strokes" not in payload:
