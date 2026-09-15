@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
@@ -314,6 +315,9 @@ class PrimitiveExecutionController:
                 dispatch_success = res.success
                 err_msg = res.error
 
+            elif act_type == AbstractActionType.SAVE_FILE:
+                dispatch_success, err_msg = await self._dispatch_save_file(action, pre_obs)
+
             elif act_type == AbstractActionType.SCROLL:
                 direction = str(params.get("direction", "down"))
                 if self._pointer is not None and hasattr(self._pointer, "scroll"):
@@ -358,6 +362,139 @@ class PrimitiveExecutionController:
             err_msg = f"DISPATCH_EXCEPTION: {str(ex)}"
 
         return dispatch_success, err_msg
+
+    async def _dispatch_save_file(
+        self,
+        action: AbstractAction,
+        pre_obs: CurrentStateObservation,
+    ) -> Tuple[bool, Optional[str]]:
+        """Execute physical Save File workflow with dialog interaction and physical file verification."""
+        params = action.parameters or {}
+        filename = str(params.get("filename", params.get("target_path", params.get("path", "")))).strip()
+        target_dir = str(params.get("target_dir", params.get("destination", ""))).strip().lower()
+        if not filename and action.target:
+            filename = str(action.target.name or "").strip()
+
+        if not filename:
+            filename = "test.png"
+
+        # Dynamically resolve desktop / destination path without hardcoding usernames
+        user_profile = os.environ.get("USERPROFILE", "")
+        home_dir = os.path.expanduser("~")
+        
+        desktop_candidates = []
+        if user_profile:
+            onedrive_desktop = os.path.join(user_profile, "OneDrive", "Desktop")
+            if os.path.exists(onedrive_desktop):
+                desktop_candidates.append(onedrive_desktop)
+            user_desktop = os.path.join(user_profile, "Desktop")
+            if os.path.exists(user_desktop):
+                desktop_candidates.append(user_desktop)
+        if home_dir:
+            h_onedrive_desktop = os.path.join(home_dir, "OneDrive", "Desktop")
+            if os.path.exists(h_onedrive_desktop) and h_onedrive_desktop not in desktop_candidates:
+                desktop_candidates.append(h_onedrive_desktop)
+            h_desktop = os.path.join(home_dir, "Desktop")
+            if os.path.exists(h_desktop) and h_desktop not in desktop_candidates:
+                desktop_candidates.append(h_desktop)
+
+        primary_desktop = desktop_candidates[0] if desktop_candidates else (os.path.join(home_dir, "Desktop") if home_dir else os.getcwd())
+
+        # Determine target absolute path
+        if os.path.isabs(filename):
+            resolved_target_path = filename
+        elif target_dir == "desktop" or "desktop" in filename.lower():
+            base_name = os.path.basename(filename)
+            resolved_target_path = os.path.join(primary_desktop, base_name)
+        else:
+            resolved_target_path = os.path.join(primary_desktop, os.path.basename(filename))
+
+        logger.info("[SAVE_FILE EXECUTION] Target resolved path: %s", resolved_target_path)
+
+        # 1. Trigger Save Dialog via Keyboard Shortcut
+        if self._keyboard is not None:
+            # Send Ctrl+S hotkey
+            try:
+                if hasattr(self._keyboard, "hotkey"):
+                    await self._keyboard.hotkey("ctrl", "s")
+                else:
+                    await self._keyboard.press_key("ctrl")
+                    await self._keyboard.press_key("s")
+                    await self._keyboard.release_key("s")
+                    await self._keyboard.release_key("ctrl")
+            except Exception as k_err:
+                logger.warning("[SAVE_FILE] Hotkey ctrl+s error: %s", k_err)
+
+            # Wait for Save As dialog to appear and settle
+            await asyncio.sleep(0.8)
+
+            # 2. Type target absolute path into dialog filename input
+            try:
+                await self._keyboard.type_text(resolved_target_path)
+            except Exception as t_err:
+                logger.warning("[SAVE_FILE] Type path error: %s", t_err)
+
+            await asyncio.sleep(0.3)
+
+            # 3. Press Enter to confirm save
+            try:
+                if hasattr(self._keyboard, "hotkey"):
+                    await self._keyboard.hotkey("enter")
+                elif hasattr(self._keyboard, "press_key"):
+                    await self._keyboard.press_key("enter")
+                    await self._keyboard.release_key("enter")
+            except Exception as e_err:
+                logger.warning("[SAVE_FILE] Enter press error: %s", e_err)
+
+            await asyncio.sleep(0.6)
+
+            # 4. Handle potential overwrite confirmation dialog ("Already exists, do you want to replace it?")
+            # Send Alt+Y or Enter to accept overwrite if prompt appeared
+            try:
+                if hasattr(self._keyboard, "hotkey"):
+                    await self._keyboard.hotkey("alt", "y")
+            except Exception:
+                pass
+
+            await asyncio.sleep(0.8)
+        else:
+            logger.warning("[SAVE_FILE] Keyboard adapter missing; cannot interact with GUI save dialog")
+
+        # 5. Post-Action Physical Verification
+        check_paths = [resolved_target_path]
+        base_name = os.path.basename(resolved_target_path)
+        for d_dir in desktop_candidates:
+            c_p = os.path.join(d_dir, base_name)
+            if c_p not in check_paths:
+                check_paths.append(c_p)
+        check_paths.append(os.path.abspath(base_name))
+
+        verified_path = None
+        for p in check_paths:
+            if os.path.exists(p) and os.path.isfile(p):
+                sz = os.path.getsize(p)
+                if sz > 0:
+                    fmt = str(params.get("format", p.rsplit(".", 1)[-1] if "." in p else "png")).lower()
+                    if fmt in ("png", "jpg", "jpeg", "bmp") or p.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
+                        try:
+                            from PIL import Image
+                            with Image.open(p) as img:
+                                img.verify()
+                            verified_path = p
+                            break
+                        except Exception as im_err:
+                            logger.warning("[SAVE_FILE] Image verify failed on %s: %s", p, im_err)
+                    else:
+                        verified_path = p
+                        break
+
+        if verified_path:
+            logger.info("[SAVE_FILE EXECUTION] Physical file verified: %s (size: %d bytes)", verified_path, os.path.getsize(verified_path))
+            return True, None
+        else:
+            err = f"SAVE_VERIFICATION_FAILED: File '{resolved_target_path}' was not created or verified on disk."
+            logger.warning("[SAVE_FILE EXECUTION] %s", err)
+            return False, err
 
     async def execute_primitive(
         self,

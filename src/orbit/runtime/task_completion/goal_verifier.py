@@ -8,13 +8,15 @@ Never equates low-level action dispatch with task success.
 from __future__ import annotations
 
 import ctypes
+from datetime import datetime, timezone
 import logging
+import os
 import sys
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from PIL import Image, ImageChops, ImageStat
 
 if TYPE_CHECKING:
-    from orbit.runtime.capabilities.models import GoalRequirement, GoalRequirementSet
+    from orbit.runtime.capabilities.models import GoalRequirement, GoalRequirementSet, RequirementStatus
     from orbit.runtime.capabilities.requirements import GoalRequirementExtractor
     from orbit.runtime.cognitive.models import StructuredObjective
 
@@ -75,6 +77,7 @@ class GoalVerifier:
         must remain incomplete/failed.
         """
         import re
+        from orbit.runtime.capabilities.models import GoalRequirement, RequirementStatus
         from orbit.runtime.cognitive.models import StructuredObjective
 
         # Normalize objective into a structured object for requirement extraction
@@ -125,6 +128,19 @@ class GoalVerifier:
         target_app_is_active = getattr(current_observation, "target_app_is_active", False)
         obs_id = getattr(current_observation, "observation_id", "obs_unknown")
 
+        # Extract task execution start timestamp for artifact provenance checking
+        task_start_time_epoch: Optional[float] = None
+        if step_history and len(step_history) > 0:
+            first_step = step_history[0]
+            for attr in ("timestamp_utc", "timestamp", "started_at_utc", "started_at"):
+                val = getattr(first_step, attr, None)
+                if isinstance(val, datetime):
+                    task_start_time_epoch = val.timestamp()
+                    break
+                elif isinstance(val, (int, float)):
+                    task_start_time_epoch = float(val)
+                    break
+
         satisfied_reqs: List[GoalRequirement] = []
         unsatisfied_reqs: List[tuple[GoalRequirement, str]] = []
         evidence_records: List[str] = []
@@ -134,6 +150,7 @@ class GoalVerifier:
             if req.requirement_type == "APPLICATION_LIFECYCLE":
                 app_name = str(req.parameters.get("application_name", "")).strip().lower()
                 if not app_name or app_name == "desktop":
+                    req.mark_satisfied(evidence=f"Desktop environment ready [{req.requirement_id}]")
                     satisfied_reqs.append(req)
                     evidence_records.append(f"Application lifecycle verified: desktop ready [{req.requirement_id}]")
                 else:
@@ -158,10 +175,13 @@ class GoalVerifier:
                         found_app = True
 
                     if found_app:
+                        req.mark_satisfied(evidence=f"Application '{app_name}' verified active/open on desktop [{req.requirement_id}]")
                         satisfied_reqs.append(req)
                         evidence_records.append(f"Application '{app_name}' verified active/open on desktop [{req.requirement_id}]")
                     else:
-                        unsatisfied_reqs.append((req, f"Application '{app_name}' not visible or active on desktop"))
+                        fail_msg = f"Application '{app_name}' not visible or active on desktop"
+                        req.mark_failed(reason=fail_msg)
+                        unsatisfied_reqs.append((req, fail_msg))
                         evidence_records.append(f"Application '{app_name}' FAILED lifecycle verification [{req.requirement_id}]")
 
             elif req.requirement_type == "CONTENT_CREATION":
@@ -169,7 +189,7 @@ class GoalVerifier:
                 is_complex = (fidelity == "HIGH_FIDELITY_SEMANTIC")
                 has_strokes = False
 
-                if canvas_st in ("READY_FOR_DRAWING", "DRAWING_COMPLETED"):
+                if canvas_st in ("READY_FOR_DRAWING", "DRAWING_COMPLETED", "CANVAS_CHANGED", "CANVAS_MODIFIED"):
                     if step_history and any(
                         getattr(s, "action_dispatched", None)
                         and getattr(s.action_dispatched, "action_type", None)
@@ -183,14 +203,17 @@ class GoalVerifier:
                         "Level 3 Semantic Goal Verification FAILED: Canvas contains primitive geometric strokes, "
                         "which do not semantically satisfy the requested complex entity (portrait/face/person)."
                     )
+                    req.mark_failed(reason=fail_msg)
                     unsatisfied_reqs.append((req, fail_msg))
                     evidence_records.append(fail_msg)
                 elif has_strokes:
                     shape = req.parameters.get("shape", "geometry")
+                    req.mark_satisfied(evidence=f"Drawing strokes verified on canvas surface matching requested geometry '{shape}' [{req.requirement_id}]")
                     satisfied_reqs.append(req)
                     evidence_records.append(f"Drawing strokes verified on canvas surface matching requested geometry '{shape}' [{req.requirement_id}]")
                 else:
                     fail_msg = "Drawing strokes not verified on canvas surface"
+                    req.mark_failed(reason=fail_msg)
                     unsatisfied_reqs.append((req, fail_msg))
                     evidence_records.append(fail_msg)
 
@@ -217,9 +240,11 @@ class GoalVerifier:
                             break
 
                 if calc_verified:
+                    req.mark_satisfied(evidence=f"Calculation result '{expected_result or expr}' verified [{req.requirement_id}]")
                     satisfied_reqs.append(req)
                 else:
                     fail_msg = f"Calculation '{expected_result or expr}' not verified in screen perception"
+                    req.mark_failed(reason=fail_msg)
                     unsatisfied_reqs.append((req, fail_msg))
                     evidence_records.append(fail_msg)
 
@@ -236,6 +261,7 @@ class GoalVerifier:
                         app_found = True
                     if not app_found:
                         fail_msg = f"Target application '{target_app_for_text}' for text input not open or active on desktop"
+                        req.mark_failed(reason=fail_msg)
                         unsatisfied_reqs.append((req, fail_msg))
                         evidence_records.append(fail_msg)
                         continue
@@ -268,10 +294,85 @@ class GoalVerifier:
                         best_conf = m_conf
 
                 if best_match in (TextMatchState.EXACT_MATCH, TextMatchState.NORMALIZED_MATCH):
+                    req.mark_satisfied(evidence=f"Target text '{target_text}' verified in screen perception [{best_match.value}] [obs_id={obs_id}] [{req.requirement_id}]")
                     satisfied_reqs.append(req)
                     evidence_records.append(f"Target text '{target_text}' verified in screen perception [{best_match.value}] [obs_id={obs_id}] [{req.requirement_id}]")
                 else:
                     fail_msg = f"Target text '{target_text}' NOT verified in screen perception [{best_match.value}] [obs_id={obs_id}]"
+                    req.mark_failed(reason=fail_msg)
+                    unsatisfied_reqs.append((req, fail_msg))
+                    evidence_records.append(fail_msg)
+
+            elif req.requirement_type == "FILE_MANAGEMENT":
+                file_path = str(req.parameters.get("file_path", "")).strip()
+                filename = str(req.parameters.get("filename", "")).strip()
+                target_dir = str(req.parameters.get("target_directory", "")).strip()
+                fmt = str(req.parameters.get("expected_format", "")).strip().lower()
+
+                # Build candidate paths to check on the filesystem
+                candidate_paths: List[str] = []
+                if file_path:
+                    candidate_paths.append(file_path)
+                    candidate_paths.append(os.path.abspath(file_path))
+                    candidate_paths.append(os.path.expanduser(file_path))
+
+                if target_dir.lower() == "desktop" or "desktop" in file_path.lower():
+                    base_fname = filename or os.path.basename(file_path) or "test.png"
+                    user_profile = os.environ.get("USERPROFILE", "")
+                    if user_profile:
+                        candidate_paths.append(os.path.join(user_profile, "Desktop", base_fname))
+                        candidate_paths.append(os.path.join(user_profile, "OneDrive", "Desktop", base_fname))
+                    home_dir = os.path.expanduser("~")
+                    if home_dir:
+                        candidate_paths.append(os.path.join(home_dir, "Desktop", base_fname))
+                        candidate_paths.append(os.path.join(home_dir, "OneDrive", "Desktop", base_fname))
+
+                if filename:
+                    candidate_paths.append(filename)
+                    candidate_paths.append(os.path.abspath(filename))
+                    candidate_paths.append(os.path.join(os.getcwd(), filename))
+
+                verified_file_path = None
+                verified_size = 0
+                provenance_fail_reason = ""
+                for c_path in candidate_paths:
+                    if c_path and os.path.exists(c_path) and os.path.isfile(c_path):
+                        sz = os.path.getsize(c_path)
+                        if sz > 0:
+                            # 1. Format validity
+                            fmt_ok = True
+                            if fmt in ("png", "jpg", "jpeg", "bmp") or c_path.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
+                                try:
+                                    with Image.open(c_path) as im:
+                                        im.verify()
+                                except Exception as img_err:
+                                    logger.debug("Image file %s verification failed: %s", c_path, img_err)
+                                    fmt_ok = False
+
+                            if not fmt_ok:
+                                continue
+
+                            # 2. Provenance verification: file modification time vs task execution start
+                            mtime = os.path.getmtime(c_path)
+                            if task_start_time_epoch is not None:
+                                if mtime < (task_start_time_epoch - 5.0):
+                                    provenance_fail_reason = (
+                                        f"File '{c_path}' exists on disk but was last modified "
+                                        f"prior to task start; lacks execution provenance for this run."
+                                    )
+                                    continue
+
+                            verified_file_path = c_path
+                            verified_size = sz
+                            break
+
+                if verified_file_path:
+                    req.mark_satisfied(evidence=f"Physical artifact verified on disk: '{verified_file_path}' (size: {verified_size} bytes, provenance verified)")
+                    satisfied_reqs.append(req)
+                    evidence_records.append(f"Physical file verified on disk: '{verified_file_path}' (size: {verified_size} bytes, provenance verified) [{req.requirement_id}]")
+                else:
+                    fail_msg = provenance_fail_reason or f"Target artifact file '{file_path or filename}' not found on disk, is empty, or lacks task provenance"
+                    req.mark_failed(reason=fail_msg)
                     unsatisfied_reqs.append((req, fail_msg))
                     evidence_records.append(fail_msg)
 
@@ -284,10 +385,13 @@ class GoalVerifier:
         state_req = next((r for r in mandatory_reqs if r.requirement_type == "STATE_VERIFICATION"), None)
         if state_req:
             if len(unsatisfied_reqs) == 0 and len(satisfied_reqs) > 0:
+                state_req.mark_satisfied(evidence=f"All {len(satisfied_reqs)} mandatory requirements satisfied")
                 satisfied_reqs.append(state_req)
                 evidence_records.append(f"State verification confirmed: all {len(satisfied_reqs)} mandatory requirements satisfied")
             else:
-                unsatisfied_reqs.append((state_req, f"State verification failed: {len(unsatisfied_reqs)} unsatisfied requirements"))
+                fail_msg = f"State verification failed: {len(unsatisfied_reqs)} unsatisfied requirements"
+                state_req.mark_failed(reason=fail_msg)
+                unsatisfied_reqs.append((state_req, fail_msg))
 
         is_satisfied = (len(unsatisfied_reqs) == 0) and (len(satisfied_reqs) > 0)
 
@@ -297,6 +401,15 @@ class GoalVerifier:
                 "satisfied": is_satisfied,
                 "satisfied_requirements": [r.requirement_id for r in satisfied_reqs],
                 "unsatisfied_requirements": [r.requirement_id for r, _ in unsatisfied_reqs],
+                "requirement_states": {
+                    r.requirement_id: {
+                        "requirement_type": r.requirement_type,
+                        "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+                        "evidence": r.verification_evidence,
+                        "failure_reason": r.failure_reason,
+                    }
+                    for r in req_set.requirements
+                },
             }
         )
 

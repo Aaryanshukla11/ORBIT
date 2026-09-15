@@ -188,9 +188,9 @@ class PrimitiveValidator:
             direction = str(params.get("direction", "down")).lower()
             if direction not in ("up", "down", "left", "right"):
                 return f"Invalid scroll direction: '{direction}'"
-        elif action_type in (AbstractActionType.FILE_READ, AbstractActionType.FILE_WRITE):
-            if "path" not in params and "file_path" not in params:
-                return "Missing required parameter 'path'"
+        elif action_type in (AbstractActionType.FILE_READ, AbstractActionType.FILE_WRITE, AbstractActionType.SAVE_FILE):
+            if "path" not in params and "file_path" not in params and "target_path" not in params and "filename" not in params:
+                return "Missing required parameter 'path' or 'target_path' or 'filename'"
         elif action_type == AbstractActionType.BROWSER_NAVIGATE:
             if "url" not in params:
                 return "Missing required parameter 'url'"

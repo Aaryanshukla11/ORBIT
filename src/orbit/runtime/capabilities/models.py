@@ -110,8 +110,14 @@ class Capability(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Goal Requirements Domain Contracts
+# Goal Requirements Domain Contracts (Unified with Canonical Subgoal Lifecycle)
 # ---------------------------------------------------------------------------
+
+from orbit.runtime.agent.progress_graph import SubgoalStatus
+
+# Direct alias to canonical SubgoalStatus to ensure a single authoritative lifecycle status
+RequirementStatus = SubgoalStatus
+
 
 class GoalRequirement(BaseModel):
     """Declarative specification of WHAT is required to achieve a goal."""
@@ -124,9 +130,37 @@ class GoalRequirement(BaseModel):
     semantic_description: str = Field(..., description="Human-readable description of what is needed")
     required_capability_category: CapabilityCategory = Field(..., description="Target category of capability")
     mandatory: bool = Field(default=True, description="Whether this requirement is strictly mandatory")
+    status: SubgoalStatus = Field(
+        default=SubgoalStatus.PENDING,
+        description="Current authoritative verification status of this requirement",
+    )
     success_criteria: List[str] = Field(default_factory=list, description="Verifiable success conditions")
     alternatives: List[str] = Field(default_factory=list, description="Acceptable alternative approaches")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Domain-specific parameters (fidelity, subject, app)")
+    verification_evidence: Optional[str] = Field(
+        default=None,
+        description="Physical evidence confirming requirement satisfaction",
+    )
+    failure_reason: Optional[str] = Field(
+        default=None,
+        description="Reason if requirement is failed or unsatisfied",
+    )
+
+    def is_satisfied(self) -> bool:
+        """Requirement is satisfied if in terminal COMPLETED or SKIPPED state."""
+        return self.status in (SubgoalStatus.COMPLETED, SubgoalStatus.SKIPPED)
+
+    def mark_satisfied(self, evidence: Optional[str] = None) -> None:
+        """Mark requirement satisfied with verified evidence."""
+        self.status = SubgoalStatus.COMPLETED
+        if evidence:
+            self.verification_evidence = evidence
+
+    def mark_failed(self, reason: Optional[str] = None) -> None:
+        """Mark requirement failed with explanatory reason."""
+        self.status = SubgoalStatus.FAILED
+        if reason:
+            self.failure_reason = reason
 
 
 class GoalRequirementSet(BaseModel):
@@ -143,6 +177,15 @@ class GoalRequirementSet(BaseModel):
 
     def get_mandatory_requirements(self) -> List[GoalRequirement]:
         return [r for r in self.requirements if r.mandatory]
+
+    def is_all_mandatory_satisfied(self) -> bool:
+        """Enforce strict invariant: All mandatory requirements must be COMPLETED / SATISFIED."""
+        mandatory = self.get_mandatory_requirements()
+        return len(mandatory) > 0 and all(r.is_satisfied() for r in mandatory)
+
+    def get_unsatisfied_requirements(self) -> List[GoalRequirement]:
+        """Return list of mandatory requirements not yet satisfied."""
+        return [r for r in self.get_mandatory_requirements() if not r.is_satisfied()]
 
 
 # ---------------------------------------------------------------------------

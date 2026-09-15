@@ -9,6 +9,7 @@ Guardrail 16: No Silent Fallback Success.
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
@@ -97,7 +98,11 @@ class MultiEvidenceActionVerifier:
         if act_type in (AbstractActionType.CLICK, AbstractActionType.DOUBLE_CLICK, AbstractActionType.RIGHT_CLICK):
             return self._verify_pointer_click(action, pre_obs, post_obs, pixel_delta)
 
-        # 5. Generic observation or environment interface
+        # 5. SAVE_FILE / FILE_WRITE verification
+        if act_type in (AbstractActionType.SAVE_FILE, AbstractActionType.FILE_WRITE):
+            return self._verify_save_file(action, pre_obs, post_obs, pixel_delta)
+
+        # 6. Generic observation or environment interface
         if act_type in (AbstractActionType.WAIT, AbstractActionType.WAIT_SETTLE):
             return MultiEvidenceVerificationResult(
                 is_verified=True,
@@ -107,7 +112,7 @@ class MultiEvidenceActionVerifier:
                 confidence=1.0,
             )
 
-        # 6. Fallback semantic evaluation
+        # 7. Fallback semantic evaluation
         if contract:
             exp = (contract.expected_state_transition or "").lower()
             # If foreground window title changed as expected
@@ -362,6 +367,76 @@ class MultiEvidenceActionVerifier:
             outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
             evidence_sources=["CLICK_VERIFICATION"],
             verification_reason="No observable window, UI element, or contracted visual delta detected after click.",
+            confidence=0.0,
+            pixel_delta_detected=pixel_delta,
+        )
+
+    def _verify_save_file(
+        self,
+        action: AbstractAction,
+        pre_obs: CurrentStateObservation,
+        post_obs: CurrentStateObservation,
+        pixel_delta: bool,
+    ) -> MultiEvidenceVerificationResult:
+        """Verify physical file persistence and artifact integrity."""
+        params = action.parameters or {}
+        filename = str(params.get("filename", params.get("target_path", params.get("path", "")))).strip()
+        target_dir = str(params.get("target_dir", params.get("destination", ""))).strip().lower()
+        if not filename and action.target:
+            filename = str(action.target.name or "").strip()
+
+        if not filename:
+            filename = "test.png"
+
+        user_profile = os.environ.get("USERPROFILE", "")
+        home_dir = os.path.expanduser("~")
+        candidate_paths = [filename]
+        if os.path.isabs(filename):
+            candidate_paths.append(filename)
+        else:
+            if user_profile:
+                candidate_paths.append(os.path.join(user_profile, "OneDrive", "Desktop", os.path.basename(filename)))
+                candidate_paths.append(os.path.join(user_profile, "Desktop", os.path.basename(filename)))
+            if home_dir:
+                candidate_paths.append(os.path.join(home_dir, "OneDrive", "Desktop", os.path.basename(filename)))
+                candidate_paths.append(os.path.join(home_dir, "Desktop", os.path.basename(filename)))
+            candidate_paths.append(os.path.abspath(filename))
+            candidate_paths.append(os.path.join(os.getcwd(), os.path.basename(filename)))
+
+        found_path = None
+        for p in candidate_paths:
+            if os.path.exists(p) and os.path.isfile(p):
+                sz = os.path.getsize(p)
+                if sz > 0:
+                    fmt = str(params.get("format", p.rsplit(".", 1)[-1] if "." in p else "png")).lower()
+                    if fmt in ("png", "jpg", "jpeg", "bmp") or p.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
+                        try:
+                            from PIL import Image
+                            with Image.open(p) as img:
+                                img.verify()
+                            found_path = p
+                            break
+                        except Exception:
+                            continue
+                    else:
+                        found_path = p
+                        break
+
+        if found_path:
+            return MultiEvidenceVerificationResult(
+                is_verified=True,
+                outcome_status=OutcomeStatus.EFFECT_VERIFIED,
+                evidence_sources=["FILE_ARTIFACT_CHECK", "FORMAT_INTEGRITY"],
+                verification_reason=f"Target file '{found_path}' verified on disk (size: {os.path.getsize(found_path)} bytes).",
+                confidence=1.0,
+                pixel_delta_detected=pixel_delta,
+            )
+
+        return MultiEvidenceVerificationResult(
+            is_verified=False,
+            outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+            evidence_sources=["FILE_ARTIFACT_CHECK"],
+            verification_reason=f"Target artifact '{filename}' not found or invalid on disk.",
             confidence=0.0,
             pixel_delta_detected=pixel_delta,
         )

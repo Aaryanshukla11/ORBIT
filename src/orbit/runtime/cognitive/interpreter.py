@@ -124,42 +124,60 @@ class LLMIntentInterpreter:
 
         # Application mapping
         app_name = None
-        if "paint" in lower or "draw" in lower or "cube" in lower or "square" in lower or "circle" in lower or "sketch" in lower:
-            if "paint" in lower or "mspaint" in lower or "draw" in lower:
-                app_name = "mspaint"
-                entities.append("mspaint")
-                entities.append("canvas")
+        if "paint" in lower or "mspaint" in lower or "draw" in lower or "cube" in lower or "square" in lower or "circle" in lower or "sketch" in lower:
+            app_name = "mspaint"
+            entities.append("mspaint")
+            entities.append("canvas")
         elif "notepad" in lower or "note" in lower or "text editor" in lower:
             app_name = "notepad"
             entities.append("notepad")
         elif "calc" in lower or "calculator" in lower:
             app_name = "calculator"
             entities.append("calculator")
-        elif "browser" in lower or "chrome" in lower or "edge" in lower:
+        elif "edge" in lower or "msedge" in lower or "microsoft edge" in lower:
+            app_name = "edge"
+            entities.append("edge")
+        elif "chrome" in lower or "browser" in lower:
             app_name = "edge"
             entities.append("edge")
 
         if app_name:
             parameters["app_name"] = app_name
 
+        # Detect file save intent and parameters
+        save_match = re.search(r'(?:save|save\s+as|save\s+it\s+as|export\s+as)\s+["\']?([^"\'\s,]+\.[a-zA-Z0-9]+)["\']?', prompt, re.IGNORECASE)
+        target_file = None
+        target_dir = "desktop" if "desktop" in lower else "workspace"
+        expected_format = None
+        if save_match:
+            target_file = save_match.group(1).strip()
+            if "." in target_file:
+                expected_format = target_file.rsplit(".", 1)[-1].lower()
+            parameters["requires_save"] = True
+            parameters["filename"] = target_file
+            parameters["target_dir"] = target_dir
+            if expected_format:
+                parameters["format"] = expected_format
+            entities.append(target_file)
+
         # Drawing Intent (e.g. "open paint and draw a car", "draw a cube", "draw a square")
-        if "draw" in lower or "sketch" in lower or "cube" in lower or ("paint" in lower and any(w in lower for w in ("car", "house", "tree", "box", "circle", "square", "triangle", "star"))):
+        if "draw" in lower or "sketch" in lower or "cube" in lower or ("paint" in lower and any(w in lower for w in ("car", "house", "tree", "box", "circle", "square", "triangle", "star", "red"))):
             parameters["action_type"] = "draw"
             shape = "cube"
             # Extract requested shape/subject from prompt
-            shape_match = re.search(r'(?:draw|sketch)\s+(?:a\s+|an\s+)?([a-zA-Z0-9_\-]+)', prompt, re.IGNORECASE)
+            shape_match = re.search(r'(?:draw|sketch)\s+(?:a\s+|an\s+)?(?:[a-zA-Z]+\s+)?([a-zA-Z0-9_\-]+)', prompt, re.IGNORECASE)
             if shape_match:
                 extracted = shape_match.group(1).lower().strip()
-                if extracted not in {"in", "on", "using", "with", "the", "paint", "mspaint", "canvas"}:
+                if extracted not in {"in", "on", "using", "with", "the", "paint", "mspaint", "canvas", "it"}:
                     shape = extracted
-            if "car" in lower or "automobile" in lower or "vehicle" in lower:
+            if "circle" in lower:
+                shape = "circle"
+            elif "car" in lower or "automobile" in lower or "vehicle" in lower:
                 shape = "car"
             elif "cube" in lower:
                 shape = "cube"
             elif "square" in lower:
                 shape = "square"
-            elif "circle" in lower:
-                shape = "circle"
             elif "rectangle" in lower or "box" in lower:
                 shape = "rectangle"
             elif "triangle" in lower:
@@ -175,11 +193,27 @@ class LLMIntentInterpreter:
             parameters["shape"] = shape
             end_condition = f"canvas_has_{shape}_drawing"
             user_goal = f"Open Paint and draw a {shape} on the canvas"
+            if target_file:
+                user_goal += f" and save as {target_file}"
+                end_condition += f"_and_file_{target_file}_saved"
             return StructuredObjective(
                 raw_prompt=prompt,
                 user_goal=user_goal,
                 end_condition=end_condition,
                 target_entities=entities or ["mspaint", "canvas"],
+                constraints=constraints,
+                parameters=parameters,
+            )
+
+        # Pure Save File Intent (e.g. "save as test.png on Desktop", "save it as test.png")
+        if ("save" in lower or "save as" in lower) and target_file:
+            parameters["action_type"] = "save"
+            user_goal = f"Save file as {target_file}"
+            return StructuredObjective(
+                raw_prompt=prompt,
+                user_goal=user_goal,
+                end_condition=f"file_{target_file}_saved",
+                target_entities=entities or [target_file],
                 constraints=constraints,
                 parameters=parameters,
             )
@@ -217,10 +251,10 @@ class LLMIntentInterpreter:
                 parameters=parameters,
             )
 
-        # Generic Open / Interaction
-        if "open" in lower or "launch" in lower:
+        # Generic Open / Launch
+        if "open" in lower or "launch" in lower or "start" in lower:
             parameters["action_type"] = "open"
-            target = app_name or prompt.replace("open", "").replace("launch", "").strip()
+            target = app_name or prompt.replace("open", "").replace("launch", "").replace("start", "").strip()
             user_goal = f"Launch and focus {target}"
             return StructuredObjective(
                 raw_prompt=prompt,

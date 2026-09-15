@@ -163,6 +163,12 @@ class PrimitiveComposer:
             elif prim_type == AbstractActionType.LAUNCH_APPLICATION:
                 app = target.name or "notepad"
                 params["application_name"] = app
+            elif prim_type == AbstractActionType.SAVE_FILE:
+                payload = directive.creative_payload or {}
+                params["filename"] = payload.get("filename", target.name if target else "test.png")
+                params["target_path"] = payload.get("target_path", params.get("filename"))
+                params["target_dir"] = payload.get("target_dir", "desktop")
+                params["format"] = payload.get("format", "png")
 
             action = AbstractAction(
                 action_type=prim_type,
@@ -244,7 +250,7 @@ class PrimitiveComposer:
 
         # Generic launch pattern: "open X", "launch X", "start X"
         m_launch = re.search(r"\b(?:open|launch|start)\s+([a-zA-Z0-9_\-]+)", g_lower)
-        if m_launch:
+        if m_launch and not any(w in g_lower for w in ("search box", "button", "link", "input", "menu", "tab", "file")):
             app = m_launch.group(1).strip()
             actions.append(
                 AbstractAction(
@@ -257,6 +263,31 @@ class PrimitiveComposer:
                     ),
                     expected_effect=f"Application '{app}' opened and focused",
                     rationale=f"Launch application '{app}' required by goal",
+                )
+            )
+
+        # Generic save pattern: "save as X", "save it as X", "export as X"
+        m_save = re.search(r"\b(?:save|save\s+as|save\s+it\s+as|export\s+as)\s+['\"]?([^'\"\s,]+\.[a-zA-Z0-9]+)['\"]?", g_lower)
+        if m_save:
+            fname = m_save.group(1).strip()
+            target_dir = "desktop" if "desktop" in g_lower else "workspace"
+            fmt = fname.rsplit(".", 1)[-1] if "." in fname else "png"
+            actions.append(
+                AbstractAction(
+                    action_type=AbstractActionType.SAVE_FILE,
+                    parameters={
+                        "filename": fname,
+                        "target_path": fname,
+                        "target_dir": target_dir,
+                        "format": fmt,
+                    },
+                    target=SemanticTarget(name=fname, role="file", context=target_dir),
+                    outcome_contract=ActionOutcomeContract(
+                        expected_state_transition=f"File '{fname}' saved to {target_dir}",
+                        verification_strategy=VerificationStrategy.ARTIFACT_CREATED,
+                    ),
+                    expected_effect=f"File '{fname}' saved to {target_dir}",
+                    rationale=f"Save requested artifact '{fname}'",
                 )
             )
 

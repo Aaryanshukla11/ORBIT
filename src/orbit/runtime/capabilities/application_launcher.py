@@ -24,6 +24,17 @@ APPROVED_APPLICATION_REGISTRY: Dict[str, str] = {
     "terminal": "wt.exe",
     "cmd": "cmd.exe",
     "explorer": "explorer.exe",
+    "edge": "msedge.exe",
+    "msedge": "msedge.exe",
+    "microsoft edge": "msedge.exe",
+    "browser": "msedge.exe",
+    "chrome": "chrome.exe",
+    "google chrome": "chrome.exe",
+    "wordpad": "write.exe",
+    "write": "write.exe",
+    "word": "winword.exe",
+    "winword": "winword.exe",
+    "excel": "excel.exe",
 }
 
 # Dangerous shell metacharacters that must never be present in application launch data

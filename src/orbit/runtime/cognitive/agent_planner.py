@@ -25,6 +25,7 @@ Ordering:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
@@ -72,9 +73,44 @@ class AgentPlanner:
         candidates: List[CandidatePlan] = []
         text = f"{subgoal.title} {subgoal.description}".lower()
 
-        # 1. Canvas / Drawing candidate
+        # 1. File Persistence / Save candidate (Priority when subgoal is save intent)
+        save_match = re.search(r'(?:save|save\s+as|save\s+it\s+as|export\s+as)\s+["\']?([^"\'\s,]+\.[a-zA-Z0-9]+)["\']?', f"{text} {objective.raw_prompt}", re.IGNORECASE)
+        filename = objective.parameters.get("filename") or (save_match.group(1).strip() if save_match else None)
+        is_save_subgoal = any(w in subgoal.title.lower() for w in ("save", "save as", "export", "persist")) or objective.parameters.get("action_type") == "save"
+        if is_save_subgoal or ((any(w in text for w in ("save", "save as", "export")) or bool(filename)) and not any(w in subgoal.title.lower() for w in ("draw", "sketch"))):
+            target_fname = filename or "test.png"
+            target_dir = objective.parameters.get("target_dir", "desktop" if "desktop" in text else "workspace")
+            fmt = objective.parameters.get("format", target_fname.rsplit(".", 1)[-1] if "." in target_fname else "png")
+            candidates.append(
+                CandidatePlan(
+                    subgoal_id=subgoal.sub_id,
+                    intent_strategy="GUI_INTERACTIVE",
+                    proposed_primitives=[AbstractActionType.SAVE_FILE],
+                    targets=[
+                        SemanticTarget(
+                            name=target_fname,
+                            role="file",
+                            context=target_dir,
+                        )
+                    ],
+                    expected_outcome=ActionOutcomeContract(
+                        expected_state_transition=f"File '{target_fname}' saved to {target_dir}",
+                        verification_strategy=VerificationStrategy.ARTIFACT_CREATED,
+                    ),
+                    estimated_complexity=2,
+                    creative_payload={
+                        "filename": target_fname,
+                        "target_dir": target_dir,
+                        "format": fmt,
+                        "target_path": objective.parameters.get("target_path"),
+                    },
+                    rationale=f"Save artifact '{target_fname}' to {target_dir}",
+                )
+            )
+
+        # 2. Canvas / Drawing candidate
         shape = str(objective.parameters.get("shape", "")).lower()
-        if (
+        if not candidates and (
             any(w in text for w in ("draw", "sketch", "paint canvas", "strokes", "illustration", "cube", "square", "rectangle", "circle", "shape"))
             or objective.parameters.get("action_type") == "draw"
             or bool(shape)
@@ -108,12 +144,43 @@ class AgentPlanner:
                     rationale="Render vector strokes directly onto targeted canvas",
                 )
             )
+                        SemanticTarget(
+                            name=target_fname,
+                            role="file",
+                            context=target_dir,
+                        )
+                    ],
+                    expected_outcome=ActionOutcomeContract(
+                        expected_state_transition=f"File '{target_fname}' saved to {target_dir}",
+                        verification_strategy=VerificationStrategy.ARTIFACT_CREATED,
+                    ),
+                    estimated_complexity=2,
+                    creative_payload={
+                        "filename": target_fname,
+                        "target_dir": target_dir,
+                        "format": fmt,
+                        "target_path": objective.parameters.get("target_path"),
+                    },
+                    rationale=f"Save artifact '{target_fname}' to {target_dir}",
+                )
+            )
 
-        # 2. Application launch candidate
-        elif any(w in text for w in ("open", "launch", "start")) and any(
-            app in text for app in ("notepad", "paint", "calculator", "calc", "word", "excel", "browser")
-        ):
-            app_name = subgoal.target_entity or "notepad"
+        # 3. Application launch candidate
+        elif any(w in text for w in ("open", "launch", "start", "run")) and not any(w in text for w in ("search box", "button", "link", "input", "menu", "tab", "file")):
+            # Extract application name
+            app_name = subgoal.target_entity or objective.parameters.get("app_name")
+            if not app_name:
+                m_app = re.search(r"\b(?:open|launch|start|run)\s+([a-zA-Z0-9_\-]+)", text)
+                if m_app:
+                    extracted_app = m_app.group(1).strip()
+                    if extracted_app not in ("the", "a", "an", "this", "search", "file", "tab", "dialog", "window"):
+                        app_name = extracted_app
+            if not app_name:
+                for app in ("paint", "mspaint", "notepad", "calculator", "calc", "edge", "msedge", "chrome", "word", "excel", "browser"):
+                    if app in text:
+                        app_name = app
+                        break
+            app_name = app_name or "notepad"
             candidates.append(
                 CandidatePlan(
                     subgoal_id=subgoal.sub_id,
@@ -125,11 +192,12 @@ class AgentPlanner:
                         verification_strategy=VerificationStrategy.WINDOW_FOCUS,
                     ),
                     estimated_complexity=1,
+                    creative_payload={"application_name": app_name, "app_name": app_name},
                     rationale=f"Launch and focus target application {app_name}",
                 )
             )
 
-        # 3. Text composition candidate
+        # 4. Text composition candidate
         elif any(w in text for w in ("type", "write", "enter text", "compose")):
             text_to_type = objective.parameters.get("text") or "Hello ORBIT"
             candidates.append(
@@ -154,7 +222,7 @@ class AgentPlanner:
                 )
             )
 
-        # 4. Generic UI Click / Focus fallback candidate
+        # 5. Generic UI Click / Focus fallback candidate
         else:
             target_name = subgoal.target_entity or "Main Window"
             candidates.append(

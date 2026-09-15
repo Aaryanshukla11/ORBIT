@@ -35,6 +35,7 @@ class AbstractActionType(str, Enum):
     SCROLL = "SCROLL"
     DRAG = "DRAG"
     DRAW_STROKES = "DRAW_STROKES"
+    SAVE_FILE = "SAVE_FILE"
     SELECT_OPTION = "SELECT_OPTION"
     WAIT = "WAIT"
     WAIT_SETTLE = "WAIT_SETTLE"
@@ -69,6 +70,7 @@ TIER1_COMPUTER_PRIMITIVES = frozenset({
     AbstractActionType.SCROLL,
     AbstractActionType.DRAG,
     AbstractActionType.DRAW_STROKES,
+    AbstractActionType.SAVE_FILE,
     AbstractActionType.SELECT_OPTION,
     AbstractActionType.WAIT,
     AbstractActionType.WAIT_SETTLE,
@@ -127,6 +129,7 @@ class VerificationStrategy(str, Enum):
     APPLICATION_STATE = "APPLICATION_STATE"        # Verify process running and responsive
     VISUAL_VISION_EVAL = "VISUAL_VISION_EVAL"      # Verify visual state delta via Vision Model
     WINDOW_FOCUS_OR_STATE = "WINDOW_FOCUS_OR_STATE"# Flexible window focus or state verification
+    ARTIFACT_CREATED = "ARTIFACT_CREATED"          # Verify physical artifact creation on disk
     AUTO_ROUTED = "AUTO_ROUTED"                    # Dynamically route through PerceptionRouter
 
 
@@ -710,9 +713,9 @@ class AgentActionValidator:
                 direction = params.get("direction", "down")
                 if direction not in ("up", "down", "left", "right"):
                     return f"Invalid scroll direction: '{direction}'"
-            elif action_type == AbstractActionType.FILE_WRITE:
-                if "path" not in params and "file_path" not in params:
-                    return "Missing required parameter 'path'"
+            elif action_type in (AbstractActionType.FILE_WRITE, AbstractActionType.SAVE_FILE):
+                if "path" not in params and "file_path" not in params and "target_path" not in params and "filename" not in params:
+                    return "Missing required parameter 'path' or 'target_path' or 'filename'"
             elif action_type == AbstractActionType.FILE_READ:
                 if "path" not in params and "file_path" not in params:
                     return "Missing required parameter 'path'"
@@ -758,6 +761,7 @@ class AgentActionValidator:
         elif action_type in (
             AbstractActionType.TYPE_TEXT,
             AbstractActionType.SEND_HOTKEY,
+            AbstractActionType.SAVE_FILE,
         ):
             return "keyboard"
         elif action_type in (

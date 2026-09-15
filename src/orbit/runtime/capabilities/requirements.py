@@ -245,8 +245,98 @@ class GoalRequirementExtractor:
                 )
             )
 
+        # 5. File Persistence / Save Requirement (independent mandatory requirement)
+        # Check if the prompt specifically mandates saving, exporting, or writing an artifact to disk / file
+        has_file_save = (
+            action_type in ("save", "export", "file_management")
+            or bool(re.search(r"\b(?:save|export|persist)\b", p_lower))
+            or bool(re.search(r"\b(?:write|store|output|download)\s+(?:to|into)\s+(?:file|disk|[a-zA-Z0-9_\-\.\:\/\\]+\.[a-zA-Z0-9]{2,5})\b", prompt, re.IGNORECASE))
+            or bool(re.search(r"\b(?:as|to)\s+['\"]?[a-zA-Z0-9_\-\.\:\/\\]+\.[a-zA-Z0-9]{2,5}['\"]?\b", prompt, re.IGNORECASE))
+            or bool(objective.parameters.get("file_path"))
+            or bool(objective.parameters.get("filename"))
+        )
+        if has_file_save:
+            filename = ""
+            target_directory = ""
+            target_path = ""
+            expected_format = ""
+
+            # 1. Structured parameters take precedence
+            if objective.parameters.get("file_path"):
+                target_path = str(objective.parameters.get("file_path")).strip()
+            elif objective.parameters.get("filename"):
+                filename = str(objective.parameters.get("filename")).strip()
+            if objective.parameters.get("target_directory"):
+                target_directory = str(objective.parameters.get("target_directory")).strip()
+
+            # 2. Generalized natural language decomposition
+            if not target_path and not filename:
+                m_file = re.search(
+                    r"\b(?:save|export|write|persist|store|download|output)\s+(?:it\s+|the\s+file\s+|the\s+image\s+|the\s+document\s+|the\s+result\s+)?(?:as|to|into)\s+['\"]?([a-zA-Z0-9_\-\.\:\/\\]+)['\"]?(?:\s+(?:on|in|to)\s+(?:the\s+)?([a-zA-Z0-9_\-\.\:\/\\]+))?",
+                    prompt,
+                    re.IGNORECASE,
+                )
+                if m_file:
+                    cand_target = m_file.group(1).strip()
+                    cand_dest = m_file.group(2).strip() if m_file.group(2) else ""
+                    if "." in cand_target:
+                        filename = cand_target
+                        if cand_dest:
+                            target_directory = cand_dest
+                    elif "/" in cand_target or "\\" in cand_target:
+                        target_path = cand_target
+                    else:
+                        if cand_dest:
+                            target_directory = cand_dest
+                            filename = cand_target
+                        else:
+                            filename = cand_target
+
+                if not filename and not target_path:
+                    m_ext = re.search(r"\b(?:as|to|into)\s+['\"]?([a-zA-Z0-9_\-\.\:\/\\]+\.[a-zA-Z0-9]{2,5})['\"]?", prompt, re.IGNORECASE)
+                    if m_ext:
+                        cand = m_ext.group(1).strip()
+                        if "/" in cand or "\\" in cand or ":" in cand:
+                            target_path = cand
+                        else:
+                            filename = cand
+
+            if not target_path:
+                if filename and target_directory:
+                    target_path = f"{target_directory}/{filename}"
+                elif filename:
+                    target_path = filename
+                elif target_directory:
+                    target_path = target_directory
+                else:
+                    target_path = "artifact_file"
+
+            if "." in target_path:
+                expected_format = target_path.rsplit(".", 1)[-1].lower()
+            elif "." in filename:
+                expected_format = filename.rsplit(".", 1)[-1].lower()
+
+            requirements.append(
+                GoalRequirement(
+                    requirement_id="req_file_management",
+                    requirement_type="FILE_MANAGEMENT",
+                    semantic_description=f"Persist document/artifact to disk at target location '{target_path}'",
+                    required_capability_category=CapabilityCategory.DOCUMENT,
+                    mandatory=True,
+                    success_criteria=[f"file_exists_on_disk:{target_path}", f"file_non_empty:{target_path}"],
+                    alternatives=["save_as_dialog_automation", "shortcut_ctrl_s_automation", "direct_file_export"],
+                    parameters={
+                        "file_path": target_path,
+                        "filename": filename or target_path,
+                        "target_directory": target_directory,
+                        "expected_format": expected_format,
+                        "target_application": detected_apps[0] if detected_apps else "",
+                    },
+                )
+            )
+
         # Domain classification
-        domain_count = sum([1 for flag in (has_drawing, has_calc, has_text) if flag])
+        domain_count = sum([1 for flag in (has_drawing, has_calc, has_text, has_file_save) if flag])
         if domain_count > 1 or len(detected_apps) > 1:
             target_domain = "compound_multi_stage"
         elif has_drawing:
@@ -255,10 +345,12 @@ class GoalRequirementExtractor:
             target_domain = "document_editing"
         elif has_calc:
             target_domain = "system_automation"
+        elif has_file_save:
+            target_domain = "document_editing"
         else:
             target_domain = "general"
 
-        # 5. Final State Verification Requirement
+        # 6. Final State Verification Requirement
         end_cond = str(objective.end_condition or "goal_completed")
         requirements.append(
             GoalRequirement(

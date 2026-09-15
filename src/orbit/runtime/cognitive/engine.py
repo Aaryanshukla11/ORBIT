@@ -210,6 +210,29 @@ class CognitiveDecisionEngine:
             if not content_present and app_focused:
                 missing.append("text_not_entered")
 
+        elif action_type == "save":
+            has_saved = any(
+                step.action_dispatched
+                and step.action_dispatched.action_type == AbstractActionType.SAVE_FILE
+                and step.outcome_verified
+                for step in history
+            )
+            content_present = has_saved
+            if not content_present:
+                missing.append("file_not_saved")
+
+        # Check downstream save requirement if composite goal
+        requires_save = bool(objective.parameters.get("requires_save")) or bool(objective.parameters.get("filename")) or ("save" in objective.raw_prompt.lower() and not action_type in ("open", "launch"))
+        if requires_save and action_type != "save":
+            has_saved = any(
+                step.action_dispatched
+                and step.action_dispatched.action_type == AbstractActionType.SAVE_FILE
+                and step.outcome_verified
+                for step in history
+            )
+            if not has_saved:
+                missing.append("file_not_saved")
+
         goal_satisfied = (len(missing) == 0 and (content_present or action_type in ("open", "launch", "")))
 
         return StateGoalDelta(
@@ -428,8 +451,48 @@ class CognitiveDecisionEngine:
                 ),
             )
 
+        # Rule 5b: App Active & Save Intent Pending -> Save File
+        requires_save = bool(objective.parameters.get("requires_save")) or bool(objective.parameters.get("filename")) or (action_type == "save") or ("save" in objective.raw_prompt.lower() and not action_type in ("open", "launch"))
+        has_saved = any(
+            step.action_dispatched
+            and step.action_dispatched.action_type == AbstractActionType.SAVE_FILE
+            and step.outcome_verified
+            for step in history
+        )
+        if requires_save and not has_saved and (delta.content_present or action_type in ("save", "")):
+            filename = str(objective.parameters.get("filename", "test.png"))
+            target_dir = str(objective.parameters.get("target_dir", "desktop"))
+            fmt = str(objective.parameters.get("format", filename.rsplit(".", 1)[-1] if "." in filename else "png"))
+            return CognitiveDecision(
+                step_index=step_index,
+                decision_summary=f"'{target_app}' is active and content prepared. Executing file save as '{filename}' on {target_dir}.",
+                decision_confidence=0.95,
+                evidence_used=["target_app_is_active:true", f"content_present:{delta.content_present}"],
+                expected_state_transition=f"file_{filename}_saved",
+                reason_summary=f"Saving artifact {filename} to {target_dir}.",
+                is_goal_satisfied=False,
+                escalated_to_llm=False,
+                next_action=AbstractAction(
+                    action_type=AbstractActionType.SAVE_FILE,
+                    target=SemanticTarget(name=filename, role="file", context=target_dir),
+                    parameters={
+                        "filename": filename,
+                        "target_dir": target_dir,
+                        "format": fmt,
+                        "app_name": target_app,
+                    },
+                    outcome_contract=ActionOutcomeContract(
+                        expected_state_transition=f"File {filename} saved on {target_dir}",
+                        verification_strategy=VerificationStrategy.ARTIFACT_CREATED,
+                        target_name=filename,
+                    ),
+                    expected_effect=f"File {filename} saved to {target_dir}",
+                    rationale=f"Persisting artifact {filename} to disk.",
+                ),
+            )
+
         # Rule 6: Launch-Only Goal Complete
-        if action_type in ("open", "launch", "") and delta.app_focused:
+        if action_type in ("open", "launch", "") and delta.app_focused and not requires_save:
             return CognitiveDecision(
                 step_index=step_index,
                 decision_summary=f"Application '{target_app}' is running and focused in foreground.",
