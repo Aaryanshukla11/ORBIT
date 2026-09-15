@@ -1,4 +1,4 @@
-"""Canvas Drawing Environment Provider (ASTRA-6 Canonical).
+"""Canvas Drawing Environment Provider (ORBIT Canonical).
 
 Executes DRAW_STROKES by transforming normalized canvas-local (u, v) geometry
 into grounded canvas screen pixels and dispatching pointer drag strokes.
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class CanvasDrawingProvider(EnvironmentProvider):
-    """Canonical ASTRA Environment Provider executing canvas vector drawing strokes."""
+    """Canonical ORBIT Environment Provider executing canvas vector drawing strokes."""
 
     def __init__(self, pointer: Optional[Any] = None) -> None:
         self._pointer = pointer

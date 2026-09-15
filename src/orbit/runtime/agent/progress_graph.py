@@ -1,6 +1,6 @@
-"""Agent Memory + Dynamic Progress Graph (ASTRA-6 Canonical Authority).
+"""Agent Memory + Dynamic Progress Graph (ORBIT Canonical Authority).
 
-INVARIANT (ASTRA-6 Rule 8 & 9):
+INVARIANT (ORBIT Rule 8 & 9):
 ProgressGraph is the SINGLE authoritative source of truth for subgoal lifecycle.
 WorldModel and external observers only consume immutable ProgressSnapshot projections
 and cannot independently mutate or contradict subgoal lifecycle state.

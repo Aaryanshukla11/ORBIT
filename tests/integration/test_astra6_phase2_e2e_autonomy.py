@@ -1,4 +1,4 @@
-"""ASTRA-6 Phase 2: Autonomous Multi-Step E2E Hardening and Autonomy Benchmark Suite.
+"""ORBIT Phase 2: Autonomous Multi-Step E2E Hardening and Autonomy Benchmark Suite.
 
 Enforces:
 - FIX 1: PrimitiveExecutionController is sole physical execution authority.

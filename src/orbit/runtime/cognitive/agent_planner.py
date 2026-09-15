@@ -1,6 +1,6 @@
 """Agent Planner with Semantic Feasibility Ordering.
 
-INVARIANT (ASTRA Dimension 3 & 5): AgentPlanner produces candidate plans, evaluates them
+INVARIANT (ORBIT Dimension 3 & 5): AgentPlanner produces candidate plans, evaluates them
 via SemanticFeasibilityEvaluator, and emits an authoritative PlanDirective ONLY if a candidate
 is semantically feasible.
 

@@ -1,6 +1,6 @@
 """Phase 3 Unit Tests: VLM Grounding Separation & Bounded Exploration Policy.
 
-Tests adherence to ASTRA evaluation dimensions:
+Tests adherence to ORBIT evaluation dimensions:
 - Dimension 7: Evidence-Based Target Grounding & Bounding Box Verification
 - Dimension 18: VLM Semantic Boundary (hypotheses cannot directly dispatch physical actions)
 - Dimension 22: Exploration Termination Guarantee (no open-ended infinite loops)

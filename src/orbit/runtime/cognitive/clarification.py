@@ -1,6 +1,6 @@
 """Epistemic Ambiguity Resolution and User Clarification subsystem.
 
-INVARIANT (ASTRA Dimension 4): Ambiguous or underspecified goals must halt physical execution
+INVARIANT (ORBIT Dimension 4): Ambiguous or underspecified goals must halt physical execution
 immediately. Speculative physical dispatch under ambiguity is strictly forbidden.
 """
 

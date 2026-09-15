@@ -1,6 +1,6 @@
 """Semantic Feasibility Evaluator.
 
-INVARIANT (ASTRA Dimension 3 & 5): Semantic feasibility evaluates candidate plans produced
+INVARIANT (ORBIT Dimension 3 & 5): Semantic feasibility evaluates candidate plans produced
 by the Planner BEFORE a plan directive is selected and emitted.
 Ordering:
   Preflight (RuntimeFeasibility) -> Planner Candidate Generation -> Semantic Feasibility -> Plan Selection -> PlanDirective -> PrimitiveComposer
@@ -76,7 +76,7 @@ class SemanticFeasibilityEvaluator:
                         f"Sequence matches recently failed sequence on sub-goal '{failed_rec.sub_goal_title}'"
                     )
 
-        # 3. Canvas rendering checks (ASTRA-6 Semantic Feasibility Authority)
+        # 3. Canvas rendering checks (ORBIT Semantic Feasibility Authority)
         if AbstractActionType.DRAW_STROKES in candidate.proposed_primitives:
             payload = candidate.creative_payload or {}
             shape = str(payload.get("shape", "")).lower()

@@ -1,6 +1,6 @@
-"""Primitive Execution Controller (ASTRA-6 Sole Physical Execution Authority).
+"""Primitive Execution Controller (ORBIT Sole Physical Execution Authority).
 
-INVARIANT (ASTRA-6 Rule 1 & 6):
+INVARIANT (ORBIT Rule 1 & 6):
 PrimitiveExecutionController is the SINGLE physical execution authority.
 Every environment-changing action MUST go through:
 PlanDirective -> PrimitiveComposer -> PrimitiveValidator -> PrimitiveExecutionController -> Safety Gate -> Grounded Physical Dispatch -> Observe -> Verify.

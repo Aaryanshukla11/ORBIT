@@ -1,6 +1,6 @@
-"""ASTRA-6 Architectural Invariants and Safety Verification Suite.
+"""ORBIT Architectural Invariants and Safety Verification Suite.
 
-Tests and enforces all mandatory ASTRA-6 architecture invariants:
+Tests and enforces all mandatory ORBIT architecture invariants:
 1. AgentExecutionLoop is the single authoritative production engine.
 2. Zero legacy engine reachability on the default production path.
 3. No duplicate task interpretation or feasibility gating.
@@ -249,7 +249,7 @@ async def test_epistemic_ambiguity_gate_fails_closed():
 
 
 def test_no_decision_divergence():
-    """ASTRA-6 Invariant: Exactly one authoritative action decision per cycle.
+    """ORBIT Invariant: Exactly one authoritative action decision per cycle.
 
     AgentPlanner produces a PlanDirective, which CognitiveDecisionEngine / PrimitiveComposer
     consumes into an AbstractAction. There is no dual authority.
@@ -295,7 +295,7 @@ def test_no_decision_divergence():
 
 
 def test_no_execution_bypass_ast_audit():
-    """ASTRA-6 Invariant: NO EXECUTION BYPASS.
+    """ORBIT Invariant: NO EXECUTION BYPASS.
 
     Scans all cognitive, planning, verification, and world model modules to prove
     that none directly import OS or GUI automation libraries (pyautogui, pynput, win32gui, ctypes.windll).

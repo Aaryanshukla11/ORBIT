@@ -21,7 +21,7 @@ from orbit.runtime.agent.contracts import (
 class PlanDirective(BaseModel):
     """Authoritative execution directive for an active subgoal.
 
-    INVARIANT (ASTRA Dimension 3 & 5): Emitted ONLY after candidate plans have been evaluated
+    INVARIANT (ORBIT Dimension 3 & 5): Emitted ONLY after candidate plans have been evaluated
     and approved by Semantic Feasibility. Encapsulates intent strategy, semantic targets,
     canonical primitive preferences, and outcome contracts without physical screen coordinates.
     """

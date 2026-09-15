@@ -1,8 +1,8 @@
-# ORBIT → ASTRA-6: Phase 2 Safe-Delete Manifest
+# ORBIT: Phase 2 Safe-Delete Manifest
 
 **Date:** 2026-09-10
 **Status:** VALIDATED FOR PHYSICAL DELETION
-**Pre-condition Gate:** 0 Active Production Callers in Canonical ASTRA-6 Runtime
+**Pre-condition Gate:** 0 Active Production Callers in Canonical ORBIT Runtime
 
 ---
 
@@ -29,9 +29,9 @@ All 14 targets below have been confirmed unreachable from `AgentExecutionLoop`, 
 
 ---
 
-## 2. Canonical ASTRA-6 Successor Mapping
+## 2. Canonical ORBIT Successor Mapping
 
-| Deprecated / Removed Component | Canonical ASTRA-6 Replacement |
+| Deprecated / Removed Component | Canonical ORBIT Replacement |
 |--------------------------------|-------------------------------|
 | `TaskUnderstandingEngine` | `LLMIntentInterpreter` + `ClarificationManager` |
 | `TaskPlanningEngine` | `HierarchicalGoalDecomposer` + `ProgressGraph` + `AgentPlanner` |

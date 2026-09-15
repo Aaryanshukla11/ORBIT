@@ -1,6 +1,6 @@
 """Phase 2 Unit Tests: Feasibility Ordering, Plan Directives, and Semantic Evaluation.
 
-Tests adherence to ASTRA evaluation dimensions:
+Tests adherence to ORBIT evaluation dimensions:
 - Dimension 3: Dual-Gate Feasibility (Runtime Preflight + Semantic Candidate Evaluation)
 - Dimension 5: PlanDirective Formulation & Authoritative Strategy Selection
 - Dimension 11: Single Canonical Primitive Execution Authority via Directives
