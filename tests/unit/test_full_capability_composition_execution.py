@@ -16,6 +16,13 @@ async def test_end_to_end_portrait_rejects_with_structured_gap():
     """Agent loop rejects unfeasible portrait goal and reports structured capability gap without faking execution."""
     loop = AgentExecutionLoop()
 
+    # Mock observer
+    loop._observer = MagicMock()
+    loop._observer.observe = AsyncMock(return_value=CurrentStateObservation(
+        observation_id="obs_portrait_1",
+        active_window_title="Desktop",
+    ))
+
     # Mock interpreter to produce portrait request
     loop._interpreter = MagicMock()
     loop._interpreter.interpret = AsyncMock(

@@ -157,32 +157,16 @@ class PerceptionRouter:
 
         if sys.platform == "win32":
             try:
-                import ctypes
-                import ctypes.wintypes
-                from orbit.adapters.pointer.safety import attached_to_input_desktop
-
-                windows: List[Tuple[int, str]] = []
-
-                def _enum_cb(hwnd: int, extra: Any) -> bool:
-                    user32 = ctypes.windll.user32
-                    if user32.IsWindowVisible(ctypes.c_void_p(hwnd)):
-                        length = user32.GetWindowTextLengthW(ctypes.c_void_p(hwnd))
-                        if length > 0:
-                            buf = ctypes.create_unicode_buffer(length + 1)
-                            user32.GetWindowTextW(ctypes.c_void_p(hwnd), buf, length + 1)
-                            windows.append((hwnd, buf.value))
-                    return True
-
-                with attached_to_input_desktop():
-                    enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(_enum_cb)
-                    ctypes.windll.user32.EnumWindows(enum_proc, 0)
-
-                for hwnd, title in windows:
-                    if target_norm in title.lower():
-                        matched_hwnd = hwnd
-                        matched_title = title
+                from orbit.runtime.perception.windows import Win32WindowObserver
+                observer = Win32WindowObserver()
+                _, visible_windows = observer.observe_windows()
+                for win in visible_windows:
+                    w_title = (win.title or "").strip()
+                    w_proc = (win.process_name or "").strip()
+                    if target_norm in w_title.lower() or target_norm in w_proc.lower():
+                        matched_hwnd = win.hwnd
+                        matched_title = w_title
                         break
-
             except Exception as ex:
                 logger.debug("Win32 window enumeration notice: %s", ex)
 

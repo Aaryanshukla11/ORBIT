@@ -109,45 +109,79 @@ class LLMIntentInterpreter:
         return self._interpret_heuristic(clean_prompt, context or {})
 
     def _interpret_heuristic(self, prompt: str, context: Dict[str, Any]) -> StructuredObjective:
-        """Deterministic heuristic parsing ensuring reliable offline operation."""
+        """Deterministic heuristic parsing ensuring reliable offline operation without task-specific shortcuts."""
         lower = prompt.lower()
         entities: List[str] = []
         constraints: List[str] = []
         parameters: Dict[str, Any] = {}
 
-        # Detect negative constraints
+        # 1. Detect negative constraints
         if "don't" in lower or "do not" in lower or "never" in lower:
             for part in prompt.split(","):
                 p_low = part.lower()
                 if "don't" in p_low or "do not" in p_low or "never" in p_low:
                     constraints.append(part.strip())
 
-        # Application mapping
+        # 2. Extract explicit or mentioned Application Target (purely from application identifiers, NOT from shape or drawing words)
+        from orbit.runtime.capabilities.application_launcher import APPROVED_APPLICATION_REGISTRY
         app_name = None
-        if "paint" in lower or "mspaint" in lower or "draw" in lower or "cube" in lower or "square" in lower or "circle" in lower or "sketch" in lower:
-            app_name = "mspaint"
-            entities.append("mspaint")
-            entities.append("canvas")
-        elif "notepad" in lower or "note" in lower or "text editor" in lower:
-            app_name = "notepad"
-            entities.append("notepad")
-        elif "calc" in lower or "calculator" in lower:
-            app_name = "calculator"
-            entities.append("calculator")
-        elif "edge" in lower or "msedge" in lower or "microsoft edge" in lower:
-            app_name = "edge"
-            entities.append("edge")
-        elif "chrome" in lower or "browser" in lower:
-            app_name = "edge"
-            entities.append("edge")
+
+        # Check explicit prepositional / container phrases e.g. "in Figma", "into Notepad", "using Paint", "with Calculator"
+        m_app_ctx = re.search(r"\b(?:in|into|using|with|on|from)\s+([a-zA-Z0-9_\-]+)", prompt, re.IGNORECASE)
+        if m_app_ctx:
+            cand_app = m_app_ctx.group(1).strip().lower()
+            if cand_app not in {"the", "a", "an", "this", "desktop", "canvas", "file", "disk", "workspace"}:
+                app_name = cand_app
+
+        # Check launch / open verb phrases e.g. "open Edge", "launch Microsoft Edge", "start Paint", "bring up Notepad"
+        if not app_name:
+            m_launch_phrase = re.search(
+                r"\b(?:open|launch|start|bring\s+up|run|switch\s+to)\s+(?:the\s+)?(?:application\s+|app\s+|program\s+)?([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)?)",
+                prompt,
+                re.IGNORECASE,
+            )
+            if m_launch_phrase:
+                extracted = m_launch_phrase.group(1).strip().lower()
+                # Strip trailing conjunctions and next verbs
+                for stop_w in (" and", " then", " to", " with", " do", " draw", " type", " save", " &"):
+                    if extracted.endswith(stop_w) or f"{stop_w} " in extracted:
+                        extracted = extracted.split(stop_w)[0].strip()
+                # Exclude non-application direct objects like "search box", "file", "document", "dialog"
+                if extracted and extracted not in {"search box", "search", "file", "document", "dialog", "window", "tab", "menu", "button", "link"}:
+                    if extracted in APPROVED_APPLICATION_REGISTRY or not any(w in extracted for w in ("search", "button", "box")):
+                        app_name = extracted
+
+        # Check if known registered application alias is explicitly in the prompt text
+        if not app_name:
+            for alias in APPROVED_APPLICATION_REGISTRY:
+                # Require word-boundary match so "paint" doesn't match inside other words
+                if re.search(rf"\b{re.escape(alias)}\b", lower):
+                    app_name = alias
+                    break
 
         if app_name:
+            # Canonical normalization for standard aliases
+            if app_name == "paint":
+                app_name = "mspaint"
+            elif app_name in ("calc", "calculator.exe"):
+                app_name = "calculator"
+            elif app_name in ("msedge", "microsoft edge"):
+                app_name = "edge"
             parameters["app_name"] = app_name
+            entities.append(app_name)
 
-        # Detect file save intent and parameters
-        save_match = re.search(r'(?:save|save\s+as|save\s+it\s+as|export\s+as)\s+["\']?([^"\'\s,]+\.[a-zA-Z0-9]+)["\']?', prompt, re.IGNORECASE)
+        # 3. Detect File Save / Persistence Parameters (Extract WHAT is to be saved, do NOT invent fake defaults)
+        has_save_intent = bool(re.search(r"\b(?:save|export|persist|write|store)\b", lower))
+        save_match = re.search(
+            r"\b(?:save|export|persist|write|store)\b.*?\b(?:as|to|into)?\s*['\"]?([a-zA-Z0-9_\-\.\:\/\\]+\.[a-zA-Z0-9]{2,5})['\"]?",
+            prompt,
+            re.IGNORECASE,
+        )
+        if not save_match and has_save_intent:
+            save_match = re.search(r"['\"]?([a-zA-Z0-9_\-\.\:\/\\]+\.[a-zA-Z0-9]{2,5})['\"]?", prompt)
+
         target_file = None
-        target_dir = "desktop" if "desktop" in lower else "workspace"
+        target_dir = "desktop" if "desktop" in lower else ("documents" if "documents" in lower else "workspace")
         expected_format = None
         if save_match:
             target_file = save_match.group(1).strip()
@@ -158,114 +192,118 @@ class LLMIntentInterpreter:
             parameters["target_dir"] = target_dir
             if expected_format:
                 parameters["format"] = expected_format
-            entities.append(target_file)
+            if target_file not in entities:
+                entities.append(target_file)
+        elif has_save_intent:
+            parameters["requires_save"] = True
+            parameters["target_dir"] = target_dir
 
-        # Drawing Intent (e.g. "open paint and draw a car", "draw a cube", "draw a square")
-        if "draw" in lower or "sketch" in lower or "cube" in lower or ("paint" in lower and any(w in lower for w in ("car", "house", "tree", "box", "circle", "square", "triangle", "star", "red"))):
-            parameters["action_type"] = "draw"
-            shape = "cube"
-            # Extract requested shape/subject from prompt
-            shape_match = re.search(r'(?:draw|sketch)\s+(?:a\s+|an\s+)?(?:[a-zA-Z]+\s+)?([a-zA-Z0-9_\-]+)', prompt, re.IGNORECASE)
-            if shape_match:
-                extracted = shape_match.group(1).lower().strip()
-                if extracted not in {"in", "on", "using", "with", "the", "paint", "mspaint", "canvas", "it"}:
-                    shape = extracted
-            if "circle" in lower:
-                shape = "circle"
-            elif "car" in lower or "automobile" in lower or "vehicle" in lower:
-                shape = "car"
-            elif "cube" in lower:
-                shape = "cube"
-            elif "square" in lower:
-                shape = "square"
-            elif "rectangle" in lower or "box" in lower:
-                shape = "rectangle"
-            elif "triangle" in lower:
-                shape = "triangle"
-            elif "star" in lower:
-                shape = "star"
-            elif "house" in lower:
-                shape = "house"
-            elif "tree" in lower:
-                shape = "tree"
-            elif "stickman" in lower or "person" in lower:
-                shape = "stickman"
-            parameters["shape"] = shape
-            end_condition = f"canvas_has_{shape}_drawing"
-            user_goal = f"Open Paint and draw a {shape} on the canvas"
-            if target_file:
-                user_goal += f" and save as {target_file}"
-                end_condition += f"_and_file_{target_file}_saved"
-            return StructuredObjective(
-                raw_prompt=prompt,
-                user_goal=user_goal,
-                end_condition=end_condition,
-                target_entities=entities or ["mspaint", "canvas"],
-                constraints=constraints,
-                parameters=parameters,
-            )
+        # 4. Action Classification & Semantic Parameters
+        has_draw_verb = bool(re.search(r"\b(?:draw|sketch|render|illustrate)\b", lower))
+        has_type_verb = bool(re.search(r"\b(?:type|write|enter\s+text|input)\b", lower))
+        has_launch_verb = bool(re.search(r"\b(?:open|launch|start|bring\s+up|run|switch\s+to|focus)\b", lower))
+        has_calc_expr = bool(re.search(r"\d+\s*[\+\-\*\/x×÷]\s*\d+", prompt)) or ("calculate" in lower and any(char.isdigit() for char in prompt))
 
-        # Pure Save File Intent (e.g. "save as test.png on Desktop", "save it as test.png")
-        if ("save" in lower or "save as" in lower) and target_file:
-            parameters["action_type"] = "save"
-            user_goal = f"Save file as {target_file}"
-            return StructuredObjective(
-                raw_prompt=prompt,
-                user_goal=user_goal,
-                end_condition=f"file_{target_file}_saved",
-                target_entities=entities or [target_file],
-                constraints=constraints,
-                parameters=parameters,
-            )
-
-        # Typing/Writing Intent (e.g. "open notepad and type hello", "write test in notepad")
-        if "type" in lower or "write" in lower or "text" in lower:
-            parameters["action_type"] = "type"
-            # Extract text payload
-            text_match = re.search(r'(?:type|write)\s+["\']([^"\']+)["\']', prompt, re.IGNORECASE)
-            if not text_match:
-                text_match = re.search(r'(?:type|write)\s+(.+?)(?:\s+in|\s+into|\s+to|$)', prompt, re.IGNORECASE)
-            text_payload = text_match.group(1).strip() if text_match else "Hello World"
-            parameters["text"] = text_payload
-            end_condition = f"{app_name or 'document'}_contains_{text_payload[:15].replace(' ', '_').lower()}"
-            user_goal = f"Open {app_name or 'editor'} and type '{text_payload}'"
-            return StructuredObjective(
-                raw_prompt=prompt,
-                user_goal=user_goal,
-                end_condition=end_condition,
-                target_entities=entities or [app_name or "notepad"],
-                constraints=constraints,
-                parameters=parameters,
-            )
-
-        # Calculation Intent (e.g. "open calculator and calculate 2 + 2")
-        if "calc" in lower or "calculate" in lower or "+" in lower or "*" in lower:
-            parameters["action_type"] = "calculate"
-            user_goal = f"Open calculator and compute expression in '{prompt}'"
-            return StructuredObjective(
-                raw_prompt=prompt,
-                user_goal=user_goal,
-                end_condition="calculator_shows_result",
-                target_entities=entities or ["calculator"],
-                constraints=constraints,
-                parameters=parameters,
-            )
-
-        # Generic Open / Launch
-        if "open" in lower or "launch" in lower or "start" in lower:
+        # A. Pure Application Launch Intent
+        if has_launch_verb and not has_draw_verb and not has_save_intent and not has_type_verb and not has_calc_expr:
             parameters["action_type"] = "open"
-            target = app_name or prompt.replace("open", "").replace("launch", "").replace("start", "").strip()
-            user_goal = f"Launch and focus {target}"
+            target = app_name or prompt
             return StructuredObjective(
                 raw_prompt=prompt,
-                user_goal=user_goal,
+                user_goal=prompt,
                 end_condition=f"{target}_is_open_and_active",
                 target_entities=entities or [target],
                 constraints=constraints,
                 parameters=parameters,
             )
 
-        # Default Generic Objective
+        # B. Drawing / Visual Content
+        if has_draw_verb or (app_name in ("paint", "mspaint") and any(w in lower for w in ("circle", "square", "rectangle", "triangle", "line", "cube", "star", "shape")) and not re.match(r"^\s*(?:open|launch|start|bring\s+up)\s+(?:the\s+)?(?:app\s+)?(?:mspaint|paint)\s*$", lower)):
+            parameters["action_type"] = "draw"
+            if "canvas" not in entities:
+                entities.append("canvas")
+            # Extract requested shape/subject from prompt purely as content data
+            shape = "geometric_shape"
+            shape_match = re.search(
+                r"\b(?:draw|sketch|render)\s+(?:a\s+|an\s+)?(?:[a-zA-Z]+\s+)?([a-zA-Z0-9_\-]+)",
+                prompt,
+                re.IGNORECASE,
+            )
+            if shape_match:
+                extracted = shape_match.group(1).lower().strip()
+                if extracted not in {"in", "on", "using", "with", "the", "paint", "mspaint", "canvas", "it", "this"}:
+                    shape = extracted
+            parameters["shape"] = shape
+
+            end_cond = f"content_rendered_{shape}"
+            if target_file:
+                end_cond += f"_and_file_{target_file}_saved"
+
+            return StructuredObjective(
+                raw_prompt=prompt,
+                user_goal=prompt,
+                end_condition=end_cond,
+                target_entities=entities,
+                constraints=constraints,
+                parameters=parameters,
+            )
+
+        # C. Pure Save File Intent
+        if has_save_intent and target_file and not has_draw_verb and not has_type_verb and not has_launch_verb:
+            parameters["action_type"] = "save"
+            return StructuredObjective(
+                raw_prompt=prompt,
+                user_goal=prompt,
+                end_condition=f"file_{target_file}_saved",
+                target_entities=entities,
+                constraints=constraints,
+                parameters=parameters,
+            )
+
+        # D. Typing / Text Entry Intent
+        if has_type_verb:
+            parameters["action_type"] = "type"
+            text_match = re.search(r'(?:type|write|input)\s+["\']([^"\']+)["\']', prompt, re.IGNORECASE)
+            if not text_match:
+                text_match = re.search(r'(?:type|write|input)\s+(.+?)(?:\s+in|\s+into|\s+to|$)', prompt, re.IGNORECASE)
+            text_payload = text_match.group(1).strip() if text_match else "Hello World"
+            parameters["text"] = text_payload
+            target_label = app_name or "document"
+            return StructuredObjective(
+                raw_prompt=prompt,
+                user_goal=prompt,
+                end_condition=f"{target_label}_contains_text",
+                target_entities=entities or [target_label],
+                constraints=constraints,
+                parameters=parameters,
+            )
+
+        # E. Calculation Intent
+        if has_calc_expr or ("calculate" in lower and not has_launch_verb):
+            parameters["action_type"] = "calculate"
+            return StructuredObjective(
+                raw_prompt=prompt,
+                user_goal=prompt,
+                end_condition="calculation_result_displayed",
+                target_entities=entities or ["calculator"],
+                constraints=constraints,
+                parameters=parameters,
+            )
+
+        # F. Generic Fallback Launch Intent
+        if has_launch_verb:
+            parameters["action_type"] = "open"
+            target = app_name or prompt
+            return StructuredObjective(
+                raw_prompt=prompt,
+                user_goal=prompt,
+                end_condition=f"{target}_is_open_and_active",
+                target_entities=entities or [target],
+                constraints=constraints,
+                parameters=parameters,
+            )
+
+        # Default Generalized Objective
         return StructuredObjective(
             raw_prompt=prompt,
             user_goal=prompt,

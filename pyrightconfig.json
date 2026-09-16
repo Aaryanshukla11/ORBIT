@@ -1,11 +1,9 @@
 {
   "include": [
     "src",
-    "tests",
-    "prototypes"
+    "tests"
   ],
   "extraPaths": [
-    "src",
-    "prototypes/prototype_d_observation"
+    "src"
   ]
 }

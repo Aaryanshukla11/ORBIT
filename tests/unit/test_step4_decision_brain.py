@@ -45,6 +45,10 @@ from orbit.runtime.model_runtime.contracts import (
     ModelRuntimeStatus,
     RuntimeInitializationResult,
 )
+from orbit.runtime.task_completion.models import (
+    GoalVerificationResult,
+    TaskCompletionStatus,
+)
 from orbit.runtime.model_runtime.router import (
     ModelRouter,
     ModelRoutingTier,
@@ -538,15 +542,63 @@ async def test_agent_execution_loop_invokes_decision_brain():
 
     obs = create_sample_desktop_obs()
     mock_observer = AsyncMock()
-    mock_observer.observe = AsyncMock(return_value=CurrentStateObservation(
+    mock_observer.observe = AsyncMock(side_effect=lambda *a, **kw: CurrentStateObservation(
         active_window_title="Canva - Chrome",
         desktop_observation=obs,
     ))
+
+    call_count = [0]
+    def _mock_verify(*args, **kwargs):
+        call_count[0] += 1
+        is_done = (call_count[0] >= 3)
+        return GoalVerificationResult(
+            task_id="test_step4_task",
+            status=TaskCompletionStatus.COMPLETED if is_done else TaskCompletionStatus.RUNNING,
+            is_satisfied=is_done,
+            confidence=1.0 if is_done else 0.0,
+        )
+
+    mock_goal_verifier = MagicMock()
+    mock_goal_verifier.verify_goal_achievement = AsyncMock(side_effect=_mock_verify)
+
+    from orbit.contracts.capabilities import PointerCapability, WorkspaceCapability
+    from orbit.runtime.targeting import EvidenceBasedTargetLocator, ResolvedTarget, SafeActionPoint, TargetBoundingBox, TargetEvidence, TargetResolutionResult, TargetResolutionStatus
+
+    mock_ptr = MagicMock(spec=PointerCapability)
+    mock_ptr.click = AsyncMock()
+    mock_ptr.move_to = AsyncMock()
+
+    mock_ws = MagicMock(spec=WorkspaceCapability)
+    mock_ws.set_focus_window = AsyncMock(return_value=True)
+
+    bbox = TargetBoundingBox(left=50, top=50, right=150, bottom=90)
+    safe_pt = SafeActionPoint(x=100, y=70, bounding_box=bbox, desktop_generation_id=1)
+    ev = TargetEvidence(source="UI_AUTOMATION", identifier="btn_1", name="Create a design")
+    resolved = ResolvedTarget(
+        target_id="tgt_1",
+        bounding_box=bbox,
+        safe_point=safe_pt,
+        confidence=0.95,
+        evidence=ev,
+        observation_id="obs_1",
+        desktop_generation_id=1,
+    )
+    mock_loc = MagicMock(spec=EvidenceBasedTargetLocator)
+    mock_loc.locate_target = AsyncMock(
+        return_value=TargetResolutionResult(
+            status=TargetResolutionStatus.RESOLVED,
+            target=resolved,
+        )
+    )
 
     loop = AgentExecutionLoop(
         router=router,
         decision_engine=decision_engine,
         observer=mock_observer,
+        goal_verifier=mock_goal_verifier,
+        pointer=mock_ptr,
+        workspace=mock_ws,
+        target_locator=mock_loc,
     )
 
     result = await loop.run(

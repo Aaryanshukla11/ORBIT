@@ -420,10 +420,91 @@ async def test_09_multi_req_draw_verified_save_verified_is_complete():
 # ============================================================================
 def test_10_application_launcher_registry():
     launcher = ApplicationLauncher()
-    assert launcher.resolve_application("edge") == "msedge.exe"
-    assert launcher.resolve_application("msedge") == "msedge.exe"
-    assert launcher.resolve_application("paint") == "mspaint.exe"
-    assert launcher.resolve_application("notepad") == "notepad.exe"
-    assert launcher.resolve_application("calculator") == "calc.exe"
-    assert launcher.resolve_application("calc") == "calc.exe"
-    assert launcher.resolve_application("chrome") == "chrome.exe"
+    assert (launcher.resolve_application("edge") or "").endswith("msedge.exe")
+    assert (launcher.resolve_application("msedge") or "").endswith("msedge.exe")
+    assert (launcher.resolve_application("paint") or "").endswith("mspaint.exe")
+    assert (launcher.resolve_application("notepad") or "").endswith("notepad.exe")
+    assert (launcher.resolve_application("calculator") or "").endswith("calc.exe")
+    assert (launcher.resolve_application("calc") or "").endswith("calc.exe")
+    assert (launcher.resolve_application("chrome") or "").endswith("chrome.exe")
+
+
+# ============================================================================
+# TEST 11: Generalization - Semantic Launch Variations
+# ============================================================================
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phrase,expected_app", [
+    ("Open Edge", "edge"),
+    ("Launch Microsoft Edge", "edge"),
+    ("Start Edge", "edge"),
+    ("Bring up Edge", "edge"),
+    ("Open Notepad", "notepad"),
+    ("Start Paint", "paint"),
+    ("Launch Calculator", "calculator"),
+])
+async def test_11_semantic_launch_variations(phrase, expected_app):
+    interpreter = LLMIntentInterpreter()
+    obj = await interpreter.interpret(phrase)
+    assert obj.parameters.get("action_type") == "open"
+    matched_app = str(obj.parameters.get("app_name", "")).lower()
+    assert expected_app in matched_app or matched_app in expected_app or any(expected_app in e.lower() for e in obj.target_entities)
+
+    composer = PrimitiveComposer(validator=PrimitiveValidator())
+    seq = composer._compose_deterministic_fallback(
+        goal_text=phrase,
+        objective=obj,
+        sub_objective=None,
+        context=MagicMock(),
+    )
+    assert len(seq.actions) > 0
+    assert seq.actions[0].action_type == AbstractActionType.LAUNCH_APPLICATION
+
+
+# ============================================================================
+# TEST 12: Generalization - Save Variations (No Hardcoded test.png)
+# ============================================================================
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phrase,expected_fname,expected_dir,expected_fmt", [
+    ("Save this as test.png on Desktop", "test.png", "desktop", "png"),
+    ("Save the image to Desktop as orbit.png", "orbit.png", "desktop", "png"),
+    ("Save the current document as report.pdf", "report.pdf", "desktop", "pdf"),
+])
+async def test_12_semantic_save_variations(phrase, expected_fname, expected_dir, expected_fmt):
+    interpreter = LLMIntentInterpreter()
+    obj = await interpreter.interpret(phrase)
+    assert obj.parameters.get("filename") == expected_fname
+    assert obj.parameters.get("format") == expected_fmt
+    assert obj.parameters.get("requires_save") is True
+
+    composer = PrimitiveComposer(validator=PrimitiveValidator())
+    seq = composer._compose_deterministic_fallback(
+        goal_text=phrase,
+        objective=obj,
+        sub_objective=None,
+        context=MagicMock(),
+    )
+    assert len(seq.actions) > 0
+    assert seq.actions[0].action_type == AbstractActionType.SAVE_FILE
+    assert seq.actions[0].parameters.get("filename") == expected_fname
+
+
+# ============================================================================
+# TEST 13: Decoupling - Drawing Verbs and Shapes Do NOT Infer Paint
+# ============================================================================
+@pytest.mark.asyncio
+async def test_13_drawing_verbs_do_not_infer_paint():
+    interpreter = LLMIntentInterpreter()
+    
+    # 1. "draw a wireframe in Figma" preserves Figma
+    obj_figma = await interpreter.interpret("draw a wireframe in Figma")
+    assert obj_figma.parameters.get("action_type") == "draw"
+    assert obj_figma.parameters.get("app_name") == "figma"
+    assert "mspaint" not in obj_figma.target_entities
+
+    # 2. "draw a circle" does NOT inject Paint or hardcode mspaint
+    obj_circle = await interpreter.interpret("draw a circle")
+    assert obj_circle.parameters.get("action_type") == "draw"
+    assert obj_circle.parameters.get("shape") == "circle"
+    assert obj_circle.parameters.get("app_name") is None
+    assert "Open Paint" not in obj_circle.user_goal
+

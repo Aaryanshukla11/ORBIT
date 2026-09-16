@@ -82,24 +82,6 @@ class Win32WindowObserver:
                 if not user32.IsWindowVisible(hwnd):
                     return True
 
-                # Title length & text
-                length = user32.GetWindowTextLengthW(hwnd)
-                if length <= 0:
-                    return True
-
-                buff = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(hwnd, buff, length + 1)
-                title = buff.value.strip()
-
-                # Filter out invisible or system overlay windows with trivial titles
-                if not title or title in ("Program Manager", "Default IME", "MSCTFIME UI"):
-                    return True
-
-                # Class name
-                cls_buff = ctypes.create_unicode_buffer(256)
-                user32.GetClassNameW(hwnd, cls_buff, 256)
-                cls_name = cls_buff.value
-
                 # Window Rect
                 rect = ctypes.wintypes.RECT()
                 user32.GetWindowRect(hwnd, ctypes.byref(rect))
@@ -110,6 +92,31 @@ class Win32WindowObserver:
                 if w <= 0 or h <= 0:
                     return True
 
+                # Process ID & Name
+                pid = ctypes.wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                proc_name = self._resolve_process_name(pid.value)
+
+                # Title length & text
+                length = user32.GetWindowTextLengthW(hwnd)
+                title = ""
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buff, length + 1)
+                    title = buff.value.strip().replace("\u200b", "").replace("\ufeff", "")
+
+                # Filter out invisible or system overlay windows with trivial titles
+                if not title and not (proc_name and proc_name.lower() in ("msedge.exe", "chrome.exe", "mspaint.exe", "calc.exe", "notepad.exe")):
+                    return True
+
+                if title in ("Program Manager", "Default IME", "MSCTFIME UI"):
+                    return True
+
+                # Class name
+                cls_buff = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, cls_buff, 256)
+                cls_name = cls_buff.value
+
                 # Client Rect & coordinate translation
                 client_rect = ctypes.wintypes.RECT()
                 user32.GetClientRect(hwnd, ctypes.byref(client_rect))
@@ -117,12 +124,6 @@ class Win32WindowObserver:
                 user32.ClientToScreen(hwnd, ctypes.byref(pt))
                 client_w = client_rect.right - client_rect.left
                 client_h = client_rect.bottom - client_rect.top
-
-                # Process ID & Name
-                pid = ctypes.wintypes.DWORD()
-                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                proc_name = self._resolve_process_name(pid.value)
-
                 is_fg = (hwnd == fg_hwnd)
                 is_min = bool(user32.IsIconic(hwnd))
                 is_max = bool(user32.IsZoomed(hwnd))
@@ -190,7 +191,7 @@ class Win32WindowObserver:
             if length > 0:
                 buff = ctypes.create_unicode_buffer(length + 1)
                 user32.GetWindowTextW(hwnd, buff, length + 1)
-                title = buff.value
+                title = buff.value.strip().replace("\u200b", "").replace("\ufeff", "")
 
             cls_buff = ctypes.create_unicode_buffer(256)
             user32.GetClassNameW(hwnd, cls_buff, 256)

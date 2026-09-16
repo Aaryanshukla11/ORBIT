@@ -124,6 +124,7 @@ class CurrentStateObservation(BaseModel):
 
     # Authoritative Canonical DesktopObservation snapshot & modality telemetry
     desktop_observation: Optional[DesktopObservation] = Field(default=None, description="Underlying canonical multimodal DesktopObservation")
+    world_state: Optional[Any] = Field(default=None, description="Underlying 4-tier UnifiedWorldState")
     uia_status: Optional[str] = Field(default=None, description="UIA status: SUCCESS, EMPTY, UNAVAILABLE, FAILED")
     ocr_status: Optional[str] = Field(default=None, description="OCR status: SUCCESS, EMPTY, UNAVAILABLE, FAILED")
     screenshot_status: Optional[str] = Field(default=None, description="Screenshot status: SUCCESS, FALLBACK, FAILED")

@@ -195,12 +195,12 @@ async def test_execution_controller_stops_sequence_if_verification_fails():
 
     action = AbstractAction(
         action_type=AbstractActionType.LAUNCH_APPLICATION,
-        parameters={"application_name": "calc"},
-        target=SemanticTarget(name="calc", role="application"),
-        outcome_contract=ActionOutcomeContract(expected_state_transition="calculator_open"),
+        parameters={"application_name": "nonexistent_mock_app_xyz"},
+        target=SemanticTarget(name="nonexistent_mock_app_xyz", role="application"),
+        outcome_contract=ActionOutcomeContract(expected_state_transition="mock_app_open"),
     )
     pre_obs = CurrentStateObservation(observation_id="obs_pre", active_window_title="Desktop")
-    # Observation does NOT show Calculator
+    # Observation does NOT show the application
     post_obs = CurrentStateObservation(observation_id="obs_post", active_window_title="Desktop")
 
     grounding_mock = AsyncMock(return_value=None)

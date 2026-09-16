@@ -1,7 +1,7 @@
 from orbit.runtime.cognitive.agent_decision import AgentDecisionEngine, AgentDecisionTrace
 from orbit.runtime.cognitive.agent_loop import AgentExecutionLoop, AgentExecutionResult
 from orbit.runtime.cognitive.context_builder import AgentReasoningContextBuilder, DECISION_SYSTEM_PROMPT
-from orbit.runtime.cognitive.engine import CognitiveDecisionEngine, StateGoalDelta
+from orbit.runtime.cognitive.engine import CognitiveDecisionEngine, OrbitDecisionEngine, StateGoalDelta
 from orbit.runtime.cognitive.interpreter import LLMIntentInterpreter
 from orbit.runtime.cognitive.models import (
     AbstractAction,
@@ -59,6 +59,7 @@ __all__ = [
     "AgentReasoningContextBuilder",
     "CognitiveDecision",
     "CognitiveDecisionEngine",
+    "OrbitDecisionEngine",
     "CognitiveExecutionResult",
     "CognitiveStepResult",
     "CoordinateSecurityViolation",

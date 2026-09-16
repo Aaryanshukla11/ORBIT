@@ -114,9 +114,18 @@ class CanvasDrawingProvider(EnvironmentProvider):
         # Resolve grounded canvas bounding box [cx, cy, cw, ch]
         if canvas_rect and isinstance(canvas_rect, (list, tuple)) and len(canvas_rect) == 4:
             cx, cy, cw, ch = [int(v) for v in canvas_rect]
+            # Sanitize window-level bounds to viewport interior
+            if cy < 150:
+                cy = 220
+            if ch > 700:
+                ch = 500
+            if cw > 1200:
+                cw = 900
+            if cx < 100:
+                cx = 250
         else:
             # Safe default desktop center canvas
-            cx, cy, cw, ch = 300, 200, 800, 600
+            cx, cy, cw, ch = 350, 250, 700, 450
 
         if cw <= 0 or ch <= 0:
             return ProviderExecutionResult(
@@ -147,8 +156,16 @@ class CanvasDrawingProvider(EnvironmentProvider):
                     transformed_points.append((px, py))
 
                 start_x, start_y = transformed_points[0]
+                
+                # Activate canvas and focus target
+                if hasattr(self._pointer, "click"):
+                    res = self._pointer.click(start_x, start_y)
+                    if inspect.isawaitable(res):
+                        await res
+                    await asyncio.sleep(0.05)
+
                 await self._pointer.move_to(start_x, start_y)
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(0.03)
 
                 # Mouse down
                 btn_down = getattr(self._pointer, "button_down", None)
@@ -168,12 +185,20 @@ class CanvasDrawingProvider(EnvironmentProvider):
                     if inspect.isawaitable(res):
                         await res
 
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(0.05)
 
-                # Drag stroke
+                # Drag stroke with interpolation for smooth drawing capture
+                curr_x, curr_y = start_x, start_y
                 for next_x, next_y in transformed_points[1:]:
-                    await self._pointer.move_to(next_x, next_y)
-                    await asyncio.sleep(0.01)
+                    steps = 8
+                    for s in range(1, steps + 1):
+                        ix = int(curr_x + (next_x - curr_x) * (s / steps))
+                        iy = int(curr_y + (next_y - curr_y) * (s / steps))
+                        await self._pointer.move_to(ix, iy)
+                        await asyncio.sleep(0.01)
+                    curr_x, curr_y = next_x, next_y
+
+                await asyncio.sleep(0.05)
 
                 # Mouse up
                 btn_up = getattr(self._pointer, "button_up", None)
@@ -193,7 +218,7 @@ class CanvasDrawingProvider(EnvironmentProvider):
                     if inspect.isawaitable(res):
                         await res
 
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(0.05)
                 strokes_dispatched += 1
 
             return ProviderExecutionResult(

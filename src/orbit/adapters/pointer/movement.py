@@ -443,7 +443,7 @@ class MovementExecutor:
         input_packet.union.mi.dwExtraInfo = ORBIT_EXTRA_INFO_SIGNATURE
 
         accepted_packets, win32_err, dispatch_duration_us = self.gateway.dispatch_single_packet(input_packet)
-        if accepted_packets > 0 and user32 is not None and self._cursorpos_override is None:
+        if accepted_packets == 0 and user32 is not None and self._cursorpos_override is None:
             try:
                 user32.SetCursorPos(target_x, target_y)
             except Exception:

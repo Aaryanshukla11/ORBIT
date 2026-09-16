@@ -91,12 +91,18 @@ class WorkspaceGeometry(BaseModel):
                     data["scale_factor"] = max(0.1, round(float(dpi_val) / 96.0, 4))
         return data
 
+    @property
+    def monitor_bounds(self) -> BoundingBox:
+        """Physical display bounding box alias."""
+        return self.physical_display
+
     def is_point_in_docked_area(self, x: int, y: int) -> bool:
         """Check whether physical coordinates fall within the reserved ORBIT docked area."""
         if not self.is_docked or self.docked_bounds is None:
             return False
         b = self.docked_bounds
         return (b.left <= x < b.left + b.width) and (b.top <= y < b.top + b.height)
+
 
     def is_point_in_usable_canvas(self, x: int, y: int) -> bool:
         """Check whether physical coordinates fall within the usable workspace canvas."""

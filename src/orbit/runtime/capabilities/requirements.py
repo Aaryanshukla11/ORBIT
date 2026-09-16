@@ -32,7 +32,7 @@ class GoalRequirementExtractor:
 
     def extract_requirements(self, objective: StructuredObjective) -> GoalRequirementSet:
         """Decompose a StructuredObjective into an ordered, decoupled GoalRequirementSet."""
-        prompt = getattr(objective, "raw_prompt", str(objective.user_goal or "")).strip()
+        prompt = (getattr(objective, "raw_prompt", None) or objective.user_goal or "").strip()
         p_lower = prompt.lower()
         action_type = str(objective.parameters.get("action_type", "")).lower()
         target_app = str(objective.parameters.get("app_name", "")).strip()
@@ -45,12 +45,20 @@ class GoalRequirementExtractor:
         required_fidelity = "STANDARD"
 
         # 1. Host Application Lifecycle Requirements (supporting multi-application compound goals)
+        def _is_app_candidate(ent: str) -> bool:
+            e = ent.lower().strip()
+            if not e or e in ("desktop", "canvas", "file", "document", "artifact", "image", "button", "palette", "dialog", "editor"):
+                return False
+            if "/" in e or "\\" in e or any(e.endswith(f".{ext}") for ext in ("png", "jpg", "jpeg", "txt", "pdf", "docx", "csv", "json", "bmp")):
+                return False
+            return True
+
         detected_apps: List[str] = []
-        if target_app:
+        if target_app and _is_app_candidate(target_app):
             detected_apps.append(target_app)
         if objective.target_entities:
             for ent in objective.target_entities:
-                if ent and ent not in detected_apps:
+                if ent and _is_app_candidate(ent) and ent not in detected_apps:
                     detected_apps.append(ent)
 
         known_app_patterns = {
@@ -90,7 +98,11 @@ class GoalRequirementExtractor:
             )
 
         # 2. Creative / Visual Content Creation Requirement
-        has_drawing = action_type == "draw" or "draw" in p_lower or "paint" in p_lower or "sketch" in p_lower
+        has_drawing = (
+            action_type == "draw"
+            or bool(re.search(r"\b(draw|drawing|sketch|sketching|render|illustrate|illustration)\b", p_lower))
+            or bool(re.search(r"\bpaint\s+(?:a|an|the|\d+|some)\b", p_lower))
+        )
         if has_drawing:
             is_complex = any(re.search(rf"\b{kw}\b", p_lower) for kw in self.COMPLEX_VISUAL_KEYWORDS)
             is_basic = any(re.search(rf"\b{kw}\b", p_lower) for kw in self.BASIC_GEOMETRY_KEYWORDS)
@@ -351,7 +363,7 @@ class GoalRequirementExtractor:
             target_domain = "general"
 
         # 6. Final State Verification Requirement
-        end_cond = str(objective.end_condition or "goal_completed")
+        end_cond = objective.end_condition or "goal_completed"
         requirements.append(
             GoalRequirement(
                 requirement_id="req_state_verification",

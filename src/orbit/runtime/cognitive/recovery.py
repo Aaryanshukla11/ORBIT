@@ -244,3 +244,54 @@ class AgentRecoveryManager:
         )
         return rec
 
+
+class ModelRecoveryManager:
+    """Manages model-driven recovery by translating execution and verification failures
+
+    into actionable diagnostic prompts for LLM self-correction.
+    """
+
+    def __init__(self, max_recovery_attempts: int = 3) -> None:
+        self.max_recovery_attempts = max_recovery_attempts
+        self._recovery_counts: Dict[str, int] = {}
+
+    def format_recovery_diagnostic(
+        self,
+        action_type: str,
+        expected_outcome: str,
+        verification_reason: str,
+        current_observation: Any,
+        attempt: int = 1,
+    ) -> str:
+        """Generate structured diagnostic feedback for the multimodal model."""
+        active_title = getattr(current_observation, "active_window_title", "Unknown")
+        active_proc = getattr(current_observation, "active_process_name", "Unknown")
+
+        diagnostics: List[str] = [
+            f"Failed Action: {action_type}",
+            f"Expected Outcome: {expected_outcome}",
+            f"Verification Failure Reason: {verification_reason}",
+            f"Current Active Window: \"{active_title}\" (Process: {active_proc})",
+            f"Recovery Attempt: {attempt} of {self.max_recovery_attempts}",
+        ]
+
+        # Check for visible modal dialogs
+        d_obs = getattr(current_observation, "desktop_observation", None)
+        visible_windows = getattr(current_observation, "visible_windows", [])
+        if d_obs and not visible_windows:
+            visible_windows = getattr(d_obs, "visible_windows", [])
+
+        modal_detected = None
+        for w in visible_windows:
+            title = (w.get("title", "") if isinstance(w, dict) else getattr(w, "title", str(w))) or ""
+            if any(kw in title.lower() for kw in ("save as", "confirm", "warning", "error", "unsaved", "replace", "overwrite")):
+                modal_detected = title
+                break
+
+        if modal_detected:
+            diagnostics.append(f"Detected Modal Dialog: \"{modal_detected}\". Consider interacting with or dismissing this dialog.")
+
+        diagnostics.append("Instruction: Analyze why the expected outcome did not occur. Choose an alternative action, adjust coordinates/parameters, or handle any blocking UI.")
+        return "\n".join(diagnostics)
+
+

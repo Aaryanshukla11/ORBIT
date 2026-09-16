@@ -161,14 +161,15 @@ class PrimitiveComposer:
                     params["text"] = directive.subgoal_title
                     params["press_enter"] = True
             elif prim_type == AbstractActionType.LAUNCH_APPLICATION:
-                app = target.name or "notepad"
+                app = target.name or "application"
                 params["application_name"] = app
             elif prim_type == AbstractActionType.SAVE_FILE:
                 payload = directive.creative_payload or {}
-                params["filename"] = payload.get("filename", target.name if target else "test.png")
-                params["target_path"] = payload.get("target_path", params.get("filename"))
+                fname = payload.get("filename") or (target.name if (target and target.name not in ("file", "current_artifact", "artifact")) else "")
+                params["filename"] = fname
+                params["target_path"] = payload.get("target_path", fname)
                 params["target_dir"] = payload.get("target_dir", "desktop")
-                params["format"] = payload.get("format", "png")
+                params["format"] = payload.get("format", fname.rsplit(".", 1)[-1] if "." in fname else "")
 
             action = AbstractAction(
                 action_type=prim_type,
@@ -248,30 +249,36 @@ class PrimitiveComposer:
         actions: List[AbstractAction] = []
         g_lower = goal_text.lower()
 
-        # Generic launch pattern: "open X", "launch X", "start X"
-        m_launch = re.search(r"\b(?:open|launch|start)\s+([a-zA-Z0-9_\-]+)", g_lower)
-        if m_launch and not any(w in g_lower for w in ("search box", "button", "link", "input", "menu", "tab", "file")):
-            app = m_launch.group(1).strip()
-            actions.append(
-                AbstractAction(
-                    action_type=AbstractActionType.LAUNCH_APPLICATION,
-                    parameters={"application_name": app},
-                    target=SemanticTarget(name=app, role="application"),
-                    outcome_contract=ActionOutcomeContract(
-                        expected_state_transition=f"{app}_window_open_and_active",
-                        verification_strategy=VerificationStrategy.WINDOW_FOCUS,
-                    ),
-                    expected_effect=f"Application '{app}' opened and focused",
-                    rationale=f"Launch application '{app}' required by goal",
+        # Generic launch pattern: "open X", "launch X", "start X", "bring up X", "run X"
+        m_launch = re.search(r"\b(?:open|launch|start|run|bring\s+up)\s+(?:the\s+)?([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)?)", g_lower)
+        target_app = objective.parameters.get("app_name") if objective else None
+        if (m_launch or target_app) and not any(w in g_lower for w in ("search box", "button", "link", "input", "menu", "tab", "file", "canvas", "draw")):
+            app = target_app or (m_launch.group(1).strip() if m_launch else "application")
+            if app not in ("search box", "button", "link", "input field", "tab", "menu"):
+                actions.append(
+                    AbstractAction(
+                        action_type=AbstractActionType.LAUNCH_APPLICATION,
+                        parameters={"application_name": app},
+                        target=SemanticTarget(name=app, role="application"),
+                        outcome_contract=ActionOutcomeContract(
+                            expected_state_transition=f"{app}_window_open_and_active",
+                            verification_strategy=VerificationStrategy.WINDOW_FOCUS,
+                        ),
+                        expected_effect=f"Application '{app}' opened and focused",
+                        rationale=f"Launch application '{app}' required by goal",
+                    )
                 )
-            )
 
-        # Generic save pattern: "save as X", "save it as X", "export as X"
-        m_save = re.search(r"\b(?:save|save\s+as|save\s+it\s+as|export\s+as)\s+['\"]?([^'\"\s,]+\.[a-zA-Z0-9]+)['\"]?", g_lower)
-        if m_save:
+        # Generic save pattern: "save as X", "save it as X", "export as X", "persist as X"
+        m_save = re.search(r"\b(?:save|save\s+as|save\s+it\s+as|export\s+as|persist\s+as)\s+['\"]?([^'\"\s,]+\.[a-zA-Z0-9]+)['\"]?", g_lower)
+        fname = objective.parameters.get("filename") if objective else None
+        if not fname and m_save:
             fname = m_save.group(1).strip()
-            target_dir = "desktop" if "desktop" in g_lower else "workspace"
-            fmt = fname.rsplit(".", 1)[-1] if "." in fname else "png"
+        if fname or m_save:
+            fname = fname or (m_save.group(1).strip() if m_save else "")
+            target_dir = (objective.parameters.get("target_dir") if objective else None) or ("desktop" if "desktop" in g_lower else "workspace")
+            fmt = (objective.parameters.get("format") if objective else None) or (fname.rsplit(".", 1)[-1] if "." in fname else "")
+            target_label = fname or "artifact"
             actions.append(
                 AbstractAction(
                     action_type=AbstractActionType.SAVE_FILE,
@@ -281,13 +288,13 @@ class PrimitiveComposer:
                         "target_dir": target_dir,
                         "format": fmt,
                     },
-                    target=SemanticTarget(name=fname, role="file", context=target_dir),
+                    target=SemanticTarget(name=target_label, role="file", context=target_dir),
                     outcome_contract=ActionOutcomeContract(
-                        expected_state_transition=f"File '{fname}' saved to {target_dir}",
+                        expected_state_transition=f"File '{target_label}' saved to {target_dir}",
                         verification_strategy=VerificationStrategy.ARTIFACT_CREATED,
                     ),
-                    expected_effect=f"File '{fname}' saved to {target_dir}",
-                    rationale=f"Save requested artifact '{fname}'",
+                    expected_effect=f"File '{target_label}' saved to {target_dir}",
+                    rationale=f"Save requested artifact '{target_label}'",
                 )
             )
 

@@ -85,17 +85,43 @@ class ApplicationLauncher:
 
         name_lower = clean_name.lower()
 
-        # Check standard registry
+        # 1. Registered identifier check (Returns standard alias, e.g. "notepad.exe", "mspaint.exe")
+        if name_lower in self._registry:
+            return self._registry[name_lower]
+        if name_lower.endswith(".exe") and name_lower[:-4] in self._registry:
+            return self._registry[name_lower[:-4]]
+
+        cand_exe = clean_name if clean_name.endswith(".exe") else f"{clean_name}.exe"
+
+        # 2. System PATH resolution
+        import shutil
+        found_in_path = shutil.which(cand_exe) or shutil.which(clean_name)
+        if found_in_path:
+            return cand_exe if (found_in_path and not os.path.isabs(clean_name)) else found_in_path
+
+        # 2. Check standard Windows application install locations
+        if sys.platform == "win32":
+            common_dirs = [
+                os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+                os.environ.get("ProgramFiles", r"C:\Program Files"),
+                os.environ.get("LOCALAPPDATA", ""),
+            ]
+            known_rel_paths = {
+                "msedge.exe": [os.path.join("Microsoft", "Edge", "Application", "msedge.exe")],
+                "chrome.exe": [os.path.join("Google", "Chrome", "Application", "chrome.exe")],
+            }
+            if cand_exe in known_rel_paths:
+                for base in common_dirs:
+                    if base:
+                        for rel in known_rel_paths[cand_exe]:
+                            full_cand = os.path.join(base, rel)
+                            if os.path.exists(full_cand):
+                                return full_cand
+
+        # 3. Fallback to registered identifier
         if name_lower in self._registry:
             return self._registry[name_lower]
 
-        # Check with .exe extension
-        if name_lower.endswith(".exe"):
-            stem = name_lower[:-4]
-            if stem in self._registry:
-                return self._registry[stem]
-
-        # Unknown / unapproved application name fails deterministic resolution
         return None
 
     def launch(self, app_name: str) -> ApplicationLaunchResult:
@@ -113,17 +139,51 @@ class ApplicationLauncher:
 
         try:
             if sys.platform == "win32":
+                clean_lower = app_name.strip().lower()
+
+                # Modern Windows 11 Packaged App Launching (Paint AUMID)
+                if clean_lower in ("paint", "mspaint"):
+                    try:
+                        os.startfile(r"shell:AppsFolder\Microsoft.Paint_8wekyb3d8bbwe!App")  # type: ignore[attr-defined]
+                        logger.info("[APPLICATION LAUNCHER] Successfully launched Paint via Windows AppsFolder")
+                        return ApplicationLaunchResult(
+                            success=True,
+                            app_name=app_name,
+                            executable_path="mspaint.exe",
+                        )
+                    except Exception as p_err:
+                        logger.debug("Windows AppsFolder Paint launch fallback: %s", p_err)
+
+                # Web browsers (Edge, Chrome, Brave, Firefox): spawn with isolated profile to guarantee top-level interactive window
+                if clean_lower in ("edge", "msedge", "microsoft edge", "browser") or any(b in (resolved_exe or "").lower() for b in ("msedge.exe", "chrome.exe", "brave.exe", "firefox.exe")):
+                    try:
+                        exe_to_use = resolved_exe if (resolved_exe and os.path.exists(resolved_exe)) else "msedge.exe"
+                        temp_profile = os.path.join(os.environ.get("TEMP", os.path.expanduser("~")), "orbit_browser_profile")
+                        proc = subprocess.Popen([exe_to_use, f"--user-data-dir={temp_profile}", "--new-window", "about:blank"], shell=False)
+                        logger.info("[APPLICATION LAUNCHER] Successfully launched browser '%s' with PID %d", exe_to_use, proc.pid)
+                        return ApplicationLaunchResult(
+                            success=True,
+                            app_name=app_name,
+                            executable_path=exe_to_use,
+                            pid=proc.pid,
+                        )
+                    except Exception as b_err:
+                        logger.debug("Browser launch fallback: %s", b_err)
+                        logger.debug("Browser launch fallback: %s", b_err)
+                        logger.debug("Browser launch fallback: %s", b_err)
+
                 # Prefer os.startfile for registered desktop applications
-                try:
-                    os.startfile(resolved_exe)  # type: ignore[attr-defined]
-                    logger.info("[APPLICATION LAUNCHER] Successfully launched '%s' (%s) via os.startfile", app_name, resolved_exe)
-                    return ApplicationLaunchResult(
-                        success=True,
-                        app_name=app_name,
-                        executable_path=resolved_exe,
-                    )
-                except Exception as startfile_err:
-                    logger.debug("os.startfile fallback for %s: %s", resolved_exe, startfile_err)
+                if resolved_exe and not resolved_exe.endswith(r"WindowsApps\mspaint.exe"):
+                    try:
+                        os.startfile(resolved_exe)  # type: ignore[attr-defined]
+                        logger.info("[APPLICATION LAUNCHER] Successfully launched '%s' (%s) via os.startfile", app_name, resolved_exe)
+                        return ApplicationLaunchResult(
+                            success=True,
+                            app_name=app_name,
+                            executable_path=resolved_exe,
+                        )
+                    except Exception as startfile_err:
+                        logger.debug("os.startfile fallback for %s: %s", resolved_exe, startfile_err)
 
             # Fallback: parameterized Popen with shell=False
             proc = subprocess.Popen([resolved_exe], shell=False)

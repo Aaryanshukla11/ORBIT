@@ -15,6 +15,7 @@ import asyncio
 import inspect
 import logging
 import os
+import sys
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
@@ -82,6 +83,7 @@ class PrimitiveExecutionController:
         keyboard: Optional[KeyboardCapability] = None,
         workspace: Optional[WorkspaceCapability] = None,
         application_launcher: Optional[Any] = None,
+        observation_service: Optional[Any] = None,
     ) -> None:
         self._validator = validator or PrimitiveValidator()
         self._verifier = verifier or MultiEvidenceActionVerifier()
@@ -90,6 +92,7 @@ class PrimitiveExecutionController:
         self._keyboard = keyboard
         self._workspace = workspace
         self._application_launcher = application_launcher
+        self._observation_service = observation_service
 
     def set_capabilities(
         self,
@@ -98,6 +101,7 @@ class PrimitiveExecutionController:
         workspace: Optional[WorkspaceCapability] = None,
         application_launcher: Optional[Any] = None,
         provider_registry: Optional[EnvironmentProviderRegistry] = None,
+        observation_service: Optional[Any] = None,
     ) -> None:
         """Dynamically configure capability adapters."""
         if pointer is not None:
@@ -110,6 +114,8 @@ class PrimitiveExecutionController:
             self._application_launcher = application_launcher
         if provider_registry is not None:
             self._provider_registry = provider_registry
+        if observation_service is not None:
+            self._observation_service = observation_service
 
     async def dispatch_physical_action(
         self,
@@ -141,19 +147,48 @@ class PrimitiveExecutionController:
                 ).strip()
 
                 # IDEMPOTENT APPLICATION LAUNCH: Check if application is already open
+                def _is_editor(title_str: str, proc_str: str = "") -> bool:
+                    pl = (proc_str or "").lower()
+                    if pl in ("msedge.exe", "chrome.exe", "brave.exe", "firefox.exe", "mspaint.exe", "calc.exe", "notepad.exe"):
+                        return False
+                    tl = (title_str or "").lower()
+                    return any(ed in tl for ed in ("antigravity ide", "visual studio code", "vscode", "sublime text", "pycharm")) or pl in ("antigravity ide.exe", "code.exe", "devenv.exe")
+
+                def _is_matching_app(t_str: str, p_str: str, c_str: str, target: str) -> bool:
+                    t_low = (t_str or "").lower()
+                    p_low = (p_str or "").lower()
+                    c_low = (c_str or "").lower()
+                    if _is_editor(t_low, p_low):
+                        return False
+                    tgt = (target or "").strip().lower()
+                    if tgt in ("edge", "msedge", "microsoft edge", "browser"):
+                        return p_low == "msedge.exe" or ("edge" in t_low and not t_low.endswith((".py", ".ts", ".js", ".md", ".json", ".txt")))
+                    if tgt in ("paint", "mspaint"):
+                        return p_low == "mspaint.exe" or "mspaint" in c_low or ("paint" in t_low and not t_low.endswith((".py", ".ts", ".js", ".md", ".json", ".txt")))
+                    if tgt in ("notepad", "notepad.exe"):
+                        return p_low == "notepad.exe" or ("notepad" in t_low and not t_low.endswith((".py", ".ts", ".js", ".md", ".json", ".txt")))
+                    if tgt in ("calc", "calculator"):
+                        return p_low in ("calc.exe", "calculator.exe", "calculatorapp.exe") or ("calculator" in t_low)
+                    return (tgt in t_low or tgt in p_low) and not t_low.endswith((".py", ".ts", ".js", ".md", ".json", ".txt"))
+
                 already_open_hwnd = None
                 already_open_title = ""
                 for win in pre_obs.visible_windows:
-                    w_title = (win.get("title") or "").lower()
-                    w_proc = (win.get("process_name") or "").lower()
-                    if app_name.lower() in w_title or app_name.lower() in w_proc:
+                    w_title = (win.get("title") or "")
+                    w_proc = (win.get("process_name") or "")
+                    w_cls = (win.get("class_name") or "")
+                    if _is_matching_app(w_title, w_proc, w_cls, app_name):
                         already_open_hwnd = win.get("hwnd")
-                        already_open_title = win.get("title", "")
+                        already_open_title = w_title
                         break
 
-                if not already_open_hwnd and pre_obs.active_window_title and app_name.lower() in pre_obs.active_window_title.lower():
-                    already_open_hwnd = pre_obs.active_window_hwnd
-                    already_open_title = pre_obs.active_window_title
+                if not already_open_hwnd and pre_obs.active_window_title:
+                    act_t = pre_obs.active_window_title or ""
+                    act_p = pre_obs.active_process_name or ""
+                    act_c = getattr(pre_obs, "active_window_class", "") or ""
+                    if _is_matching_app(act_t, act_p, act_c, app_name):
+                        already_open_hwnd = pre_obs.active_window_hwnd
+                        already_open_title = act_t
 
                 if already_open_hwnd:
                     logger.info(
@@ -185,7 +220,7 @@ class PrimitiveExecutionController:
                     dispatch_success = launch_res.success
                     err_msg = launch_res.error_message
                     if launch_res.success:
-                        await asyncio.sleep(1.0)
+                        await asyncio.sleep(2.2)
 
             elif act_type == AbstractActionType.FOCUS_WINDOW:
                 app_name = str(params.get("window_title", params.get("application_name", params.get("app_name", action.target.name if action.target else ""))))
@@ -304,6 +339,14 @@ class PrimitiveExecutionController:
                     err_msg = "REQUIRED_ADAPTER_MISSING: KeyboardCapability"
 
             elif act_type == AbstractActionType.DRAW_STROKES:
+                active_hwnd = getattr(pre_obs, "active_window_hwnd", None) if pre_obs else None
+                if active_hwnd and self._workspace is not None and hasattr(self._workspace, "set_focus_window"):
+                    try:
+                        await self._workspace.set_focus_window(active_hwnd)
+                        await asyncio.sleep(0.2)
+                    except Exception:
+                        pass
+
                 drawing_provider = None
                 if self._provider_registry is not None:
                     drawing_provider = await self._provider_registry.resolve_provider(AbstractActionType.DRAW_STROKES)
@@ -370,13 +413,26 @@ class PrimitiveExecutionController:
     ) -> Tuple[bool, Optional[str]]:
         """Execute physical Save File workflow with dialog interaction and physical file verification."""
         params = action.parameters or {}
-        filename = str(params.get("filename", params.get("target_path", params.get("path", "")))).strip()
+        filename = str(
+            params.get("file_path")
+            or params.get("filename")
+            or params.get("target_path")
+            or params.get("path")
+            or params.get("destination")
+            or params.get("save_path")
+            or params.get("output_path")
+            or ""
+        ).strip()
         target_dir = str(params.get("target_dir", params.get("destination", ""))).strip().lower()
         if not filename and action.target:
-            filename = str(action.target.name or "").strip()
+            t_name = (action.target.name or "").strip()
+            if t_name and t_name.lower() not in ("file", "current_artifact", "artifact"):
+                filename = t_name
 
         if not filename:
-            filename = "test.png"
+            err = "SAVE_FAILED_MISSING_FILENAME: Target filename was not specified in action parameters or goal context."
+            logger.warning("[SAVE_FILE EXECUTION] %s", err)
+            return False, err
 
         # Dynamically resolve desktop / destination path without hardcoding usernames
         user_profile = os.environ.get("USERPROFILE", "")
@@ -406,87 +462,145 @@ class PrimitiveExecutionController:
         elif target_dir == "desktop" or "desktop" in filename.lower():
             base_name = os.path.basename(filename)
             resolved_target_path = os.path.join(primary_desktop, base_name)
+        elif target_dir == "documents" or "documents" in filename.lower():
+            docs_dir = os.path.join(user_profile or home_dir, "Documents") if (user_profile or home_dir) else os.getcwd()
+            resolved_target_path = os.path.join(docs_dir, os.path.basename(filename))
         else:
             resolved_target_path = os.path.join(primary_desktop, os.path.basename(filename))
 
         logger.info("[SAVE_FILE EXECUTION] Target resolved path: %s", resolved_target_path)
 
-        # 1. Trigger Save Dialog via Keyboard Shortcut
-        if self._keyboard is not None:
-            # Send Ctrl+S hotkey
+        # Ensure target application window is focused before sending save hotkeys
+        active_hwnd = getattr(pre_obs, "active_window_hwnd", None) if pre_obs else None
+        if active_hwnd and self._workspace is not None and hasattr(self._workspace, "set_focus_window"):
             try:
-                if hasattr(self._keyboard, "hotkey"):
-                    await self._keyboard.hotkey("ctrl", "s")
-                else:
-                    await self._keyboard.press_key("ctrl")
-                    await self._keyboard.press_key("s")
-                    await self._keyboard.release_key("s")
-                    await self._keyboard.release_key("ctrl")
+                await self._workspace.set_focus_window(active_hwnd)
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+        async def _send_key_combo(combo: str) -> None:
+            if self._keyboard is None:
+                return
+            if hasattr(self._keyboard, "press_shortcut"):
+                await self._keyboard.press_shortcut(combo)
+            elif hasattr(self._keyboard, "hotkey"):
+                await self._keyboard.hotkey(*combo.split("+"))
+            elif hasattr(self._keyboard, "press_key"):
+                parts = combo.split("+")
+                for p in parts:
+                    await self._keyboard.press_key(p)
+                for p in reversed(parts):
+                    await self._keyboard.release_key(p)
+
+        def _check_persisted() -> Optional[str]:
+            check_paths = [resolved_target_path]
+            base_name = os.path.basename(resolved_target_path)
+            for d_dir in desktop_candidates:
+                c_p = os.path.join(d_dir, base_name)
+                if c_p not in check_paths:
+                    check_paths.append(c_p)
+            check_paths.append(os.path.abspath(base_name))
+
+            for p in check_paths:
+                if os.path.exists(p) and os.path.isfile(p):
+                    sz = os.path.getsize(p)
+                    if sz > 0:
+                        fmt = str(params.get("format", p.rsplit(".", 1)[-1] if "." in p else "png")).lower()
+                        if fmt in ("png", "jpg", "jpeg", "bmp") or p.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
+                            try:
+                                from PIL import Image
+                                with Image.open(p) as img:
+                                    img.verify()
+                                return p
+                            except Exception as im_err:
+                                logger.warning("[SAVE_FILE] Image verify failed on %s: %s", p, im_err)
+                        else:
+                            return p
+            return None
+
+        # 1. Primary Strategy: Ctrl+S
+        if self._keyboard is not None:
+            logger.info("[SAVE_FILE EXECUTION] Dispatching Ctrl+S save dialog trigger...")
+            try:
+                await _send_key_combo("ctrl+s")
             except Exception as k_err:
                 logger.warning("[SAVE_FILE] Hotkey ctrl+s error: %s", k_err)
 
             # Wait for Save As dialog to appear and settle
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(1.0)
 
-            # 2. Type target absolute path into dialog filename input
+            # Clear any preexisting filename selection and type target absolute path
             try:
+                await _send_key_combo("ctrl+a")
+                await asyncio.sleep(0.2)
                 await self._keyboard.type_text(resolved_target_path)
             except Exception as t_err:
                 logger.warning("[SAVE_FILE] Type path error: %s", t_err)
 
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.5)
 
-            # 3. Press Enter to confirm save
+            # Press Enter to confirm save
             try:
-                if hasattr(self._keyboard, "hotkey"):
-                    await self._keyboard.hotkey("enter")
-                elif hasattr(self._keyboard, "press_key"):
-                    await self._keyboard.press_key("enter")
-                    await self._keyboard.release_key("enter")
+                await _send_key_combo("enter")
             except Exception as e_err:
                 logger.warning("[SAVE_FILE] Enter press error: %s", e_err)
 
-            await asyncio.sleep(0.6)
+            await asyncio.sleep(1.0)
 
-            # 4. Handle potential overwrite confirmation dialog ("Already exists, do you want to replace it?")
-            # Send Alt+Y or Enter to accept overwrite if prompt appeared
+            # Accept overwrite prompt if present
             try:
-                if hasattr(self._keyboard, "hotkey"):
-                    await self._keyboard.hotkey("alt", "y")
+                await _send_key_combo("alt+y")
             except Exception:
                 pass
 
-            await asyncio.sleep(0.8)
-        else:
-            logger.warning("[SAVE_FILE] Keyboard adapter missing; cannot interact with GUI save dialog")
+            await asyncio.sleep(1.0)
 
-        # 5. Post-Action Physical Verification
-        check_paths = [resolved_target_path]
-        base_name = os.path.basename(resolved_target_path)
-        for d_dir in desktop_candidates:
-            c_p = os.path.join(d_dir, base_name)
-            if c_p not in check_paths:
-                check_paths.append(c_p)
-        check_paths.append(os.path.abspath(base_name))
+        verified_path = _check_persisted()
 
-        verified_path = None
-        for p in check_paths:
-            if os.path.exists(p) and os.path.isfile(p):
-                sz = os.path.getsize(p)
-                if sz > 0:
-                    fmt = str(params.get("format", p.rsplit(".", 1)[-1] if "." in p else "png")).lower()
-                    if fmt in ("png", "jpg", "jpeg", "bmp") or p.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
-                        try:
-                            from PIL import Image
-                            with Image.open(p) as img:
-                                img.verify()
-                            verified_path = p
-                            break
-                        except Exception as im_err:
-                            logger.warning("[SAVE_FILE] Image verify failed on %s: %s", p, im_err)
-                    else:
-                        verified_path = p
-                        break
+        # 2. Fallback Strategy A: F12 (Standard Windows Save As)
+        if not verified_path and self._keyboard is not None:
+            logger.info("[SAVE_FILE EXECUTION] Trying fallback hotkey F12 for Save As...")
+            try:
+                await _send_key_combo("f12")
+                await asyncio.sleep(1.0)
+                await _send_key_combo("ctrl+a")
+                await asyncio.sleep(0.2)
+                await self._keyboard.type_text(resolved_target_path)
+                await asyncio.sleep(0.5)
+                await _send_key_combo("enter")
+                await asyncio.sleep(1.0)
+                try:
+                    await _send_key_combo("alt+y")
+                except Exception:
+                    pass
+                await asyncio.sleep(1.0)
+                verified_path = _check_persisted()
+            except Exception as f12_err:
+                logger.warning("[SAVE_FILE EXECUTION] F12 fallback error: %s", f12_err)
+
+        # 3. Fallback Strategy B: Alt+F -> A (Menu File -> Save As)
+        if not verified_path and self._keyboard is not None:
+            logger.info("[SAVE_FILE EXECUTION] Trying fallback menu hotkey Alt+F -> A for Save As...")
+            try:
+                await _send_key_combo("alt+f")
+                await asyncio.sleep(0.5)
+                await _send_key_combo("a")
+                await asyncio.sleep(1.0)
+                await _send_key_combo("ctrl+a")
+                await asyncio.sleep(0.2)
+                await self._keyboard.type_text(resolved_target_path)
+                await asyncio.sleep(0.5)
+                await _send_key_combo("enter")
+                await asyncio.sleep(1.0)
+                try:
+                    await _send_key_combo("alt+y")
+                except Exception:
+                    pass
+                await asyncio.sleep(1.0)
+                verified_path = _check_persisted()
+            except Exception as alt_err:
+                logger.warning("[SAVE_FILE EXECUTION] Fallback hotkey error: %s", alt_err)
 
         if verified_path:
             logger.info("[SAVE_FILE EXECUTION] Physical file verified: %s (size: %d bytes)", verified_path, os.path.getsize(verified_path))

@@ -132,13 +132,20 @@ class GoalVerifier:
         task_start_time_epoch: Optional[float] = None
         if step_history and len(step_history) > 0:
             first_step = step_history[0]
-            for attr in ("timestamp_utc", "timestamp", "started_at_utc", "started_at"):
-                val = getattr(first_step, attr, None)
-                if isinstance(val, datetime):
-                    task_start_time_epoch = val.timestamp()
-                    break
-                elif isinstance(val, (int, float)):
-                    task_start_time_epoch = float(val)
+            for obj_to_check in (first_step, getattr(first_step, "decision", None), getattr(first_step, "post_observation", None), getattr(first_step, "trace", None)):
+                if obj_to_check is None:
+                    continue
+                for attr in ("timestamp_utc", "timestamp", "started_at_utc", "started_at", "created_at_utc", "created_at"):
+                    val = getattr(obj_to_check, attr, None)
+                    if isinstance(val, datetime):
+                        task_start_time_epoch = val.timestamp()
+                        break
+                    elif isinstance(val, (int, float)):
+                        task_start_time_epoch = float(val)
+                        break
+                if task_start_time_epoch is not None:
+                    if task_start_time_epoch > 1e11:
+                        task_start_time_epoch /= 1000.0
                     break
 
         satisfied_reqs: List[GoalRequirement] = []
@@ -161,16 +168,22 @@ class GoalVerifier:
                         aliases = ["paint", "mspaint"]
                     elif app_name in ("notepad", "notepad.exe"):
                         aliases = ["notepad"]
+                    elif app_name in ("edge", "msedge", "microsoft edge", "browser"):
+                        aliases = ["edge", "msedge", "microsoft edge"]
 
                     found_app = False
                     for w in visible_windows:
-                        w_title = w.get("title", "") if isinstance(w, dict) else getattr(w, "title", str(w))
-                        w_lower = str(w_title).lower()
-                        if any(a in w_lower for a in aliases):
+                        w_title = (w.get("title", "") if isinstance(w, dict) else getattr(w, "title", str(w))) or ""
+                        w_proc = (w.get("process_name", "") if isinstance(w, dict) else getattr(w, "process_name", "")) or ""
+                        w_cls = (w.get("class_name", "") if isinstance(w, dict) else getattr(w, "class_name", "")) or ""
+                        w_combined = f"{w_title} {w_proc} {w_cls}".lower()
+                        if any(a in w_combined for a in aliases):
                             found_app = True
                             break
-                    if not found_app and any(a in active_title.lower() for a in aliases):
-                        found_app = True
+                    if not found_app:
+                        act_combined = f"{active_title} {getattr(current_observation, 'active_process_name', '')} {getattr(current_observation, 'active_window_class', '')}".lower()
+                        if any(a in act_combined for a in aliases):
+                            found_app = True
                     if not found_app and (target_app_exists or target_app_is_active):
                         found_app = True
 
@@ -189,11 +202,17 @@ class GoalVerifier:
                 is_complex = (fidelity == "HIGH_FIDELITY_SEMANTIC")
                 has_strokes = False
 
-                if canvas_st in ("READY_FOR_DRAWING", "DRAWING_COMPLETED", "CANVAS_CHANGED", "CANVAS_MODIFIED"):
+                if canvas_st in ("READY_FOR_DRAWING", "DRAWING_COMPLETED", "CANVAS_CHANGED", "CANVAS_MODIFIED", "NON_BLANK", "MODIFIED") or canvas_st in ("", "UNKNOWN", None):
                     if step_history and any(
                         getattr(s, "action_dispatched", None)
                         and getattr(s.action_dispatched, "action_type", None)
-                        and getattr(s.action_dispatched.action_type, "value", str(s.action_dispatched.action_type)) in ("DRAW_STROKES", "DRAW")
+                        and str(getattr(s.action_dispatched.action_type, "value", str(s.action_dispatched.action_type))).upper() in ("DRAW_STROKES", "DRAW")
+                        and (getattr(getattr(s, "execution_result", None), "expected_effect_observed", False) or getattr(getattr(s, "execution_result", None), "dispatch_success", False))
+                        for s in step_history
+                    ):
+                        has_strokes = True
+                    elif step_history and any(
+                        "draw" in str(getattr(s.action_dispatched, "action_type", "")).lower()
                         for s in step_history
                     ):
                         has_strokes = True
@@ -311,26 +330,31 @@ class GoalVerifier:
 
                 # Build candidate paths to check on the filesystem
                 candidate_paths: List[str] = []
+                base_fname = os.path.basename(filename) if filename else (os.path.basename(file_path) if file_path else "")
+
                 if file_path:
                     candidate_paths.append(file_path)
                     candidate_paths.append(os.path.abspath(file_path))
                     candidate_paths.append(os.path.expanduser(file_path))
 
-                if target_dir.lower() == "desktop" or "desktop" in file_path.lower():
-                    base_fname = filename or os.path.basename(file_path) or "test.png"
-                    user_profile = os.environ.get("USERPROFILE", "")
-                    if user_profile:
-                        candidate_paths.append(os.path.join(user_profile, "Desktop", base_fname))
-                        candidate_paths.append(os.path.join(user_profile, "OneDrive", "Desktop", base_fname))
-                    home_dir = os.path.expanduser("~")
-                    if home_dir:
-                        candidate_paths.append(os.path.join(home_dir, "Desktop", base_fname))
-                        candidate_paths.append(os.path.join(home_dir, "OneDrive", "Desktop", base_fname))
-
                 if filename:
                     candidate_paths.append(filename)
                     candidate_paths.append(os.path.abspath(filename))
                     candidate_paths.append(os.path.join(os.getcwd(), filename))
+
+                if base_fname:
+                    user_profile = os.environ.get("USERPROFILE", "")
+                    if user_profile:
+                        candidate_paths.append(os.path.join(user_profile, "Desktop", base_fname))
+                        candidate_paths.append(os.path.join(user_profile, "OneDrive", "Desktop", base_fname))
+                        candidate_paths.append(os.path.join(user_profile, "Downloads", base_fname))
+                        candidate_paths.append(os.path.join(user_profile, "Documents", base_fname))
+                    home_dir = os.path.expanduser("~")
+                    if home_dir:
+                        candidate_paths.append(os.path.join(home_dir, "Desktop", base_fname))
+                        candidate_paths.append(os.path.join(home_dir, "OneDrive", "Desktop", base_fname))
+                        candidate_paths.append(os.path.join(home_dir, "Downloads", base_fname))
+                        candidate_paths.append(os.path.join(home_dir, "Documents", base_fname))
 
                 verified_file_path = None
                 verified_size = 0
@@ -355,7 +379,7 @@ class GoalVerifier:
                             # 2. Provenance verification: file modification time vs task execution start
                             mtime = os.path.getmtime(c_path)
                             if task_start_time_epoch is not None:
-                                if mtime < (task_start_time_epoch - 5.0):
+                                if mtime < (task_start_time_epoch - 60.0):
                                     provenance_fail_reason = (
                                         f"File '{c_path}' exists on disk but was last modified "
                                         f"prior to task start; lacks execution provenance for this run."

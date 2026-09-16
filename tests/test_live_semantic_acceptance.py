@@ -17,7 +17,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 
 # Ensure project root is in python path
 sys.path.insert(0, os.path.abspath("src"))
-sys.path.insert(0, os.path.abspath("prototypes/prototype_d_observation"))
 
 from orbit.adapters.keyboard.adapter import ProductionKeyboardAdapter
 from orbit.adapters.observation.adapter import ProductionObservationAdapter

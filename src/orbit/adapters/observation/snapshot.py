@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+import time
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 from pydantic import BaseModel, Field
@@ -229,11 +230,12 @@ class ObservationSnapshot(BaseModel):
         ts = getattr(obs, "timestamp", datetime.now(timezone.utc))
         obs_id = getattr(obs, "observation_id", f"obs_{uuid4().hex[:8]}")
         dur = getattr(obs, "capture_duration_ms", 0.0)
+        ts_ns = getattr(obs, "timestamp_ns", None) or time.perf_counter_ns()
 
         return cls(
             snapshot_id=obs_id,
             generation_id=1,
-            timestamp_ns=int(ts.timestamp() * 1e9),
+            timestamp_ns=ts_ns,
             timestamp_utc=ts,
             capture_duration_ms=dur,
             desktop_geometry=BoundingBox(left=0, top=0, width=sw, height=sh),

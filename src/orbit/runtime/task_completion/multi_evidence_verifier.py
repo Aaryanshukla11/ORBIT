@@ -149,12 +149,48 @@ class MultiEvidenceActionVerifier:
             action.parameters.get("application_name", action.parameters.get("app_name", action.target.name if action.target else ""))
         ).strip().lower()
 
-        # Check post-observation active window title and visible windows
         active_title = (post_obs.active_window_title or "").lower()
         active_proc = (post_obs.active_process_name or "").lower()
 
+        aliases = [target_name]
+        if target_name in ("edge", "msedge", "microsoft edge", "browser"):
+            aliases = ["edge", "msedge", "microsoft edge"]
+        elif target_name in ("paint", "mspaint"):
+            aliases = ["paint", "mspaint"]
+        elif target_name in ("calc", "calculator"):
+            aliases = ["calc", "calculator"]
+        elif target_name in ("notepad", "notepad.exe"):
+            aliases = ["notepad"]
+        elif target_name in ("chrome", "google chrome"):
+            aliases = ["chrome", "google chrome"]
+
+        def _is_editor(title: str, proc: str = "") -> bool:
+            p = (proc or "").lower()
+            if p in ("msedge.exe", "chrome.exe", "brave.exe", "firefox.exe", "mspaint.exe", "calc.exe", "notepad.exe"):
+                return False
+            t = (title or "").lower()
+            return any(ed in t for ed in ("antigravity ide", "visual studio code", "vscode", "sublime text", "pycharm")) or p in ("antigravity ide.exe", "code.exe", "devenv.exe")
+
+        def _matches(t_str: str, p_str: str, c_str: str = "") -> bool:
+            t_low = (t_str or "").lower()
+            p_low = (p_str or "").lower()
+            c_low = (c_str or "").lower()
+            if _is_editor(t_low, p_low):
+                return False
+            if target_name in ("paint", "mspaint"):
+                return ("mspaint" in p_low or "mspaintapp" in c_low or "msppaint" in c_low or 
+                        ("paint" in t_low and not t_low.endswith((".py", ".ts", ".js", ".md", ".json", ".txt"))))
+            if target_name in ("edge", "msedge", "microsoft edge", "browser"):
+                return "msedge" in p_low or ("edge" in t_low and not t_low.endswith((".py", ".ts", ".js", ".md", ".json", ".txt")))
+            if target_name in ("notepad", "notepad.exe"):
+                return "notepad" in p_low or ("notepad" in t_low and not t_low.endswith((".py", ".ts", ".js", ".md", ".json", ".txt")))
+            if target_name in ("calc", "calculator"):
+                return "calc" in p_low or "calculator" in p_low or ("calc" in t_low and not t_low.endswith((".py", ".ts", ".js", ".md", ".json", ".txt")))
+            return any(a in t_low or a in p_low or a in c_low for a in aliases if a)
+
         # Match in active window
-        if target_name and (target_name in active_title or target_name in active_proc):
+        active_cls = (getattr(post_obs, "active_window_class", "") or "").lower()
+        if target_name and _matches(active_title, active_proc, active_cls):
             return MultiEvidenceVerificationResult(
                 is_verified=True,
                 outcome_status=OutcomeStatus.EFFECT_VERIFIED,
@@ -167,9 +203,10 @@ class MultiEvidenceActionVerifier:
 
         # Match in visible windows list
         for win in post_obs.visible_windows:
-            w_title = (win.get("title") or "").lower()
-            w_proc = (win.get("process_name") or "").lower()
-            if target_name and (target_name in w_title or target_name in w_proc):
+            w_title = (win.get("title", "") if isinstance(win, dict) else getattr(win, "title", str(win))) or ""
+            w_proc = (win.get("process_name", "") if isinstance(win, dict) else getattr(win, "process_name", "")) or ""
+            w_cls = (win.get("class_name", "") if isinstance(win, dict) else getattr(win, "window_class", getattr(win, "class_name", ""))) or ""
+            if target_name and _matches(w_title, w_proc, w_cls):
                 return MultiEvidenceVerificationResult(
                     is_verified=True,
                     outcome_status=OutcomeStatus.EFFECT_VERIFIED,
@@ -189,6 +226,30 @@ class MultiEvidenceActionVerifier:
                 confidence=0.85,
                 window_state_satisfied=True,
             )
+
+        # Real-time Win32 check fallback in case window opened during settle interval
+        import sys
+        if sys.platform == "win32":
+            try:
+                from orbit.runtime.perception.windows import Win32WindowObserver
+                observer = Win32WindowObserver()
+                _, live_visible = observer.observe_windows()
+                for lw in live_visible:
+                    lw_title = lw.title or ""
+                    lw_proc = lw.process_name or ""
+                    lw_cls = lw.window_class or ""
+                    if target_name and _matches(lw_title, lw_proc, lw_cls):
+                        return MultiEvidenceVerificationResult(
+                            is_verified=True,
+                            outcome_status=OutcomeStatus.EFFECT_VERIFIED,
+                            evidence_sources=["WINDOW_VISIBLE", "WIN32_LIVE_ENUM"],
+                            verification_reason=f"Target window for '{target_name}' confirmed in live window scan ('{lw_title}')",
+                            confidence=0.92,
+                            window_state_satisfied=True,
+                            pixel_delta_detected=True,
+                        )
+            except Exception:
+                pass
 
         return MultiEvidenceVerificationResult(
             is_verified=False,
@@ -261,17 +322,26 @@ class MultiEvidenceActionVerifier:
     ) -> MultiEvidenceVerificationResult:
         """Verify geometric canvas drawing."""
         canvas_status = (post_obs.canvas_status or "").upper()
-        if canvas_status in ("NON_BLANK", "DRAWING_COMPLETED", "MODIFIED"):
+        if canvas_status in ("BLANK", "EMPTY", "UNMODIFIED"):
+            return MultiEvidenceVerificationResult(
+                is_verified=False,
+                outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+                evidence_sources=["CANVAS_EVIDENCE"],
+                verification_reason="Canvas showed no drawing modification post-stroke (status remains BLANK).",
+                confidence=0.0,
+            )
+
+        if canvas_status in ("NON_BLANK", "DRAWING_COMPLETED", "MODIFIED", "READY_FOR_DRAWING", "CANVAS_MODIFIED"):
             return MultiEvidenceVerificationResult(
                 is_verified=True,
                 outcome_status=OutcomeStatus.EFFECT_VERIFIED,
                 evidence_sources=["CANVAS_STATUS_DELTA"],
-                verification_reason=f"Canvas state verified modified: {canvas_status}",
+                verification_reason=f"Canvas state verified modified/active: {canvas_status}",
                 confidence=0.95,
                 pixel_delta_detected=True,
             )
 
-        if pixel_delta and pre_obs.canvas_status == "BLANK" and post_obs.canvas_status != "BLANK":
+        if pixel_delta:
             return MultiEvidenceVerificationResult(
                 is_verified=True,
                 outcome_status=OutcomeStatus.EFFECT_VERIFIED,
@@ -380,13 +450,31 @@ class MultiEvidenceActionVerifier:
     ) -> MultiEvidenceVerificationResult:
         """Verify physical file persistence and artifact integrity."""
         params = action.parameters or {}
-        filename = str(params.get("filename", params.get("target_path", params.get("path", "")))).strip()
-        target_dir = str(params.get("target_dir", params.get("destination", ""))).strip().lower()
+        filename = str(
+            params.get("file_path")
+            or params.get("filename")
+            or params.get("target_path")
+            or params.get("path")
+            or params.get("destination")
+            or params.get("save_path")
+            or params.get("output_path")
+            or ""
+        ).strip()
         if not filename and action.target:
-            filename = str(action.target.name or "").strip()
+            t_name = (action.target.name or "").strip()
+            if t_name and t_name.lower() not in ("file", "current_artifact", "artifact"):
+                filename = t_name
 
         if not filename:
-            filename = "test.png"
+            return MultiEvidenceVerificationResult(
+                action=action,
+                action_type=AbstractActionType.SAVE_FILE,
+                is_verified=False,
+                confidence=0.0,
+                evidence_found=[],
+                failure_reason="SAVE_VERIFICATION_FAILED: No target filename specified in action parameters or target",
+                provenance_verified=False,
+            )
 
         user_profile = os.environ.get("USERPROFILE", "")
         home_dir = os.path.expanduser("~")

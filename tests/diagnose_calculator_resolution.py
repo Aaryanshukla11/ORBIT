@@ -5,12 +5,11 @@ from ctypes import wintypes
 import time
 
 sys.path.insert(0, os.path.abspath("src"))
-sys.path.insert(0, os.path.abspath("prototypes/prototype_d_observation"))
 
 ctypes.windll.ole32.CoInitializeEx(None, 0)
 
-from accessibility_coordinator import AccessibilityCoordinator
-from capture_engine import CaptureEngine
+from orbit.runtime.perception.uia import UIAElementObserver
+from orbit.runtime.perception.screenshot import DesktopScreenshotObserver
 from orbit.runtime.perception.ocr import WindowsNativeOCRProvider
 from orbit.runtime.targeting import EvidenceBasedTargetLocator, TargetIntent
 from orbit.adapters.observation.snapshot import ObservationSnapshot, ObservedWindow, ObservedElement
@@ -65,20 +64,22 @@ if calc_hwnd:
     ctypes.windll.user32.SetForegroundWindow(calc_hwnd)
     time.sleep(0.5)
 
-    # 1. Test AccessibilityCoordinator with 2000ms timeout
-    coord = AccessibilityCoordinator(timeout_ms=2000.0)
-    elements, prov_results = coord.collect_accessibility_observations(calc_hwnd)
+    # 1. Test UIAElementObserver
+    uia_obs = UIAElementObserver()
+    focused_elem, elements = uia_obs.observe_elements(calc_hwnd)
     print(f"\n--- ACCESSIBILITY OBSERVATION FOR HWND {calc_hwnd} ---")
     print(f"Elements count: {len(elements)}")
-    for pres in prov_results:
-        print(f"Provider: {pres.provider_name}, status={pres.status.value}, duration={pres.duration_ms}ms, error={pres.error_message}, elements={len(pres.elements)}")
     
     for el in elements:
-        print(f"  ELEMENT: name='{el.name}', aid='{el.automation_id}', role='{el.role}', bounds=({el.bounds.left},{el.bounds.top},{el.bounds.right},{el.bounds.bottom})")
+        print(f"  ELEMENT: name='{el.name}', aid='{el.automation_id}', role='{el.control_type}', bounds=({el.bounding_box.left},{el.bounding_box.top},{el.bounding_box.right},{el.bounding_box.bottom})")
 
     # 2. Test OCR Provider on screenshot
-    cap = CaptureEngine()
-    img, dur, b = cap.capture_full_desktop()
+    cap = DesktopScreenshotObserver()
+    import asyncio
+    ss_res = asyncio.run(cap.capture())
+    import io
+    from PIL import Image
+    img = Image.open(io.BytesIO(ss_res.raw_bytes)) if ss_res.raw_bytes else None
     print(f"\n--- OCR OBSERVATION ---")
     ocr = WindowsNativeOCRProvider()
     ocr_res = ocr.extract_text_sync(img)

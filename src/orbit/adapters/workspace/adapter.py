@@ -153,7 +153,7 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
         def _check_takeover() -> bool:
             if self.is_takeover_active_fn:
                 try:
-                    return bool(self.is_takeover_active_fn())
+                    return self.is_takeover_active_fn()
                 except Exception:
                     return False
             return False
@@ -236,7 +236,6 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
                 try:
                     await asyncio.to_thread(
                         self.appbar_driver.unregister_and_release,
-                        state_manager=self.state_manager,
                     )
                 except Exception as ex:
                     logger.warning("Error unregistering AppBar during shutdown: %s", ex)
@@ -264,12 +263,26 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
             if dock_edge == DockEdge.NONE:
                 raise WorkspaceError(f"Cannot dock to DockEdge.NONE (requested: '{edge}')")
 
+            # Calculate proposed target bounds
+            geom = await self.get_geometry()
+            m_bounds = geom.monitor_bounds
+            if dock_edge == DockEdge.LEFT:
+                target_bounds = BoundingBox(left=m_bounds.left, top=m_bounds.top, width=size, height=m_bounds.height)
+            elif dock_edge == DockEdge.RIGHT:
+                target_bounds = BoundingBox(left=m_bounds.left + m_bounds.width - size, top=m_bounds.top, width=size, height=m_bounds.height)
+            elif dock_edge == DockEdge.TOP:
+                target_bounds = BoundingBox(left=m_bounds.left, top=m_bounds.top, width=m_bounds.width, height=size)
+            elif dock_edge == DockEdge.BOTTOM:
+                target_bounds = BoundingBox(left=m_bounds.left, top=m_bounds.top + m_bounds.height - size, width=m_bounds.width, height=size)
+            else:
+                target_bounds = BoundingBox(left=m_bounds.left, top=m_bounds.top, width=size, height=m_bounds.height)
+
             # Execute transactional registration in worker thread
             res: AppBarOperationResult = await asyncio.to_thread(
                 self.appbar_driver.register_and_dock,
                 edge=dock_edge,
-                requested_size_px=size,
-                state_manager=self.state_manager,
+                target_bounds=target_bounds,
+                monitor_bounds=m_bounds,
             )
 
             if not res.success:
@@ -314,7 +327,6 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
             # Unregister in worker thread
             res: AppBarOperationResult = await asyncio.to_thread(
                 self.appbar_driver.unregister_and_release,
-                state_manager=self.state_manager,
             )
 
             # Refresh floating geometry
@@ -364,44 +376,17 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
         )
 
     async def launch_process(self, app_name: str) -> Optional[Dict[str, Any]]:
-        """Launch a Windows desktop application process."""
+        """Launch a Windows desktop application process via unified ApplicationLauncher."""
         try:
-            import subprocess
-            import ctypes
-            clean_name = app_name.strip().lower()
-
-            # Map known Windows 10/11 Packaged / Modern Apps to their AppsFolder AUMIDs
-            known_aumids = {
-                "mspaint": "Microsoft.Paint_8wekyb3d8bbwe!App",
-                "paint": "Microsoft.Paint_8wekyb3d8bbwe!App",
-                "notepad": "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
-                "calc": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
-                "calculator": "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App",
-                "terminal": "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App",
-                "photos": "Microsoft.Windows.Photos_8wekyb3d8bbwe!App",
-            }
-
-            logger.info("WORKSPACE LAUNCH_PROCESS: app_name='%s'", clean_name)
-
-            if sys.platform == "win32":
-                lookup_key = clean_name.replace(".exe", "")
-                aumid = known_aumids.get(lookup_key)
-                if aumid:
-                    # Launch modern Packaged/AppX Windows App via explorer.exe shell:AppsFolder
-                    try:
-                        ctypes.windll.shell32.ShellExecuteW(None, "open", "explorer.exe", f"shell:AppsFolder\\{aumid}", None, 1)
-                    except Exception:
-                        subprocess.Popen(["explorer.exe", f"shell:AppsFolder\\{aumid}"])
-                else:
-                    exe_name = clean_name if clean_name.endswith(".exe") else f"{clean_name}.exe"
-                    res = ctypes.windll.shell32.ShellExecuteW(None, "open", exe_name, None, None, 1)
-                    if res <= 32:
-                        subprocess.Popen(["cmd.exe", "/c", "start", "", exe_name])
+            from orbit.runtime.capabilities.application_launcher import ApplicationLauncher
+            launcher = ApplicationLauncher()
+            res = launcher.launch(app_name)
+            if res.success:
+                await asyncio.sleep(2.5)
+                return {"app_name": app_name, "executable": res.executable_path}
             else:
-                subprocess.Popen(clean_name, shell=True)
-
-            await asyncio.sleep(2.5)
-            return {"app_name": app_name}
+                logger.warning("launch_process failed for %s: %s", app_name, res.error_message)
+                return None
         except Exception as ex:
             logger.warning("launch_process error for %s: %s", app_name, ex, exc_info=True)
             return None
@@ -411,7 +396,7 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
         if sys.platform != "win32":
             return True
         try:
-            success = force_foreground_window(int(hwnd))
+            success = force_foreground_window(hwnd)
             await asyncio.sleep(0.3)
             return success
         except Exception as ex:
@@ -420,15 +405,16 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
 
     async def list_windows(self) -> List[Any]:
         """List top-level visible desktop windows."""
-        from orbit.runtime.cognitive.observer import CurrentStateObserver
-        obs = CurrentStateObserver()
-        raw_wins = obs._enumerate_visible_windows()
+        from orbit.runtime.perception.windows import Win32WindowObserver
+        observer = Win32WindowObserver()
+        _, visible_windows = observer.observe_windows()
         class WinInfo:
-            def __init__(self, hwnd: int, title: str, class_name: str):
+            def __init__(self, hwnd: int, title: str, class_name: str, process_name: Optional[str] = None):
                 self.hwnd = hwnd
                 self.title = title
                 self.class_name = class_name
-        return [WinInfo(w["hwnd"], w["title"], w.get("class_name", "")) for w in raw_wins]
+                self.process_name = process_name
+        return [WinInfo(w.hwnd, w.title, w.window_class, w.process_name) for w in visible_windows]
 
     async def recover_workspace(self, recovery_token: Optional[str] = None) -> bool:
         """Attempt recovery from degraded or failed workspace states."""

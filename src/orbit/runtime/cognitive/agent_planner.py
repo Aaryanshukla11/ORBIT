@@ -74,13 +74,13 @@ class AgentPlanner:
         text = f"{subgoal.title} {subgoal.description}".lower()
 
         # 1. File Persistence / Save candidate (Priority when subgoal is save intent)
-        save_match = re.search(r'(?:save|save\s+as|save\s+it\s+as|export\s+as)\s+["\']?([^"\'\s,]+\.[a-zA-Z0-9]+)["\']?', f"{text} {objective.raw_prompt}", re.IGNORECASE)
+        save_match = re.search(r'(?:save|save\s+as|save\s+it\s+as|export\s+as|persist\s+as)\s+["\']?([^"\'\s,]+\.[a-zA-Z0-9]+)["\']?', f"{text} {objective.raw_prompt}", re.IGNORECASE)
         filename = objective.parameters.get("filename") or (save_match.group(1).strip() if save_match else None)
         is_save_subgoal = any(w in subgoal.title.lower() for w in ("save", "save as", "export", "persist")) or objective.parameters.get("action_type") == "save"
-        if is_save_subgoal or ((any(w in text for w in ("save", "save as", "export")) or bool(filename)) and not any(w in subgoal.title.lower() for w in ("draw", "sketch"))):
-            target_fname = filename or "test.png"
+        if is_save_subgoal or ((any(w in text for w in ("save", "save as", "export", "persist")) or bool(filename)) and not any(w in subgoal.title.lower() for w in ("draw", "sketch"))):
+            target_fname = filename or "artifact"
             target_dir = objective.parameters.get("target_dir", "desktop" if "desktop" in text else "workspace")
-            fmt = objective.parameters.get("format", target_fname.rsplit(".", 1)[-1] if "." in target_fname else "png")
+            fmt = objective.parameters.get("format", target_fname.rsplit(".", 1)[-1] if "." in target_fname else "")
             candidates.append(
                 CandidatePlan(
                     subgoal_id=subgoal.sub_id,
@@ -99,7 +99,7 @@ class AgentPlanner:
                     ),
                     estimated_complexity=2,
                     creative_payload={
-                        "filename": target_fname,
+                        "filename": target_fname if filename else "",
                         "target_dir": target_dir,
                         "format": fmt,
                         "target_path": objective.parameters.get("target_path"),
@@ -119,6 +119,7 @@ class AgentPlanner:
             strokes = objective.parameters.get("strokes") or [
                 [(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8), (0.2, 0.2)]
             ]
+            app_ctx = str(getattr(subgoal, 'target_entity', None) or objective.parameters.get("app_name") or "canvas")
             candidates.append(
                 CandidatePlan(
                     subgoal_id=subgoal.sub_id,
@@ -126,9 +127,9 @@ class AgentPlanner:
                     proposed_primitives=[AbstractActionType.DRAW_STROKES],
                     targets=[
                         SemanticTarget(
-                            name=subgoal.target_entity or "Paint",
+                            name=app_ctx,
                             role="canvas",
-                            context="mspaint",
+                            context=app_ctx,
                         )
                     ],
                     expected_outcome=ActionOutcomeContract(
@@ -144,43 +145,26 @@ class AgentPlanner:
                     rationale="Render vector strokes directly onto targeted canvas",
                 )
             )
-                        SemanticTarget(
-                            name=target_fname,
-                            role="file",
-                            context=target_dir,
-                        )
-                    ],
-                    expected_outcome=ActionOutcomeContract(
-                        expected_state_transition=f"File '{target_fname}' saved to {target_dir}",
-                        verification_strategy=VerificationStrategy.ARTIFACT_CREATED,
-                    ),
-                    estimated_complexity=2,
-                    creative_payload={
-                        "filename": target_fname,
-                        "target_dir": target_dir,
-                        "format": fmt,
-                        "target_path": objective.parameters.get("target_path"),
-                    },
-                    rationale=f"Save artifact '{target_fname}' to {target_dir}",
-                )
-            )
 
         # 3. Application launch candidate
-        elif any(w in text for w in ("open", "launch", "start", "run")) and not any(w in text for w in ("search box", "button", "link", "input", "menu", "tab", "file")):
-            # Extract application name
-            app_name = subgoal.target_entity or objective.parameters.get("app_name")
-            if not app_name:
-                m_app = re.search(r"\b(?:open|launch|start|run)\s+([a-zA-Z0-9_\-]+)", text)
-                if m_app:
-                    extracted_app = m_app.group(1).strip()
-                    if extracted_app not in ("the", "a", "an", "this", "search", "file", "tab", "dialog", "window"):
-                        app_name = extracted_app
-            if not app_name:
-                for app in ("paint", "mspaint", "notepad", "calculator", "calc", "edge", "msedge", "chrome", "word", "excel", "browser"):
-                    if app in text:
+        elif any(w in text for w in ("open", "launch", "start", "run", "bring up")) and not any(w in text for w in ("search box", "button", "link", "input", "menu", "tab", "file", "canvas", "draw", "portrait", "sketch")):
+            from orbit.runtime.capabilities.application_launcher import APPROVED_APPLICATION_REGISTRY
+            raw_entity = str(getattr(subgoal, 'target_entity', None) or objective.parameters.get("app_name") or "").strip().lower()
+            app_name = None
+            if raw_entity in APPROVED_APPLICATION_REGISTRY:
+                app_name = raw_entity
+            else:
+                for app in APPROVED_APPLICATION_REGISTRY:
+                    if app in text or app in raw_entity:
                         app_name = app
                         break
-            app_name = app_name or "notepad"
+            if not app_name:
+                m_app = re.search(r"\b(?:open|launch|start|run|bring\s+up)\s+(?:the\s+)?([a-zA-Z0-9_\-]+)", text)
+                if m_app:
+                    extracted_app = m_app.group(1).strip().lower()
+                    if extracted_app not in ("the", "a", "an", "this", "search", "file", "tab", "dialog", "window", "app", "application"):
+                        app_name = extracted_app
+            app_name = app_name or raw_entity or "application"
             candidates.append(
                 CandidatePlan(
                     subgoal_id=subgoal.sub_id,
@@ -207,7 +191,7 @@ class AgentPlanner:
                     proposed_primitives=[AbstractActionType.TYPE_TEXT],
                     targets=[
                         SemanticTarget(
-                            name=subgoal.target_entity or "Active Document",
+                            name=getattr(subgoal, 'target_entity', None) or "Active Document",
                             role="edit",
                             context="foreground_window",
                         )
@@ -224,12 +208,12 @@ class AgentPlanner:
 
         # 5. Generic UI Click / Focus fallback candidate
         else:
-            target_name = subgoal.target_entity or "Main Window"
+            target_name = getattr(subgoal, 'target_entity', None) or "Main Window"
             candidates.append(
                 CandidatePlan(
                     subgoal_id=subgoal.sub_id,
                     intent_strategy="GUI_INTERACTIVE",
-                    proposed_primitives=subgoal.preferred_primitives or [AbstractActionType.CLICK],
+                    proposed_primitives=getattr(subgoal, 'preferred_primitives', None) or [AbstractActionType.CLICK],
                     targets=[SemanticTarget(name=target_name, role="control")],
                     expected_outcome=ActionOutcomeContract(
                         expected_state_transition=f"Interacted with {target_name}",
@@ -285,7 +269,7 @@ class AgentPlanner:
             intent_strategy=best_candidate.intent_strategy,
             candidate_plan_id=best_candidate.candidate_id,
             semantic_targets=best_candidate.targets,
-            constraints=subgoal.constraints,
+            constraints=getattr(subgoal, "constraints", []),
             preferred_primitives=best_candidate.proposed_primitives,
             expected_outcome=best_candidate.expected_outcome,
             feasibility_score=report.best_score,

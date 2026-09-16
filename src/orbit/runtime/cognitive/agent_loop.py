@@ -56,7 +56,7 @@ from orbit.runtime.agent.contracts import (
 from orbit.runtime.agent.state import DesktopStateSnapshot
 from orbit.runtime.agent.verifier import AgentStateTransitionVerifier
 from orbit.runtime.cancellation import CancellationToken
-from orbit.runtime.cognitive.engine import CognitiveDecisionEngine
+from orbit.runtime.cognitive.engine import CognitiveDecisionEngine, OrbitDecisionEngine
 from orbit.runtime.cognitive.interpreter import LLMIntentInterpreter
 from orbit.runtime.cognitive.models import (
     AgentLoopState,
@@ -73,6 +73,7 @@ from orbit.runtime.cognitive.models import (
     RecoveryRecord,
     RecoveryStrategy,
     StructuredObjective,
+    SubObjective,
     format_cycle_trace_block,
 )
 from orbit.runtime.cognitive.observer import CurrentStateObserver
@@ -123,7 +124,7 @@ class AgentExecutionLoop:
         model_session_manager: Optional[ModelSessionManager] = None,
         interpreter: Optional[LLMIntentInterpreter] = None,
         observer: Optional[CurrentStateObserver] = None,
-        decision_engine: Optional[CognitiveDecisionEngine] = None,
+        decision_engine: Optional[Union[OrbitDecisionEngine, CognitiveDecisionEngine]] = None,
         target_locator: Optional[TargetLocator] = None,
         workspace: Optional[WorkspaceCapability] = None,
         pointer: Optional[PointerCapability] = None,
@@ -153,7 +154,7 @@ class AgentExecutionLoop:
 
         self._interpreter = interpreter or LLMIntentInterpreter(model_session_manager=model_session_manager)
         self._observer = observer or CurrentStateObserver(observation=observation)
-        self._decision_engine = decision_engine or CognitiveDecisionEngine(model_session_manager=model_session_manager)
+        self._decision_engine = decision_engine or OrbitDecisionEngine(model_session_manager=model_session_manager)
         self._target_locator = target_locator or EvidenceBasedTargetLocator()
         self._transition_verifier = transition_verifier or AgentStateTransitionVerifier()
         self._action_validator = AgentActionValidator
@@ -161,7 +162,11 @@ class AgentExecutionLoop:
         self._pointer = pointer
         self._keyboard = keyboard
         self._observation = observation
-        self._goal_verifier = goal_verifier
+        if goal_verifier is None:
+            from orbit.runtime.task_completion.goal_verifier import GoalVerifier
+            self._goal_verifier = GoalVerifier()
+        else:
+            self._goal_verifier = goal_verifier
         self._budget = budget or ExecutionBudget()
         self._recovery_manager = recovery_manager or AgentRecoveryManager(
             max_recoveries_per_transition=self._budget.max_recoveries_per_transition
@@ -255,7 +260,7 @@ class AgentExecutionLoop:
         return self._router
 
     @property
-    def decision_engine(self) -> Optional[CognitiveDecisionEngine]:
+    def decision_engine(self) -> Optional[Union[OrbitDecisionEngine, CognitiveDecisionEngine]]:
         return self._decision_engine
 
     @property
@@ -616,7 +621,9 @@ class AgentExecutionLoop:
                 sm.transition_to(AgentLoopState.REASONING, cycle_number=step_idx, observation_id=current_obs.observation_id)
 
                 decide_fn = getattr(self._decision_engine, "decide_next_step", None) or getattr(self._decision_engine, "decide_next_action", None)
-                decide_kwargs = {
+                if not callable(decide_fn):
+                    raise RuntimeError("No callable decision method found on decision engine.")
+                decide_kwargs: Dict[str, Any] = {
                     "objective": objective,
                     "observation": current_obs,
                     "step_history": step_history,
@@ -628,6 +635,13 @@ class AgentExecutionLoop:
                         decide_kwargs["routing_policy"] = routing_policy
                     if "task_context" in sig.parameters:
                         decide_kwargs["task_context"] = context
+                    if "task_requirements" in sig.parameters:
+                        decide_kwargs["task_requirements"] = getattr(objective, "task_requirements", None)
+                    if "failure_feedback" in sig.parameters:
+                        last_diag = step_history[-1].failure_diagnosis if (step_history and not step_history[-1].outcome_verified) else None
+                        decide_kwargs["failure_feedback"] = last_diag
+                    if "user_goal" in sig.parameters:
+                        decide_kwargs["user_goal"] = getattr(objective, "user_goal", prompt)
                 except Exception:
                     pass
 
@@ -655,7 +669,7 @@ class AgentExecutionLoop:
                     except Exception as tr_err:
                         logger.debug("Trace extraction notice: %s", tr_err)
 
-                cycle_trace.decision_summary = str(decision.decision_summary)
+                cycle_trace.decision_summary = decision.decision_summary or ""
                 cycle_trace.decision_confidence = float(decision.decision_confidence) if isinstance(decision.decision_confidence, (int, float)) else 1.0
                 cycle_trace.goal_progress = "GOAL_SATISFIED" if decision.is_goal_satisfied else "IN_PROGRESS"
                 cycle_trace.next_action_type = decision.next_action.action_type.value if decision.next_action else None
@@ -689,6 +703,7 @@ class AgentExecutionLoop:
                 if is_model_claiming_completion:
                     logger.info("Model proposed goal completion at step %d; verifying reality against live desktop", step_idx)
                     goal_truly_verified = False
+                    g_eval: Optional[Any] = None
                     if self._goal_verifier is not None:
                         try:
                             g_eval = await self._goal_verifier.verify_goal_achievement(
@@ -757,7 +772,8 @@ class AgentExecutionLoop:
                             recovery_records=self._recovery_manager.get_history(),
                         )
                     else:
-                        logger.warning("Goal satisfaction claimed by model, but independent reality check failed; continuing closed-loop reasoning")
+                        fail_r = getattr(g_eval, "failure_reason", "") if "g_eval" in locals() and g_eval else "no verifier eval"
+                        logger.warning("Goal satisfaction claimed by model, but independent reality check failed: %s; continuing closed-loop reasoning", fail_r)
                         sm.transition_to(
                             AgentLoopState.EVALUATING_PROGRESS,
                             cycle_number=step_idx,
@@ -872,9 +888,10 @@ class AgentExecutionLoop:
                                     if not action.expected_effect and _composed.expected_effect:
                                         action.expected_effect = _composed.expected_effect
                                 else:
-                                    # Directive specifies different primitives; use composer's first action
-                                    _composed = composed_seq.actions[0]
-                                    action = _composed
+                                    # Decision engine selected a different valid primitive; validate it directly
+                                    val_res = self._primitive_validator.validate_action(action)
+                                    if val_res.is_valid and val_res.validated_action:
+                                        action = val_res.validated_action
                         else:
                             # No directive available: run through PrimitiveValidator directly to enforce contract
                             val_res = self._primitive_validator.validate_action(action)
@@ -1328,8 +1345,8 @@ class AgentExecutionLoop:
                     duration_ms=outcome.duration_ms,
                 )
 
-                cycle_trace.expected_effect = str(action.outcome_contract.expected_state_transition) if action.outcome_contract else "visible_delta"
-                cycle_trace.observed_effect = outcome.observed_delta or "None"
+                cycle_trace.expected_effect = action.outcome_contract.expected_state_transition if action.outcome_contract else "visible_delta"
+                cycle_trace.observed_effect = str(outcome.observed_delta) if outcome.observed_delta is not None else "None"
                 cycle_trace.expected_effect_observed = outcome.expected_effect_observed
                 cycle_trace.verification_strategy = outcome.verification_strategy.value if hasattr(outcome.verification_strategy, "value") else str(outcome.verification_strategy)
                 cycle_trace.verification_reason = outcome.verification_reason or ""
@@ -1422,9 +1439,15 @@ class AgentExecutionLoop:
                                     "known_information": _updated_known,
                                 })
                                 try:
+                                    sub_obj = SubObjective(
+                                        sub_id=_active_sg_for_replan.sub_id,
+                                        title=_active_sg_for_replan.title,
+                                        description=_active_sg_for_replan.description,
+                                        dependencies=_active_sg_for_replan.dependencies,
+                                    )
                                     new_directive, new_sem_report = self._planner.plan_subgoal(
                                         objective=objective,
-                                        subgoal=_active_sg_for_replan,
+                                        subgoal=sub_obj,
                                         world_model=self._world_model,
                                         observation=post_obs,
                                     )
@@ -1613,14 +1636,14 @@ class AgentExecutionLoop:
         objective: Optional[StructuredObjective] = None,
         cancel_token: Optional[CancellationToken] = None,
     ) -> Tuple[ActionExecutionResult, CurrentStateObservation]:
-        """Canonical delegation of action execution through PrimitiveExecutionController."""
+        effective_obj = objective or StructuredObjective(raw_prompt="", user_goal="", end_condition="goal_completed")
         ctrl_res = await self._primitive_execution_controller.execute_primitive(
             action=action,
             pre_observation=pre_obs,
             grounding_fn=self._resolve_target_coordinates,
             safety_gate_fn=self._evaluate_safety_gate,
             observe_fn=self._observer.observe,
-            objective=objective,
+            objective=effective_obj,
             cancel_token=cancel_token,
         )
         outcome = ctrl_res.execution_outcome
@@ -1752,6 +1775,8 @@ class AgentExecutionLoop:
             action_type=AbstractActionType.TYPE_TEXT,
             parameters={"text": text},
         )
+        if self._keyboard is not None:
+            self._primitive_execution_controller._keyboard = self._keyboard
         dispatch_success, err_msg = await self._primitive_execution_controller.dispatch_physical_action(
             action=action,
             pre_obs=CurrentStateObservation(),

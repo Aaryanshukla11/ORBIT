@@ -5,10 +5,29 @@ from ctypes import wintypes
 import time
 
 sys.path.insert(0, os.path.abspath("src"))
-sys.path.insert(0, os.path.abspath("prototypes/prototype_d_observation"))
 
 ctypes.windll.ole32.CoInitializeEx(None, 0)
-from uia_provider import UIAutomationProvider, GUID, CLSID_CUIAutomation, IID_IUIAutomation
+
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", wintypes.DWORD),
+        ("Data2", wintypes.WORD),
+        ("Data3", wintypes.WORD),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+CLSID_CUIAutomation = GUID(
+    0xFF48DBA4,
+    0x0DB2,
+    0x4CE8,
+    (ctypes.c_ubyte * 8)(0x88, 0x33, 0x4D, 0x34, 0xB3, 0xB4, 0x20, 0xCE),
+)
+IID_IUIAutomation = GUID(
+    0x30CBE57D,
+    0xD9D0,
+    0x452A,
+    (ctypes.c_ubyte * 8)(0xAB, 0x13, 0x7A, 0xC5, 0xAC, 0x48, 0x25, 0xEE),
+)
 
 pUIA = ctypes.c_void_p()
 hr = ctypes.windll.ole32.CoCreateInstance(
@@ -50,5 +69,3 @@ if pDesktopRoot.value:
         pNext = ctypes.c_void_p()
         GetNextSiblingElement(pWalker.value, curr, ctypes.byref(pNext))
         curr = pNext.value
-
-

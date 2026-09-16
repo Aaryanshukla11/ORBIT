@@ -87,11 +87,22 @@ class EvidenceBasedTargetLocator:
     - WINDOW_TITLE: Resolved from top-level desktop windows in snapshot.windows.
     - COORDINATE_REGION: Resolved from explicit verified bounding box geometry.
     - OCR_TEXT: Resolved from optical character recognition evidence.
+    - MULTI_PASS_GROUNDING: 4-pass multimodal grounding (UIA -> OCR -> Icon -> VLM).
     - VISUAL_SEMANTIC: Returns UNSUPPORTED (template/feature matching in future steps).
     """
 
-    def __init__(self, perception_engine: Optional[SemanticPerceptionEngine] = None) -> None:
+    def __init__(
+        self,
+        perception_engine: Optional[SemanticPerceptionEngine] = None,
+        multipass_grounder: Optional[Any] = None,
+    ) -> None:
         self._perception_engine = perception_engine
+        from orbit.runtime.targeting.grounding import MultiPassGrounder
+        self._multipass_grounder = multipass_grounder or MultiPassGrounder()
+
+    @property
+    def multipass_grounder(self) -> Any:
+        return self._multipass_grounder
 
     def locate_target(
         self,

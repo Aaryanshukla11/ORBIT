@@ -125,6 +125,20 @@ class AgentStateTransitionVerifier:
                 )
             )
             target_clean = app_name.lower().strip()
+            aliases = [target_clean]
+            if target_clean in ("edge", "msedge", "microsoft edge", "browser"):
+                aliases = ["edge", "msedge", "microsoft edge"]
+            elif target_clean in ("paint", "mspaint"):
+                aliases = ["paint", "mspaint"]
+            elif target_clean in ("calc", "calculator"):
+                aliases = ["calc", "calculator"]
+            elif target_clean in ("notepad", "notepad.exe"):
+                aliases = ["notepad"]
+
+            def _is_editor_win(t: str, p: str) -> bool:
+                if p in ("msedge.exe", "chrome.exe", "brave.exe", "firefox.exe", "mspaint.exe", "calc.exe", "notepad.exe"):
+                    return False
+                return any(ed in t for ed in ("antigravity ide", "visual studio code", "vscode", "sublime text", "pycharm")) or p in ("antigravity ide.exe", "code.exe", "devenv.exe")
 
             app_running = False
             for win in post_state.visible_windows:
@@ -137,12 +151,20 @@ class AgentStateTransitionVerifier:
                     cls = (getattr(win, "window_class", None) or getattr(win, "class_name", "") or "").lower()
                     proc = (getattr(win, "process_name", "") or "").lower()
 
-                if target_clean and (target_clean in title or target_clean in cls or target_clean in proc):
+                if _is_editor_win(title, proc):
+                    continue
+
+                if any(a in title or a in cls or a in proc for a in aliases):
                     app_running = True
                     observed_delta["matched_window"] = win
                     break
 
-            if app_running or (post_state.active_window_title and target_clean in post_state.active_window_title.lower()) or post_state.target_app_exists or post_state.target_app_is_active:
+            act_title = (post_state.active_window_title or "").lower()
+            act_proc = (getattr(post_state, "active_process_name", "") or "").lower()
+            if not _is_editor_win(act_title, act_proc) and any(a in act_title or a in act_proc for a in aliases):
+                app_running = True
+
+            if app_running or post_state.target_app_exists or post_state.target_app_is_active:
                 verified = True
                 reason = f"Application window for '{app_name}' verified visible and active"
             else:

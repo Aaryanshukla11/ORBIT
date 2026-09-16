@@ -39,9 +39,8 @@ filterwarnings = [
 ]
 
 [tool.pyright]
-include = ["src", "tests", "prototypes"]
+include = ["src", "tests"]
 extraPaths = [
     "src",
-    "prototypes/prototype_d_observation",
 ]
 

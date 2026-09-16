@@ -13,7 +13,7 @@ from orbit.contracts.capabilities import (
 from orbit.infrastructure.event_bus import EventBus
 from orbit.runtime.cancellation import CancellationSource
 from orbit.runtime.cognitive.agent_loop import AgentExecutionLoop, AgentExecutionResult
-from orbit.runtime.cognitive.engine import CognitiveDecisionEngine
+from orbit.runtime.cognitive.engine import CognitiveDecisionEngine, OrbitDecisionEngine
 from orbit.runtime.cognitive.interpreter import LLMIntentInterpreter
 from orbit.runtime.cognitive.models import (
     AbstractAction,
@@ -126,8 +126,53 @@ async def test_agent_execution_loop_completes_deterministic_goal(mock_capabiliti
     obs_mock = MagicMock(spec=CurrentStateObserver)
     obs_mock.observe = AsyncMock(side_effect=_next_obs)
 
+    # Decisions for the test execution sequence
+    decisions = [
+        CognitiveDecision(
+            decision_summary="Launch paint application",
+            decision_confidence=1.0,
+            evidence_used=["user_goal"],
+            expected_state_transition="paint_open",
+            is_goal_satisfied=False,
+            next_action=AbstractAction(
+                action_type=AbstractActionType.LAUNCH_APPLICATION,
+                target=SemanticTarget(name="mspaint", role="application"),
+                parameters={"application_name": "mspaint"},
+            ),
+        ),
+        CognitiveDecision(
+            decision_summary="Draw car on canvas",
+            decision_confidence=1.0,
+            evidence_used=["paint_canvas"],
+            expected_state_transition="car_drawn",
+            is_goal_satisfied=False,
+            next_action=AbstractAction(
+                action_type=AbstractActionType.DRAW,
+                target=SemanticTarget(name="canvas", role="canvas"),
+                parameters={"shape": "car", "start_point": [100, 100], "end_point": [200, 200]},
+            ),
+        ),
+        CognitiveDecision(
+            decision_summary="Goal completed",
+            decision_confidence=1.0,
+            evidence_used=["canvas_status:NON_BLANK"],
+            expected_state_transition="none",
+            is_goal_satisfied=True,
+            next_action=None,
+        ),
+    ]
+    dec_idx = [0]
+    async def _mock_decide(*args, **kwargs):
+        idx = min(dec_idx[0], len(decisions) - 1)
+        dec_idx[0] += 1
+        return decisions[idx]
+
+    mock_engine = MagicMock(spec=OrbitDecisionEngine)
+    mock_engine.decide_next_step = AsyncMock(side_effect=_mock_decide)
+
     loop = AgentExecutionLoop(
         observer=obs_mock,
+        decision_engine=mock_engine,
         workspace=mock_capabilities["workspace"],
         pointer=mock_capabilities["pointer"],
         keyboard=mock_capabilities["keyboard"],
