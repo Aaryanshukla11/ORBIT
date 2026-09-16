@@ -1,0 +1,15 @@
+{
+  "task_id": "task_003",
+  "title": "Type Single Line Text in Notepad",
+  "split": "DEVELOPMENT",
+  "category": "TEXT_ENTRY",
+  "natural_language_goal": "Open Notepad and type 'ORBIT Native Perception Active'",
+  "expectations": {
+    "expected_window_title": "Notepad",
+    "expected_process_name": "notepad.exe",
+    "expected_ui_text": "ORBIT Native Perception Active",
+    "require_app_open": true
+  },
+  "timeout_sec": 45.0,
+  "max_steps": 8
+}

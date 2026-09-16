@@ -1,0 +1,13 @@
+{
+  "task_id": "task_014",
+  "title": "Open Browser Search Bar",
+  "split": "DEVELOPMENT",
+  "category": "BROWSER_INSPECTION",
+  "natural_language_goal": "Open Microsoft Edge and click the address bar",
+  "expectations": {
+    "expected_process_name": "msedge.exe",
+    "require_app_open": true
+  },
+  "timeout_sec": 50.0,
+  "max_steps": 8
+}

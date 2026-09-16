@@ -64,9 +64,13 @@ async def test_live_windows_multimodal_perception_fusion():
     except Exception:
         font = ImageFont.load_default()
 
-    # Draw Button at (400, 300)
-    draw.rectangle([400, 300, 650, 370], fill=(0, 102, 204))
-    draw.text((420, 315), "Confirm Action", fill=(255, 255, 255), font=font)
+    # Draw Button with clean margins at (350, 280, 750, 400)
+    draw.rectangle([350, 280, 750, 400], fill=(0, 102, 204))
+    draw.text((400, 320), "Confirm Action", fill=(255, 255, 255), font=font)
+
+    # Attach modified image to snapshot telemetry for multimodal visual matching
+    snapshot.telemetry["screenshot"] = pil_image
+    snapshot.telemetry["image"] = pil_image
 
     # 2. Run live Windows OCR extraction
     perception_engine = SemanticPerceptionEngine(ocr_provider=ocr_provider)
@@ -74,7 +78,7 @@ async def test_live_windows_multimodal_perception_fusion():
     assert ocr_res.is_success is True
 
     # 3. Extract visual template from the drawn button
-    template_img = pil_image.crop((400, 300, 650, 370))
+    template_img = pil_image.crop((350, 280, 750, 400))
     template = VisualTemplate.from_image(
         template_id="tpl_confirm",
         name="Confirm Action",

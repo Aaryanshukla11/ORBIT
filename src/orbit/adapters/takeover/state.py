@@ -40,8 +40,18 @@ class TakeoverStateManager:
     """Manages takeover state lifecycle, event deduplication, and quiet-period tracking."""
 
     _VALID_TRANSITIONS: Dict[TakeoverState, Set[TakeoverState]] = {
-        TakeoverState.STOPPED: {TakeoverState.STARTING, TakeoverState.FAILED},
-        TakeoverState.STARTING: {TakeoverState.MONITORING, TakeoverState.FAILED, TakeoverState.STOPPED},
+        TakeoverState.STOPPED: {
+            TakeoverState.STARTING,
+            TakeoverState.MONITORING,
+            TakeoverState.FAILED,
+        },
+        TakeoverState.STARTING: {
+            TakeoverState.MONITORING,
+            TakeoverState.TAKEOVER_TRIGGERED,
+            TakeoverState.TAKEOVER_ACTIVE,
+            TakeoverState.FAILED,
+            TakeoverState.STOPPED,
+        },
         TakeoverState.MONITORING: {
             TakeoverState.TAKEOVER_TRIGGERED,
             TakeoverState.TAKEOVER_ACTIVE,
@@ -73,7 +83,7 @@ class TakeoverStateManager:
             TakeoverState.STOPPED,
             TakeoverState.FAILED,
         },
-        TakeoverState.FAILED: {TakeoverState.STOPPED, TakeoverState.STARTING},
+        TakeoverState.FAILED: {TakeoverState.STOPPED, TakeoverState.STARTING, TakeoverState.TAKEOVER_ACTIVE},
     }
 
     def __init__(self, quiet_period_seconds: float = 1.0) -> None:
@@ -104,7 +114,29 @@ class TakeoverStateManager:
     @property
     def is_takeover_active(self) -> bool:
         with self._lock:
-            return self._state in (TakeoverState.TAKEOVER_TRIGGERED, TakeoverState.TAKEOVER_ACTIVE, TakeoverState.RELEASE_PENDING)
+            return self._state in (TakeoverState.TAKEOVER_TRIGGERED, TakeoverState.TAKEOVER_ACTIVE)
+
+    @property
+    def last_activity_time_ns(self) -> int:
+        with self._lock:
+            return self._last_activity_time_ns
+
+    @property
+    def last_activity_elapsed_ms(self) -> float:
+        with self._lock:
+            if not self._last_activity_time_ns:
+                return float("inf")
+            return max(0.0, (time.perf_counter_ns() - self._last_activity_time_ns) / 1_000_000.0)
+
+    def get_diagnostics(self) -> Dict[str, Any]:
+        with self._lock:
+            return {
+                "current_state": self._state.value,
+                "is_takeover_active": self.is_takeover_active,
+                "last_activity_elapsed_ms": round(self.last_activity_elapsed_ms, 2),
+                "quiet_period_seconds": self._quiet_period_seconds,
+                "last_evidence": self._last_evidence.model_dump() if self._last_evidence else None,
+            }
 
     def add_listener(self, listener: Callable[[TakeoverState, TakeoverState, Optional[TakeoverEvidence]], None]) -> None:
         with self._lock:
@@ -135,7 +167,9 @@ class TakeoverStateManager:
 
             if evidence:
                 self._last_evidence = evidence
-                self._last_activity_time_ns = evidence.timestamp_ns
+                self._last_activity_time_ns = evidence.timestamp_ns or time.perf_counter_ns()
+            elif target in (TakeoverState.TAKEOVER_TRIGGERED, TakeoverState.TAKEOVER_ACTIVE):
+                self._last_activity_time_ns = time.perf_counter_ns()
 
             # Manage quiet timer
             if target == TakeoverState.TAKEOVER_ACTIVE:
@@ -185,7 +219,6 @@ class TakeoverStateManager:
                 if self._state == TakeoverState.TAKEOVER_ACTIVE:
                     try:
                         self.transition_to(TakeoverState.RELEASE_PENDING, reason=f"Inactivity quiet period ({self._quiet_period_seconds}s)")
-                        self.transition_to(TakeoverState.MONITORING, reason="Inactivity quiet period ended")
                     except Exception as ex:
                         logger.warning("Quiet period transition failed: %s", ex)
 

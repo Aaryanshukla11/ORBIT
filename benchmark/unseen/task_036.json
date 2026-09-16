@@ -1,0 +1,13 @@
+{
+  "task_id": "task_036",
+  "title": "Draw Triangle Shape in Paint",
+  "split": "UNSEEN",
+  "category": "PAINT_CANVAS",
+  "natural_language_goal": "Open Paint, select the Triangle shape from the shapes ribbon, and draw on canvas",
+  "expectations": {
+    "expected_window_title": "Paint",
+    "require_app_open": true
+  },
+  "timeout_sec": 50.0,
+  "max_steps": 10
+}

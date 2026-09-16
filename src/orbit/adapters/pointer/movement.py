@@ -1,11 +1,10 @@
-"""Safe 12-step absolute cursor movement pipeline, native dispatch gateway, and normalization."""
-
 from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
 from datetime import datetime, timezone
 from enum import Enum
+import logging
 import math
 import sys
 import time
@@ -13,12 +12,20 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from uuid import uuid4
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger(__name__)
+
 from orbit.adapters.pointer.health import ActionCounter
 from orbit.adapters.pointer.safety import (
     FLAGS_ABSOLUTE_MOVE,
     INPUT,
     INPUT_MOUSE,
     MOUSEINPUT,
+    MOUSEEVENTF_LEFTDOWN,
+    MOUSEEVENTF_LEFTUP,
+    MOUSEEVENTF_RIGHTDOWN,
+    MOUSEEVENTF_RIGHTUP,
+    MOUSEEVENTF_MIDDLEDOWN,
+    MOUSEEVENTF_MIDDLEUP,
     ORBIT_EXTRA_INFO_SIGNATURE,
     AbiGate,
     VirtualDesktopMetrics,
@@ -220,26 +227,58 @@ class NativeDispatchGateway:
         ctypes.set_last_error(0)
 
         # Step 3: Native dispatch or override within input desktop context
+        win32_err = 0
+        fmt_err = "The operation completed successfully."
         with attached_to_input_desktop():
             if self._sendinput_override is not None:
                 accepted = self._sendinput_override(1, input_packet, ctypes.sizeof(INPUT))
+                win32_err = 0 if accepted > 0 else 5
+                fmt_err = "Simulated Success" if win32_err == 0 else "Simulated Win32 Error 5"
             elif user32 is not None:
+                ctypes.set_last_error(0)
                 accepted = user32.SendInput(1, ctypes.byref(input_packet), ctypes.sizeof(INPUT))
+                if accepted == 0:
+                    win32_err = ctypes.get_last_error()
+                    fmt_err = ctypes.FormatError(win32_err).strip() if win32_err != 0 else "SendInput returned 0"
+                    if input_packet.type == INPUT_MOUSE:
+                        mi = input_packet.union.mi
+                        try:
+                            user32.mouse_event(mi.dwFlags, mi.dx, mi.dy, mi.mouseData, mi.dwExtraInfo)
+                            accepted = 1
+                            win32_err = 0
+                            fmt_err = "The operation completed successfully via mouse_event fallback."
+                        except Exception as m_ex:
+                            fmt_err = f"mouse_event fallback error: {m_ex}"
+                else:
+                    win32_err = 0
+                    fmt_err = "The operation completed successfully."
             else:
                 accepted = 0
-
-            if accepted == 0:
-                win32_err = ctypes.get_last_error()
-                if win32_err == 5 and user32 is not None and input_packet.type == INPUT_MOUSE:
-                    mi = input_packet.union.mi
-                    user32.mouse_event(mi.dwFlags, mi.dx, mi.dy, mi.mouseData, mi.dwExtraInfo)
-                    accepted = 1
-                    win32_err = 0
-            else:
                 win32_err = 0
+                fmt_err = "Platform not Windows or user32 is None"
 
         duration_us = (time.perf_counter_ns() - start_ns) / 1000.0
         self.action_counter.record_dispatch_result(accepted)
+
+        logger.info(
+            "DISPATCH:\n"
+            "  adapter class: NativeDispatchGateway\n"
+            "  dispatch function: user32.SendInput\n"
+            "  native API used: %s\n"
+            "  input packet count: 1\n"
+            "  cbSize: %d\n"
+            "NATIVE RESULT:\n"
+            "  API return value: %d\n"
+            "  ctypes.get_last_error(): %d\n"
+            "  GetLastError(): %d\n"
+            "  formatted Windows error: %s",
+            "SendInput" if accepted > 0 and "mouse_event" not in fmt_err else "mouse_event fallback",
+            ctypes.sizeof(INPUT),
+            accepted,
+            win32_err,
+            win32_err,
+            fmt_err,
+        )
         return accepted, win32_err, duration_us
 
 
@@ -404,7 +443,7 @@ class MovementExecutor:
         input_packet.union.mi.dwExtraInfo = ORBIT_EXTRA_INFO_SIGNATURE
 
         accepted_packets, win32_err, dispatch_duration_us = self.gateway.dispatch_single_packet(input_packet)
-        if accepted_packets > 0 and user32 is not None and self._cursorpos_override is None:
+        if accepted_packets == 0 and user32 is not None and self._cursorpos_override is None:
             try:
                 user32.SetCursorPos(target_x, target_y)
             except Exception:

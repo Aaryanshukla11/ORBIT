@@ -1,0 +1,131 @@
+{
+  "Run_1_Circle": {
+    "run_id": "Run_1",
+    "shape": "circle",
+    "prompt": "Open Paint, draw a simple visible circle, and save it as Desktop/test.png.",
+    "is_success": true,
+    "final_status": "COMPLETED",
+    "total_steps": 3,
+    "model_calls": 3,
+    "step_traces": [
+      {
+        "step": 0,
+        "action_type": "LAUNCH_APPLICATION",
+        "parameters": {
+          "application_name": "mspaint"
+        },
+        "verified": true,
+        "reason": "Application window for 'mspaint' verified visible and active"
+      },
+      {
+        "step": 1,
+        "action_type": "DRAW_STROKES",
+        "parameters": {
+          "shape": "circle",
+          "color": "red"
+        },
+        "verified": true,
+        "reason": "Successfully executed geometric drawing strokes for 'circle'"
+      },
+      {
+        "step": 2,
+        "action_type": "SAVE_FILE",
+        "parameters": {
+          "file_path": "C:\\Users\\Aaryan shukla\\OneDrive\\Desktop\\test.png",
+          "format": "png",
+          "application": "mspaint"
+        },
+        "verified": true,
+        "reason": "Action SAVE_FILE verified"
+      }
+    ],
+    "provenance": {
+      "target_path": "C:\\Users\\Aaryan shukla\\OneDrive\\Desktop\\test.png",
+      "file_exists": true,
+      "file_size_bytes": 6128,
+      "pre_task_hash": null,
+      "post_task_hash": "57117775ebab4b014353238a7bf441132f37798558ac7bbdadfeee02d8d7efef",
+      "valid_png_header": true,
+      "image_dimensions": [
+        1721,
+        666
+      ],
+      "file_mtime_utc": "2026-09-15T21:01:36.177547+00:00",
+      "pre_task_start_utc": "2026-09-15T21:01:25.408184+00:00",
+      "provenance_verified": true
+    }
+  },
+  "Run_2_Rectangle": {
+    "run_id": "Run_2",
+    "shape": "rectangle",
+    "prompt": "Open Paint, draw a simple visible rectangle, and save it as Desktop/test.png.",
+    "is_success": true,
+    "final_status": "COMPLETED",
+    "total_steps": 3,
+    "model_calls": 3,
+    "step_traces": [
+      {
+        "step": 0,
+        "action_type": "LAUNCH_APPLICATION",
+        "parameters": {
+          "application_name": "mspaint"
+        },
+        "verified": true,
+        "reason": "Application window for 'mspaint' verified visible and active"
+      },
+      {
+        "step": 1,
+        "action_type": "DRAW_STROKES",
+        "parameters": {
+          "shape": "rectangle",
+          "color": "blue",
+          "target_bounds": [
+            285,
+            23,
+            1504,
+            1993
+          ],
+          "canvas_rect": [
+            285,
+            23,
+            1504,
+            1993
+          ]
+        },
+        "verified": true,
+        "reason": "Successfully executed geometric drawing strokes for 'rectangle'"
+      },
+      {
+        "step": 2,
+        "action_type": "SAVE_FILE",
+        "parameters": {
+          "file_path": "C:\\Users\\Aaryan shukla\\OneDrive\\Desktop\\test.png",
+          "format": "png",
+          "application": "mspaint"
+        },
+        "verified": true,
+        "reason": "Action SAVE_FILE verified"
+      }
+    ],
+    "provenance": {
+      "target_path": "C:\\Users\\Aaryan shukla\\OneDrive\\Desktop\\test.png",
+      "file_exists": true,
+      "file_size_bytes": 6128,
+      "pre_task_hash": null,
+      "post_task_hash": "57117775ebab4b014353238a7bf441132f37798558ac7bbdadfeee02d8d7efef",
+      "valid_png_header": true,
+      "image_dimensions": [
+        1721,
+        666
+      ],
+      "file_mtime_utc": "2026-09-15T21:01:48.038959+00:00",
+      "pre_task_start_utc": "2026-09-15T21:01:39.498486+00:00",
+      "provenance_verified": true
+    }
+  },
+  "anti_fake_pass_verified": {
+    "run_1_hash": "57117775ebab4b014353238a7bf441132f37798558ac7bbdadfeee02d8d7efef",
+    "run_2_hash": "57117775ebab4b014353238a7bf441132f37798558ac7bbdadfeee02d8d7efef",
+    "hashes_different": false
+  }
+}

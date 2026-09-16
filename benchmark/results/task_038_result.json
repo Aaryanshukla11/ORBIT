@@ -1,0 +1,42 @@
+{
+  "task_id": "task_038",
+  "split": "UNSEEN",
+  "category": "BROWSER_INSPECTION",
+  "natural_language_goal": "Open Edge, click the URL input bar, and type 'localhost:8000'",
+  "started_at": "2026-09-16T04:52:48.672656Z",
+  "completed_at": "2026-09-16T04:52:48.992144Z",
+  "duration_sec": 0.32,
+  "is_success": false,
+  "goal_verified": false,
+  "artifact_verified": true,
+  "total_steps": 1,
+  "actions_attempted": 1,
+  "actions_completed": 1,
+  "recovery_attempts": 0,
+  "model_calls": 1,
+  "failure_category": "INTENT_ERROR",
+  "failure_reason": "Goal not satisfied: Expected process 'msedge.exe' is not running.",
+  "step_traces": [
+    {
+      "step_index": 0,
+      "timestamp_utc": "2026-09-16T04:52:48.992144Z",
+      "action_type": "ABORT_TASK",
+      "target_name": null,
+      "target_role": null,
+      "parameters": {
+        "error_code": "MODEL_UNAVAILABLE",
+        "diagnostic": "No active multimodal decision model configured."
+      },
+      "grounded_coordinates": null,
+      "grounding_pass": null,
+      "grounding_confidence": 0.0,
+      "dispatch_success": false,
+      "verification_passed": false,
+      "verification_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+      "latency_ms": 0.0,
+      "screenshot_path": null
+    }
+  ],
+  "final_world_state_summary": null,
+  "human_interventions": 0
+}

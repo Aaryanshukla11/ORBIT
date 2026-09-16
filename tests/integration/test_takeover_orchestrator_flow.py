@@ -93,8 +93,13 @@ async def test_takeover_preempts_active_execution_and_sanitizes():
     # 5. New task submission fails while in takeover state
     new_task = await orchestrator.submit_task("sess-1", "Should fail due to active takeover")
     # Wait for execution to fail
-    await asyncio.sleep(0.05)
-    t_status = await orchestrator.task_manager.get_task(new_task.task_id)
+    t_status = None
+    for _ in range(25):
+        await asyncio.sleep(0.02)
+        t_status = await orchestrator.task_manager.get_task(new_task.task_id)
+        if t_status and t_status.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+            break
+    assert t_status is not None
     assert t_status.status in (TaskStatus.FAILED, TaskStatus.CANCELLED)
 
     # 6. Release takeover returns system to IDLE

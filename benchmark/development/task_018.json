@@ -1,0 +1,13 @@
+{
+  "task_id": "task_018",
+  "title": "Cancel File Open Dialog",
+  "split": "DEVELOPMENT",
+  "category": "DIALOG_HANDLING",
+  "natural_language_goal": "Open Notepad, click File -> Open, and click Cancel to dismiss the dialog",
+  "expectations": {
+    "expected_window_title": "Notepad",
+    "require_app_open": true
+  },
+  "timeout_sec": 45.0,
+  "max_steps": 8
+}

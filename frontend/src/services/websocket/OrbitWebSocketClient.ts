@@ -38,6 +38,10 @@ export class OrbitWebSocketClient {
     return this.state;
   }
 
+  public get isConnected(): boolean {
+    return this.state === 'CONNECTED';
+  }
+
   public getSessionId(): string | null {
     return this.sessionId;
   }

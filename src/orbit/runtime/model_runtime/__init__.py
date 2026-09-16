@@ -39,6 +39,13 @@ from orbit.runtime.model_runtime.providers import (
     OpenAICompatibleRuntimeAdapter,
 )
 from orbit.runtime.model_runtime.session_manager import ModelSessionManager
+from orbit.runtime.model_runtime.router import (
+    ModelRouter,
+    ModelRoutingTier,
+    PrivacyPolicy,
+    RouteResolution,
+    RoutingPolicy,
+)
 
 __all__ = [
     # Contracts & Enums
@@ -54,6 +61,12 @@ __all__ = [
     "ModelActivationRequest",
     "ModelActivationResult",
     "ModelSwitchResult",
+    # Routing
+    "ModelRouter",
+    "ModelRoutingTier",
+    "PrivacyPolicy",
+    "RoutingPolicy",
+    "RouteResolution",
     # Exceptions
     "ModelRuntimeError",
     "ModelNotFoundError",

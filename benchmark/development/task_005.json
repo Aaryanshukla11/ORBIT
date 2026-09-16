@@ -1,0 +1,13 @@
+{
+  "task_id": "task_005",
+  "title": "Open Notepad About Dialog via Menu",
+  "split": "DEVELOPMENT",
+  "category": "UI_INTERACTION",
+  "natural_language_goal": "Open Notepad and click on Help then About Notepad",
+  "expectations": {
+    "expected_window_title": "About Notepad",
+    "require_app_open": true
+  },
+  "timeout_sec": 45.0,
+  "max_steps": 8
+}

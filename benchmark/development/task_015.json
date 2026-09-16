@@ -1,0 +1,13 @@
+{
+  "task_id": "task_015",
+  "title": "Launch Calculator and Notepad Simultaneously",
+  "split": "DEVELOPMENT",
+  "category": "MULTI_APP_WORKFLOW",
+  "natural_language_goal": "Open Calculator, then open Notepad",
+  "expectations": {
+    "expected_process_name": "notepad.exe",
+    "require_app_open": true
+  },
+  "timeout_sec": 50.0,
+  "max_steps": 8
+}

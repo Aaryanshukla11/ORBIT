@@ -1,0 +1,17 @@
+{
+  "task_id": "task_022",
+  "title": "Generate Valid JSON Deliverable",
+  "split": "DEVELOPMENT",
+  "category": "ARTIFACT_VALIDATION",
+  "natural_language_goal": "Create a file named 'config.json' with valid JSON: {\"orbit\": \"ready\", \"version\": 2}",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "config.json",
+      "format": "json",
+      "min_size_bytes": 10,
+      "expected_content_substr": "\"orbit\": \"ready\""
+    }
+  },
+  "timeout_sec": 30.0,
+  "max_steps": 6
+}

@@ -1,0 +1,16 @@
+{
+  "task_id": "task_024",
+  "title": "Create File and Rename via Filesystem",
+  "split": "DEVELOPMENT",
+  "category": "MIXED_WORKFLOW",
+  "natural_language_goal": "Create 'temp_draft.txt' with text 'Draft Notes', then save the final version as 'final_report.txt'",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "final_report.txt",
+      "format": "text",
+      "min_size_bytes": 5
+    }
+  },
+  "timeout_sec": 60.0,
+  "max_steps": 10
+}

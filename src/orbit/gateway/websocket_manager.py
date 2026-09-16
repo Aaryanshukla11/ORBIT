@@ -321,22 +321,21 @@ class WebSocketManager:
         Zero OS pointer events are dispatched if any validation check fails.
         """
         # 1. Human Takeover Check
-        if self._orchestrator.system_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
+        is_takeover = False
+        if hasattr(self._orchestrator, "is_human_takeover_active"):
+            res = self._orchestrator.is_human_takeover_active()
+            if inspect.isawaitable(res):
+                is_takeover = await res
+            else:
+                is_takeover = bool(res)
+        elif self._orchestrator.system_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
+            is_takeover = True
+
+        if is_takeover:
             raise CommandSafetyError(
                 code="HUMAN_TAKEOVER_ACTIVE",
                 message="Pointer command blocked: Human takeover is currently active",
             )
-        if hasattr(self._orchestrator, "is_human_takeover_active"):
-            res = self._orchestrator.is_human_takeover_active()
-            if inspect.isawaitable(res):
-                is_active = await res
-            else:
-                is_active = bool(res)
-            if is_active:
-                raise CommandSafetyError(
-                    code="HUMAN_TAKEOVER_ACTIVE",
-                    message="Pointer command blocked: Human takeover is currently active",
-                )
 
         # 2. Workspace Coordinate Validation
         wsp = self._orchestrator.workspace
@@ -377,22 +376,21 @@ class WebSocketManager:
 
     async def _validate_keyboard_action(self) -> None:
         """Validate human takeover preemption before dispatching direct keyboard commands."""
-        if self._orchestrator.system_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
+        is_takeover = False
+        if hasattr(self._orchestrator, "is_human_takeover_active"):
+            res = self._orchestrator.is_human_takeover_active()
+            if inspect.isawaitable(res):
+                is_takeover = await res
+            else:
+                is_takeover = bool(res)
+        elif self._orchestrator.system_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
+            is_takeover = True
+
+        if is_takeover:
             raise CommandSafetyError(
                 code="HUMAN_TAKEOVER_ACTIVE",
                 message="Keyboard command blocked: Human takeover is currently active",
             )
-        if hasattr(self._orchestrator, "is_human_takeover_active"):
-            res = self._orchestrator.is_human_takeover_active()
-            if inspect.isawaitable(res):
-                is_active = await res
-            else:
-                is_active = bool(res)
-            if is_active:
-                raise CommandSafetyError(
-                    code="HUMAN_TAKEOVER_ACTIVE",
-                    message="Keyboard command blocked: Human takeover is currently active",
-                )
 
     async def _dispatch_command(self, conn: WebSocketConnection, cmd: BaseCommand, payload: Any) -> None:
         """Route validated command to the orchestrator with mandatory safety boundaries."""

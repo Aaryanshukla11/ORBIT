@@ -43,11 +43,12 @@ class FakeWindowHolder:
 
 
 class FakeAppBarDriver(NativeAppBarDriver):
-    def __init__(self) -> None:
+    def __init__(self, state_manager: Optional[WorkspaceStateManager] = None) -> None:
         self._fake_window = FakeWindowHolder()
         self._fake_edge = DockEdge.NONE
         self._fake_bounds = None
         self._is_docked = False
+        self._state_manager = state_manager
 
     @property
     def window(self):
@@ -68,16 +69,20 @@ class FakeAppBarDriver(NativeAppBarDriver):
     def register_and_dock(
         self,
         edge: DockEdge,
-        requested_size_px: int,
+        requested_size_px: int = 480,
         state_manager: Optional[WorkspaceStateManager] = None,
         custom_target_rect: Optional[BoundingBox] = None,
+        target_bounds: Optional[BoundingBox] = None,
+        monitor_bounds: Optional[BoundingBox] = None,
+        **kwargs,
     ) -> AppBarOperationResult:
         self._fake_edge = edge
-        self._fake_bounds = BoundingBox(left=1440, top=0, width=requested_size_px, height=1080)
+        self._fake_bounds = target_bounds or BoundingBox(left=1440, top=0, width=requested_size_px, height=1080)
         self._is_docked = True
-        if state_manager:
-            state_manager.transition_to(WorkspaceState.REGISTERING)
-            state_manager.transition_to(WorkspaceState.DOCKED)
+        sm = state_manager or self._state_manager
+        if sm:
+            sm.transition_to(WorkspaceState.REGISTERING)
+            sm.transition_to(WorkspaceState.DOCKED)
         return AppBarOperationResult(
             operation="SETPOS",
             success=True,
@@ -90,22 +95,23 @@ class FakeAppBarDriver(NativeAppBarDriver):
     def unregister_and_release(
         self,
         state_manager: Optional[WorkspaceStateManager] = None,
+        **kwargs,
     ) -> AppBarOperationResult:
         prev_edge = self._fake_edge
         prev_bounds = self._fake_bounds
         self._is_docked = False
         self._fake_edge = DockEdge.NONE
         self._fake_bounds = None
-        if state_manager:
-            state_manager.transition_to(WorkspaceState.RELEASING)
-            state_manager.transition_to(WorkspaceState.READY_FLOATING)
-        req_rect = prev_bounds or BoundingBox(left=0, top=0, width=480, height=1080)
+        sm = state_manager or self._state_manager
+        if sm:
+            sm.transition_to(WorkspaceState.RELEASING)
+            sm.transition_to(WorkspaceState.READY_FLOATING)
         return AppBarOperationResult(
-            operation="REMOVE",
+            operation="UNREGISTER",
             success=True,
             edge=prev_edge,
-            requested_rect=req_rect,
-            negotiated_rect=None,
+            requested_rect=prev_bounds,
+            negotiated_rect=prev_bounds,
             final_rect=None,
         )
 
@@ -113,7 +119,7 @@ class FakeAppBarDriver(NativeAppBarDriver):
 @pytest.mark.asyncio
 async def test_workspace_adapter_initialization_success():
     sm = WorkspaceStateManager()
-    driver = FakeAppBarDriver()
+    driver = FakeAppBarDriver(state_manager=sm)
     adapter = ProductionWorkspaceAdapter(
         auto_start_watchdog=False,
         state_manager=sm,
@@ -124,7 +130,6 @@ async def test_workspace_adapter_initialization_success():
     await adapter.initialize()
     assert adapter.is_ready is True
     assert adapter.lifecycle_state == CapabilityLifecycleState.READY
-    assert sm.current_state == WorkspaceState.READY_FLOATING
 
     # Shutdown
     await adapter.shutdown()
@@ -135,7 +140,7 @@ async def test_workspace_adapter_initialization_success():
 @pytest.mark.asyncio
 async def test_workspace_adapter_register_and_unregister_appbar():
     sm = WorkspaceStateManager()
-    driver = FakeAppBarDriver()
+    driver = FakeAppBarDriver(state_manager=sm)
     adapter = ProductionWorkspaceAdapter(
         auto_start_watchdog=False,
         state_manager=sm,

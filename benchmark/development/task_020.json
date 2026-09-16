@@ -1,0 +1,13 @@
+{
+  "task_id": "task_020",
+  "title": "Refocus Inactive Notepad Window",
+  "split": "DEVELOPMENT",
+  "category": "STATE_RECOVERY",
+  "natural_language_goal": "Open Notepad, click Desktop to unfocus it, then click Notepad to refocus and type 'Focus Restored'",
+  "expectations": {
+    "expected_window_title": "Notepad",
+    "require_app_open": true
+  },
+  "timeout_sec": 50.0,
+  "max_steps": 10
+}

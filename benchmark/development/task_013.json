@@ -1,0 +1,13 @@
+{
+  "task_id": "task_013",
+  "title": "Launch Edge Browser",
+  "split": "DEVELOPMENT",
+  "category": "BROWSER_INSPECTION",
+  "natural_language_goal": "Open Microsoft Edge",
+  "expectations": {
+    "expected_process_name": "msedge.exe",
+    "require_app_open": true
+  },
+  "timeout_sec": 45.0,
+  "max_steps": 6
+}

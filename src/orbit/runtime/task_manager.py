@@ -87,6 +87,7 @@ class TaskManager:
         task_id: str,
         target_status: TaskStatus,
         error: Optional[ErrorDetail] = None,
+        metadata: Optional[Dict] = None,
     ) -> Task:
         """Update task status via state machine validation."""
         async with self._lock:
@@ -107,7 +108,18 @@ class TaskManager:
             if error:
                 task.error = error
 
+            if metadata:
+                task.metadata.update(metadata)
+
             return task.model_copy()
+
+    async def update_metadata(self, task_id: str, metadata: Dict) -> Task:
+        """Update metadata on a task."""
+        async with self._lock:
+            if task_id not in self._tasks:
+                raise KeyError(f"Task with ID {task_id} not found")
+            self._tasks[task_id].metadata.update(metadata)
+            return self._tasks[task_id].model_copy()
 
     async def set_plan(self, task_id: str, plan: ExecutionPlan) -> Task:
         """Attach an execution plan to a task."""

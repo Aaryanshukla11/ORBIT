@@ -1,0 +1,16 @@
+{
+  "task_id": "task_049",
+  "title": "Multi-Format Export Workflow",
+  "split": "UNSEEN",
+  "category": "MIXED_WORKFLOW",
+  "natural_language_goal": "Create 'manifest.json' with {\"status\": \"ok\"} and create 'manifest.txt' with 'Status: OK'",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "manifest.json",
+      "format": "json",
+      "min_size_bytes": 10
+    }
+  },
+  "timeout_sec": 50.0,
+  "max_steps": 8
+}

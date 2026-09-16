@@ -160,6 +160,27 @@ class INPUT(ctypes.Structure):
     ]
 
 
+def create_mouse_input_packet(
+    dw_flags: int,
+    dx: int = 0,
+    dy: int = 0,
+    mouse_data: int = 0,
+    time: int = 0,
+    dw_extra_info: int = ORBIT_EXTRA_INFO_SIGNATURE,
+) -> INPUT:
+    """Create a fully-populated, properly aligned Win32 INPUT packet for mouse operations."""
+    packet = INPUT()
+    packet.type = INPUT_MOUSE
+    packet.union.mi.dx = dx
+    packet.union.mi.dy = dy
+    packet.union.mi.mouseData = mouse_data
+    packet.union.mi.dwFlags = dw_flags
+    packet.union.mi.time = time
+    packet.union.mi.dwExtraInfo = dw_extra_info
+    return packet
+
+
+
 # ----------------------------------------------------------------------
 # 3. ABI Validation Models & Logic
 # ----------------------------------------------------------------------
@@ -549,6 +570,18 @@ def attached_to_input_desktop() -> Generator[bool, None, None]:
     attached = False
     if h_input:
         attached = bool(u32.SetThreadDesktop(h_input))
+
+    if not attached:
+        try:
+            hwinsta = u32.OpenWindowStationW("WinSta0", False, 0x37F)
+            if hwinsta:
+                u32.SetProcessWindowStation(hwinsta)
+                hdesk_default = u32.OpenDesktopW("Default", 0, False, DESKTOP_ACCESS_MASK)
+                if hdesk_default:
+                    h_input = hdesk_default
+                    attached = bool(u32.SetThreadDesktop(hdesk_default))
+        except Exception:
+            pass
 
     try:
         yield attached

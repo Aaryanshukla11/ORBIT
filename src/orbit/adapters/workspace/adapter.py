@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import logging
 import sys
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from orbit.adapters.base import (
     BaseCapabilityAdapter,
@@ -54,6 +55,62 @@ from orbit.models.common import BoundingBox
 logger = logging.getLogger(__name__)
 
 
+def force_foreground_window(hwnd: int) -> bool:
+    """Robustly bring window to foreground using Win32 thread input attachment and Alt key simulation."""
+    if sys.platform != "win32" or not hwnd:
+        return False
+    try:
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        if not u32.IsWindow(hwnd):
+            return False
+
+        root_hwnd = u32.GetAncestor(hwnd, 2)  # GA_ROOT = 2
+        if not root_hwnd or not u32.IsWindow(root_hwnd):
+            root_hwnd = hwnd
+
+        if u32.IsIconic(root_hwnd):
+            u32.ShowWindow(root_hwnd, 9)  # SW_RESTORE
+        else:
+            u32.ShowWindow(root_hwnd, 5)  # SW_SHOW
+
+        cur_fg = u32.GetForegroundWindow()
+        if cur_fg == root_hwnd or cur_fg == hwnd:
+            return True
+
+        cur_tid = k32.GetCurrentThreadId()
+        fg_tid = u32.GetWindowThreadProcessId(cur_fg, None) if cur_fg else 0
+        target_tid = u32.GetWindowThreadProcessId(root_hwnd, None)
+
+        if fg_tid and fg_tid != cur_tid:
+            u32.AttachThreadInput(cur_tid, fg_tid, True)
+        if target_tid and target_tid != cur_tid:
+            u32.AttachThreadInput(cur_tid, target_tid, True)
+
+        # Bypass Windows SetForegroundWindow lock using Alt key simulation
+        VK_MENU = 0x12
+        KEYEVENTF_KEYUP = 0x0002
+        u32.keybd_event(VK_MENU, 0, 0, 0)
+        u32.SetForegroundWindow(root_hwnd)
+        u32.BringWindowToTop(root_hwnd)
+        u32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+
+        if hwnd != root_hwnd and u32.IsWindow(hwnd):
+            u32.SetFocus(hwnd)
+        else:
+            u32.SetFocus(root_hwnd)
+
+        if fg_tid and fg_tid != cur_tid:
+            u32.AttachThreadInput(cur_tid, fg_tid, False)
+        if target_tid and target_tid != cur_tid:
+            u32.AttachThreadInput(cur_tid, target_tid, False)
+
+        return True
+    except Exception as ex:
+        logger.warning("[WORKSPACE ADAPTER] force_foreground_window failed for HWND %s: %s", hwnd, ex)
+        return False
+
+
 class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
     """Production workspace capability adapter coordinating native AppBar, display topology, and resilience watchdog."""
 
@@ -96,7 +153,7 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
         def _check_takeover() -> bool:
             if self.is_takeover_active_fn:
                 try:
-                    return bool(self.is_takeover_active_fn())
+                    return self.is_takeover_active_fn()
                 except Exception:
                     return False
             return False
@@ -179,7 +236,6 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
                 try:
                     await asyncio.to_thread(
                         self.appbar_driver.unregister_and_release,
-                        state_manager=self.state_manager,
                     )
                 except Exception as ex:
                     logger.warning("Error unregistering AppBar during shutdown: %s", ex)
@@ -207,12 +263,26 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
             if dock_edge == DockEdge.NONE:
                 raise WorkspaceError(f"Cannot dock to DockEdge.NONE (requested: '{edge}')")
 
+            # Calculate proposed target bounds
+            geom = await self.get_geometry()
+            m_bounds = geom.monitor_bounds
+            if dock_edge == DockEdge.LEFT:
+                target_bounds = BoundingBox(left=m_bounds.left, top=m_bounds.top, width=size, height=m_bounds.height)
+            elif dock_edge == DockEdge.RIGHT:
+                target_bounds = BoundingBox(left=m_bounds.left + m_bounds.width - size, top=m_bounds.top, width=size, height=m_bounds.height)
+            elif dock_edge == DockEdge.TOP:
+                target_bounds = BoundingBox(left=m_bounds.left, top=m_bounds.top, width=m_bounds.width, height=size)
+            elif dock_edge == DockEdge.BOTTOM:
+                target_bounds = BoundingBox(left=m_bounds.left, top=m_bounds.top + m_bounds.height - size, width=m_bounds.width, height=size)
+            else:
+                target_bounds = BoundingBox(left=m_bounds.left, top=m_bounds.top, width=size, height=m_bounds.height)
+
             # Execute transactional registration in worker thread
             res: AppBarOperationResult = await asyncio.to_thread(
                 self.appbar_driver.register_and_dock,
                 edge=dock_edge,
-                requested_size_px=size,
-                state_manager=self.state_manager,
+                target_bounds=target_bounds,
+                monitor_bounds=m_bounds,
             )
 
             if not res.success:
@@ -257,7 +327,6 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
             # Unregister in worker thread
             res: AppBarOperationResult = await asyncio.to_thread(
                 self.appbar_driver.unregister_and_release,
-                state_manager=self.state_manager,
             )
 
             # Refresh floating geometry
@@ -305,6 +374,47 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
             y=y,
             expected_generation=expected_generation,
         )
+
+    async def launch_process(self, app_name: str) -> Optional[Dict[str, Any]]:
+        """Launch a Windows desktop application process via unified ApplicationLauncher."""
+        try:
+            from orbit.runtime.capabilities.application_launcher import ApplicationLauncher
+            launcher = ApplicationLauncher()
+            res = launcher.launch(app_name)
+            if res.success:
+                await asyncio.sleep(2.5)
+                return {"app_name": app_name, "executable": res.executable_path}
+            else:
+                logger.warning("launch_process failed for %s: %s", app_name, res.error_message)
+                return None
+        except Exception as ex:
+            logger.warning("launch_process error for %s: %s", app_name, ex, exc_info=True)
+            return None
+
+    async def set_focus_window(self, hwnd: int) -> bool:
+        """Set foreground window focus via Win32."""
+        if sys.platform != "win32":
+            return True
+        try:
+            success = force_foreground_window(hwnd)
+            await asyncio.sleep(0.3)
+            return success
+        except Exception as ex:
+            logger.warning("set_focus_window error for HWND %s: %s", hwnd, ex)
+            return False
+
+    async def list_windows(self) -> List[Any]:
+        """List top-level visible desktop windows."""
+        from orbit.runtime.perception.windows import Win32WindowObserver
+        observer = Win32WindowObserver()
+        _, visible_windows = observer.observe_windows()
+        class WinInfo:
+            def __init__(self, hwnd: int, title: str, class_name: str, process_name: Optional[str] = None):
+                self.hwnd = hwnd
+                self.title = title
+                self.class_name = class_name
+                self.process_name = process_name
+        return [WinInfo(w.hwnd, w.title, w.window_class, w.process_name) for w in visible_windows]
 
     async def recover_workspace(self, recovery_token: Optional[str] = None) -> bool:
         """Attempt recovery from degraded or failed workspace states."""

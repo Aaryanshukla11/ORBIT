@@ -40,6 +40,7 @@ def create_app(
             event_bus=bus,
             registry=reg,
             clock=SystemClock(),
+            human_takeover_enabled=cfg.human_takeover_enabled,
         )
     else:
         orch = orchestrator

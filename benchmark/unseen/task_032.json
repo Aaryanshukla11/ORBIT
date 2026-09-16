@@ -1,0 +1,16 @@
+{
+  "task_id": "task_032",
+  "title": "Create Nested Directory Structure",
+  "split": "UNSEEN",
+  "category": "FILESYSTEM",
+  "natural_language_goal": "Create folder 'data' and inside it create 'raw_logs' directory in scratchpad",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "data/raw_logs",
+      "format": "dir",
+      "min_size_bytes": 0
+    }
+  },
+  "timeout_sec": 35.0,
+  "max_steps": 6
+}

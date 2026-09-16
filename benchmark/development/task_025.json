@@ -1,0 +1,13 @@
+{
+  "task_id": "task_025",
+  "title": "Launch Triple Utility Suite",
+  "split": "DEVELOPMENT",
+  "category": "MIXED_WORKFLOW",
+  "natural_language_goal": "Open Notepad, Calculator, and Paint",
+  "expectations": {
+    "expected_process_name": "mspaint.exe",
+    "require_app_open": true
+  },
+  "timeout_sec": 60.0,
+  "max_steps": 12
+}

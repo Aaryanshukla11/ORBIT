@@ -1,0 +1,14 @@
+{
+  "task_id": "task_002",
+  "title": "Launch Paint Application",
+  "split": "DEVELOPMENT",
+  "category": "APPLICATION_LAUNCH",
+  "natural_language_goal": "Open Paint",
+  "expectations": {
+    "expected_window_title": "Paint",
+    "expected_process_name": "mspaint.exe",
+    "require_app_open": true
+  },
+  "timeout_sec": 30.0,
+  "max_steps": 5
+}

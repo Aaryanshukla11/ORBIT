@@ -1,0 +1,1848 @@
+"""Unified AI-Native Agent Execution Loop (Step 5 Production Closed-Loop).
+
+The authoritative, closed-loop execution path for all autonomous OS desktop actions in ORBIT:
+1. Multimodal Desktop Observation (Screenshot frame, Win32 HWNDs, UIA hierarchy, OCR)
+2. Vision-Driven Semantic Reasoning (Local/Cloud LLM via ModelRouter -> AbstractAction)
+3. Action Validation & Strict Protocol Verification (AgentActionValidator -> Coordinate Isolation)
+4. Dynamic Target Grounding (EvidenceBasedTargetLocator -> ResolvedAction with safe physical coordinates)
+5. Physical Action Execution (user32.SendInput / ShellExecute / SetForegroundWindow)
+6. UI Settlement & Fresh Post-Action Observation
+7. Immediate State Delta Verification (AgentStateTransitionVerifier: Pre vs Post transition)
+8. Independent Goal Evaluation & Multi-Tier Recovery (GoalVerifier + AgentRecoveryManager)
+9. Transparent Cycle Execution Tracing (CycleExecutionTrace)
+
+SAFETY INVARIANT:
+Physical coordinates (x, y) NEVER originate from the LLM or Prompt. They are computed dynamically
+at dispatch time by EvidenceBasedTargetLocator from live UI elements, window rects, and OCR tokens.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timezone
+import inspect
+import logging
+import math
+import sys
+import time
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from uuid import uuid4
+
+from orbit.adapters.observation.snapshot import ObservationSnapshot
+from orbit.contracts.capabilities import (
+    KeyboardCapability,
+    ObservationCapability,
+    PointerCapability,
+    WorkspaceCapability,
+)
+from orbit.contracts.events import EventType, RuntimeEvent
+from orbit.infrastructure.event_bus import EventBus
+from orbit.runtime.agent.contracts import (
+    AbstractAction,
+    AbstractActionType,
+    ActionExecutionOutcome,
+    ActionExecutionResult,
+    ActionOutcomeContract,
+    ActionValidationFailureCode,
+    ActionValidationResult,
+    AgentActionValidator,
+    ExpectedState,
+    OutcomeStatus,
+    ResolvedAction,
+    SemanticTarget,
+    TextMatchState,
+    VerificationStrategy,
+)
+from orbit.runtime.agent.state import DesktopStateSnapshot
+from orbit.runtime.agent.verifier import AgentStateTransitionVerifier
+from orbit.runtime.cancellation import CancellationToken
+from orbit.runtime.cognitive.engine import CognitiveDecisionEngine, OrbitDecisionEngine
+from orbit.runtime.cognitive.interpreter import LLMIntentInterpreter
+from orbit.runtime.cognitive.models import (
+    AgentLoopState,
+    AgentLoopStateMachine,
+    AgentRecoveryManager,
+    AgentStateTransitionRecord,
+    CognitiveDecision,
+    CognitiveExecutionResult,
+    CognitiveStepResult,
+    CurrentStateObservation,
+    CycleExecutionTrace,
+    ExecutionBudget,
+    InvalidStateTransitionError,
+    RecoveryRecord,
+    RecoveryStrategy,
+    StructuredObjective,
+    SubObjective,
+    format_cycle_trace_block,
+)
+from orbit.runtime.cognitive.observer import CurrentStateObserver
+from orbit.runtime.model_runtime.router import ModelRouter, RoutingPolicy
+from orbit.runtime.model_runtime.session_manager import ModelSessionManager
+from orbit.runtime.models.models import ModelCapability
+from orbit.runtime.perception.models import DesktopObservation
+from orbit.runtime.targeting import (
+    EvidenceBasedTargetLocator,
+    ResolvedTarget,
+    TargetIntent,
+    TargetLocator,
+    TargetResolutionStatus,
+    TargetStrategy,
+)
+from orbit.runtime.task_completion.goal_verifier import GoalVerifier
+from orbit.runtime.task_completion.models import TaskCompletionStatus
+from orbit.runtime.cognitive.decomposer import HierarchicalGoalDecomposer
+from orbit.runtime.cognitive.primitive_composer import PrimitiveComposer, ComposedPrimitiveSequence
+from orbit.runtime.cognitive.primitive_validator import PrimitiveValidator
+from orbit.runtime.cognitive.primitive_execution_controller import PrimitiveExecutionController
+from orbit.runtime.task_completion.multi_evidence_verifier import MultiEvidenceActionVerifier
+from orbit.runtime.agent.grounding_validator import GroundingValidator
+from orbit.runtime.cognitive.failure_analyst import CognitiveFailureAnalyst, FailureReport, FailureCategory
+from orbit.runtime.cognitive.runtime_feasibility import RuntimeFeasibilityEvaluator, RuntimeFeasibilityResult
+from orbit.runtime.cognitive.semantic_feasibility import SemanticFeasibilityEvaluator
+from orbit.runtime.cognitive.agent_planner import AgentPlanner
+from orbit.runtime.cognitive.clarification import ClarificationManager
+from orbit.runtime.perception.vlm_grounding import VLMGroundingVerifier
+from orbit.runtime.memory.task_memory import TaskScopedMemory
+from orbit.runtime.environment.drawing_provider import CanvasDrawingProvider
+from orbit.runtime.environment.registry import EnvironmentProviderRegistry, get_default_environment_registry
+from orbit.runtime.world_model import AgentWorldModel, WorldModelUpdater
+from orbit.runtime.agent.progress_graph import ProgressGraph, SubgoalStatus
+from orbit.runtime.cognitive.context_checkpoint import CheckpointManager, ContextCheckpoint
+from orbit.runtime.cognitive.context_compactor import ContextCompactor
+from orbit.runtime.cognitive.trajectory_memory import TrajectoryMemory
+
+logger = logging.getLogger(__name__)
+
+# Alias for type consistency
+AgentExecutionResult = CognitiveExecutionResult
+
+
+class AgentExecutionLoop:
+    """Unified AI-Native Agent Loop serving as the sole production execution engine."""
+
+    def __init__(
+        self,
+        router: Optional[ModelRouter] = None,
+        model_session_manager: Optional[ModelSessionManager] = None,
+        interpreter: Optional[LLMIntentInterpreter] = None,
+        observer: Optional[CurrentStateObserver] = None,
+        decision_engine: Optional[Union[OrbitDecisionEngine, CognitiveDecisionEngine]] = None,
+        target_locator: Optional[TargetLocator] = None,
+        workspace: Optional[WorkspaceCapability] = None,
+        pointer: Optional[PointerCapability] = None,
+        keyboard: Optional[KeyboardCapability] = None,
+        observation: Optional[ObservationCapability] = None,
+        goal_verifier: Optional[GoalVerifier] = None,
+        transition_verifier: Optional[AgentStateTransitionVerifier] = None,
+        recovery_manager: Optional[AgentRecoveryManager] = None,
+        budget: Optional[ExecutionBudget] = None,
+        world_model: Optional[AgentWorldModel] = None,
+        goal_decomposer: Optional[HierarchicalGoalDecomposer] = None,
+        runtime_feasibility_evaluator: Optional[RuntimeFeasibilityEvaluator] = None,
+        semantic_feasibility_evaluator: Optional[SemanticFeasibilityEvaluator] = None,
+        planner: Optional[AgentPlanner] = None,
+        clarification_manager: Optional[ClarificationManager] = None,
+        vlm_grounding_verifier: Optional[VLMGroundingVerifier] = None,
+        multi_evidence_verifier: Optional[MultiEvidenceActionVerifier] = None,
+        environment_registry: Optional[EnvironmentProviderRegistry] = None,
+        event_bus: Optional[Any] = None,
+    ) -> None:
+        self._session_manager = model_session_manager
+        if router is not None:
+            self._router = router
+        elif model_session_manager is not None:
+            self._router = ModelRouter(session_manager=model_session_manager)
+        else:
+            self._router = None
+
+        self._interpreter = interpreter or LLMIntentInterpreter(model_session_manager=model_session_manager)
+        self._observer = observer or CurrentStateObserver(observation=observation)
+        self._decision_engine = decision_engine or OrbitDecisionEngine(model_session_manager=model_session_manager)
+        self._target_locator = target_locator or EvidenceBasedTargetLocator()
+        self._transition_verifier = transition_verifier or AgentStateTransitionVerifier()
+        self._action_validator = AgentActionValidator
+        self._workspace = workspace
+        self._pointer = pointer
+        self._keyboard = keyboard
+        self._observation = observation
+        if goal_verifier is None:
+            from orbit.runtime.task_completion.goal_verifier import GoalVerifier
+            self._goal_verifier = GoalVerifier()
+        else:
+            self._goal_verifier = goal_verifier
+        self._budget = budget or ExecutionBudget()
+        self._recovery_manager = recovery_manager or AgentRecoveryManager(
+            max_recoveries_per_transition=self._budget.max_recoveries_per_transition
+        )
+        self._event_bus = event_bus
+        self._text_input_lock = asyncio.Lock()
+        self._last_text_input_diagnostics: Dict[str, Any] = {}
+
+        # Epistemic Clarification & Memory
+        self._clarification_manager = clarification_manager or ClarificationManager()
+        self._active_task_memory: Optional[TaskScopedMemory] = None
+
+        # Phase 1: Primitive-Centric General Agent Foundation Components
+        self._world_model = world_model or AgentWorldModel()
+        self._environment_registry = environment_registry or get_default_environment_registry()
+        self._goal_decomposer = goal_decomposer or HierarchicalGoalDecomposer(model_session_manager=model_session_manager)
+        self._runtime_feasibility_evaluator = runtime_feasibility_evaluator or RuntimeFeasibilityEvaluator()
+        self._semantic_feasibility_evaluator = semantic_feasibility_evaluator or SemanticFeasibilityEvaluator()
+        self._planner = planner or AgentPlanner(
+            feasibility_evaluator=self._semantic_feasibility_evaluator,
+            model_client=self._session_manager,
+        )
+
+        from orbit.runtime.capabilities.application_launcher import ApplicationLauncher
+        self._application_launcher = ApplicationLauncher()
+
+        # Wire CanvasDrawingProvider with pointer into environment registry
+        if self._pointer is not None:
+            drawing_provider = CanvasDrawingProvider(pointer=self._pointer)
+            self._environment_registry.register(AbstractActionType.DRAW_STROKES, drawing_provider, priority=10)
+
+        # Phase 2: Closed-Loop Primitive Engine Components
+        self._primitive_validator = PrimitiveValidator()
+        self._multi_evidence_verifier = multi_evidence_verifier or MultiEvidenceActionVerifier()
+        self._primitive_composer = PrimitiveComposer(
+            model_client=self._session_manager,
+            validator=self._primitive_validator,
+        )
+        self._primitive_execution_controller = PrimitiveExecutionController(
+            validator=self._primitive_validator,
+            verifier=self._multi_evidence_verifier,
+            provider_registry=self._environment_registry,
+            pointer=self._pointer,
+            keyboard=self._keyboard,
+            workspace=self._workspace,
+            application_launcher=self._application_launcher,
+        )
+
+        # Phase 3: Target Grounding Infrastructure
+        self._grounding_validator = GroundingValidator()
+        self._vlm_grounding_verifier = vlm_grounding_verifier or VLMGroundingVerifier()
+
+        # Phase 4: Failure Diagnosis & Replanning
+        self._failure_analyst = CognitiveFailureAnalyst()
+        self._progress_graph: Optional[Any] = None
+
+        # Phase 2G.1: Long-Horizon Context, Checkpointing & Trajectory Memory
+        self._checkpoint_manager = CheckpointManager()
+        self._context_compactor = ContextCompactor()
+        self._trajectory_memory = TrajectoryMemory()
+
+    @property
+    def checkpoint_manager(self) -> CheckpointManager:
+        return self._checkpoint_manager
+
+    @property
+    def context_compactor(self) -> ContextCompactor:
+        return self._context_compactor
+
+    @property
+    def trajectory_memory(self) -> TrajectoryMemory:
+        return self._trajectory_memory
+
+    @property
+    def recovery_manager(self) -> AgentRecoveryManager:
+        return self._recovery_manager
+
+    @property
+    def recovery_records(self) -> List[RecoveryRecord]:
+        return self._recovery_manager.get_history()
+
+    @property
+    def progress_graph(self) -> Optional[Any]:
+        return self._progress_graph
+
+    @property
+    def failure_analyst(self) -> CognitiveFailureAnalyst:
+        return self._failure_analyst
+
+    @property
+    def grounding_validator(self) -> GroundingValidator:
+        return self._grounding_validator
+
+    @property
+    def primitive_validator(self) -> PrimitiveValidator:
+        return self._primitive_validator
+
+    @property
+    def multi_evidence_verifier(self) -> MultiEvidenceActionVerifier:
+        return self._multi_evidence_verifier
+
+    @property
+    def primitive_composer(self) -> PrimitiveComposer:
+        return self._primitive_composer
+
+    @property
+    def primitive_execution_controller(self) -> PrimitiveExecutionController:
+        return self._primitive_execution_controller
+
+    @property
+    def primitive_controller(self) -> PrimitiveExecutionController:
+        return self._primitive_execution_controller
+
+    @property
+    def router(self) -> Optional[ModelRouter]:
+        return self._router
+
+    @property
+    def decision_engine(self) -> Optional[Union[OrbitDecisionEngine, CognitiveDecisionEngine]]:
+        return self._decision_engine
+
+    @property
+    def recovery_manager(self) -> AgentRecoveryManager:
+        return self._recovery_manager
+
+    @property
+    def world_model(self) -> AgentWorldModel:
+        return self._world_model
+
+    @property
+    def goal_decomposer(self) -> HierarchicalGoalDecomposer:
+        return self._goal_decomposer
+
+    @property
+    def runtime_feasibility_evaluator(self) -> RuntimeFeasibilityEvaluator:
+        return self._runtime_feasibility_evaluator
+
+    @property
+    def environment_registry(self) -> EnvironmentProviderRegistry:
+        return self._environment_registry
+
+    async def _dispatch_physical_action(
+        self,
+        action: Any,
+        pre_obs: CurrentStateObservation,
+        resolved_coords: Optional[Tuple[int, int]] = None,
+        cancel_token: Optional[Any] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """Delegate physical dispatch strictly to canonical PrimitiveExecutionController."""
+        return await self._primitive_execution_controller.dispatch_physical_action(
+            action=action,
+            pre_obs=pre_obs,
+            resolved_coords=resolved_coords,
+            cancel_token=cancel_token,
+        )
+
+    def set_model_session_manager(self, msm: ModelSessionManager) -> None:
+        """Update the underlying ModelSessionManager and instantiate ModelRouter."""
+        self._session_manager = msm
+        self._router = ModelRouter(session_manager=msm)
+        self._interpreter.set_model_session_manager(msm)
+        self._decision_engine.set_model_session_manager(msm)
+        self._goal_decomposer.set_model_session_manager(msm)
+
+    def set_router(self, router: ModelRouter) -> None:
+        """Attach an explicit ModelRouter."""
+        self._router = router
+        self._session_manager = router.session_manager
+        self._interpreter.set_model_session_manager(router.session_manager)
+        self._decision_engine.set_model_session_manager(router.session_manager)
+        self._goal_decomposer.set_model_session_manager(router.session_manager)
+
+    async def run(
+        self,
+        prompt: str,
+        session_id: str = "default_session",
+        task_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        routing_policy: Optional[RoutingPolicy] = None,
+        cancel_token: Optional[CancellationToken] = None,
+    ) -> AgentExecutionResult:
+        """Run the authoritative production AI-native agent execution loop end-to-end."""
+        effective_task_id = task_id or f"agt_{uuid4().hex[:8]}"
+        t_start = time.perf_counter()
+        last_progress_time = time.perf_counter()
+
+        # Epistemic per-task ephemeral memory container
+        self._active_task_memory = TaskScopedMemory(task_id=effective_task_id)
+
+        try:
+            # 0. Canonical State Machine Initialization
+            sm = AgentLoopStateMachine(initial_state=AgentLoopState.INITIALIZING)
+            logger.info("AgentExecutionLoop starting task %s: '%s'", effective_task_id, prompt)
+
+            context = dict(context or {})
+
+            # 1. LLM Intent Interpretation
+            objective = await self._interpreter.interpret(prompt, context)
+            logger.info(
+                "Interpreted Objective: Goal='%s', EndCondition='%s', TargetEntities=%s",
+                objective.user_goal,
+                objective.end_condition,
+                objective.target_entities,
+            )
+
+            # 1a. Epistemic Ambiguity Gate (Fail-Closed with 0 physical dispatches)
+            if not prompt or not prompt.strip() or objective.user_goal == "Empty prompt":
+                sm.transition_to(
+                    AgentLoopState.FAILED,
+                    cycle_number=0,
+                    failure_reason="Prompt is empty or unresolved",
+                )
+                return AgentExecutionResult(
+                    task_id=effective_task_id,
+                    objective=objective,
+                    is_success=False,
+                    total_steps=0,
+                    step_history=[],
+                    final_status=TaskCompletionStatus.UNSUPPORTED,
+                    failure_reason="Prompt is empty or unresolved",
+                    failure_code="PROMPT_EMPTY_OR_AMBIGUOUS",
+                    elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                    state_transitions=sm.history,
+                    cycle_traces=[],
+                    recovery_records=[],
+                )
+
+            # Record goal in task working memory
+            self._active_task_memory.store_fact("user_goal", objective.user_goal, category="objective")
+
+            # 1b. World Model & Hierarchical Goal Decomposition
+            self._world_model = self._world_model.model_copy(update={"session_id": session_id})
+            decomposed_plan = await self._goal_decomposer.decompose(objective, self._world_model)
+            logger.info(
+                "Goal Decomposed into %d milestone(s): %s",
+                len(decomposed_plan.sub_objectives),
+                [s.title for s in decomposed_plan.sub_objectives],
+            )
+
+            self._progress_graph = ProgressGraph(
+                goal=objective.user_goal,
+                sub_objectives=decomposed_plan.sub_objectives,
+            )
+            self._world_model = self._world_model.model_copy(
+                update={"progress_snapshot": self._progress_graph.create_snapshot()}
+            )
+
+            # 1c. Runtime Environment Feasibility Evaluation
+            if hasattr(self._observer, "observe"):
+                initial_obs = await self._observer.observe(objective)
+            elif hasattr(self._observer, "capture_observation"):
+                initial_obs = await self._observer.capture_observation()
+            else:
+                initial_obs = CurrentStateObservation()
+            self._world_model = WorldModelUpdater.update_from_observation(self._world_model, initial_obs)
+
+            for sub in decomposed_plan.sub_objectives:
+                rt_feas = await self._runtime_feasibility_evaluator.evaluate(
+                    sub_objective=sub,
+                    world_model=self._world_model,
+                    observation=initial_obs,
+                    provider_registry=self._environment_registry,
+                )
+                if not rt_feas.is_feasible:
+                    logger.warning("[RUNTIME FEASIBILITY GATE] Sub-goal '%s' blocked: %s", sub.title, rt_feas.blocking_reason)
+                    sm.transition_to(
+                        AgentLoopState.FAILED,
+                        cycle_number=0,
+                        failure_reason=rt_feas.blocking_reason,
+                    )
+                    return AgentExecutionResult(
+                        task_id=effective_task_id,
+                        objective=objective,
+                        is_success=False,
+                        total_steps=0,
+                        step_history=[],
+                        final_status=TaskCompletionStatus.UNSUPPORTED,
+                        failure_reason=rt_feas.blocking_reason,
+                        failure_code="RUNTIME_ENVIRONMENT_INFEASIBLE",
+                        elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                        state_transitions=sm.history,
+                        cycle_traces=[],
+                        recovery_records=[],
+                    )
+
+            # 2. Semantic Feasibility Evaluation & Sub-goal Directives (PHASE A+B)
+            # PHASE A: Store directives per-subgoal so execution loop can carry the active directive
+            subgoal_directives: Dict[str, Any] = {}
+            for sub in decomposed_plan.sub_objectives:
+                directive, sem_report = self._planner.plan_subgoal(
+                    objective=objective,
+                    subgoal=sub,
+                    world_model=self._world_model,
+                    observation=initial_obs,
+                )
+                if not sem_report.is_feasible:
+                    logger.warning("[SEMANTIC FEASIBILITY GATE] Sub-goal '%s' rejected: %s", sub.title, sem_report.rejection_reasons)
+                    sm.transition_to(
+                        AgentLoopState.FAILED,
+                        cycle_number=0,
+                        failure_reason="; ".join(sem_report.rejection_reasons),
+                    )
+                    return AgentExecutionResult(
+                        task_id=effective_task_id,
+                        objective=objective,
+                        is_success=False,
+                        total_steps=0,
+                        step_history=[],
+                        final_status=TaskCompletionStatus.UNSUPPORTED,
+                        failure_reason="; ".join(sem_report.rejection_reasons),
+                        failure_code="GOAL_NOT_FEASIBLY_EXECUTABLE",
+                        elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                        state_transitions=sm.history,
+                        cycle_traces=[],
+                        recovery_records=[],
+                    )
+                # PHASE A: Persist directive keyed by subgoal ID
+                if directive is not None:
+                    subgoal_directives[sub.sub_id] = directive
+                    logger.debug("[PLAN DIRECTIVE] Stored directive '%s' for subgoal '%s'", directive.directive_id, sub.sub_id)
+
+            step_history: List[CognitiveStepResult] = []
+            cycle_traces: List[CycleExecutionTrace] = []
+            consecutive_identical_actions = 0
+            consecutive_redundant_actions = 0
+            last_action_signature: Optional[str] = None
+            target_resolution_failures = 0
+            last_observed_id: Optional[str] = None
+            step_idx = 0
+            current_obs: Optional[CurrentStateObservation] = initial_obs
+
+            while step_idx < self._budget.max_total_actions:
+                t_cycle_start = time.perf_counter()
+                cycle_trace = CycleExecutionTrace(
+                    cycle_number=step_idx,
+                    remaining_action_budget=self._budget.max_total_actions - step_idx,
+                )
+
+                # Check Cancellation
+                if cancel_token and cancel_token.is_cancelled:
+                    logger.info("AgentExecutionLoop received cancellation for task %s", effective_task_id)
+                    cancel_msg = cancel_token.reason or "Cancelled by operator"
+                    if "cancel" not in cancel_msg.lower():
+                        cancel_msg = f"Cancelled: {cancel_msg}"
+                    sm.transition_to(
+                        AgentLoopState.CANCELLED,
+                        cycle_number=step_idx,
+                        observation_id=last_observed_id or "",
+                        failure_reason=cancel_msg,
+                    )
+                    return AgentExecutionResult(
+                        task_id=effective_task_id,
+                        objective=objective,
+                        is_success=False,
+                        total_steps=len(step_history),
+                        step_history=step_history,
+                        final_status=TaskCompletionStatus.CANCELLED,
+                        failure_reason=cancel_msg,
+                        failure_code="TASK_CANCELLED",
+                        elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                        state_transitions=sm.history,
+                        cycle_traces=cycle_traces,
+                        recovery_records=self._recovery_manager.get_history(),
+                    )
+
+                # Check No-Progress Timeout
+                if time.perf_counter() - last_progress_time > self._budget.no_progress_timeout_sec:
+                    logger.warning("No-progress timeout reached (%.1fs) for task %s", self._budget.no_progress_timeout_sec, effective_task_id)
+                    sm.transition_to(
+                        AgentLoopState.FAILED,
+                        cycle_number=step_idx,
+                        observation_id=last_observed_id or "",
+                        failure_reason="No progress observed within budget timeout",
+                    )
+                    return AgentExecutionResult(
+                        task_id=effective_task_id,
+                        objective=objective,
+                        is_success=False,
+                        total_steps=len(step_history),
+                        step_history=step_history,
+                        final_status=TaskCompletionStatus.FAILED,
+                        failure_reason="No progress observed within budget timeout",
+                        failure_code="NO_PROGRESS_TIMEOUT",
+                        elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                        state_transitions=sm.history,
+                        cycle_traces=cycle_traces,
+                        recovery_records=self._recovery_manager.get_history(),
+                    )
+
+                # -------------------------------------------------------------
+                # PHASE 1: OBSERVING (Fresh Live Observation)
+                # -------------------------------------------------------------
+                sm.transition_to(AgentLoopState.OBSERVING, cycle_number=step_idx, observation_id=last_observed_id or "")
+
+                # If cycle 0 or observation was consumed, capture fresh desktop state
+                if current_obs is None:
+                    current_obs = await self._observer.observe(objective)
+
+                # ENFORCE FRESH OBSERVATION INVARIANT
+                # A model decision for cycle N+1 must never use a stale observation identical to cycle N
+                freshness_valid = True
+                if last_observed_id is not None and current_obs.observation_id == last_observed_id and step_idx > 0:
+                    logger.warning("Stale observation detected (id=%s); triggering fresh recapture", current_obs.observation_id)
+                    await asyncio.sleep(0.3)
+                    current_obs = await self._observer.observe(objective)
+                    freshness_valid = False
+
+                last_observed_id = current_obs.observation_id
+
+                # Populate Observation section of CycleExecutionTrace
+                cycle_trace.observation_id = current_obs.observation_id
+                cycle_trace.freshness_validated = freshness_valid
+                cycle_trace.foreground_window = current_obs.active_window_title
+                cycle_trace.visible_windows = [str(w.get("title", "")) for w in current_obs.visible_windows if w.get("title")]
+                cycle_trace.ocr_summary = ", ".join(current_obs.ocr_tokens[:10]) if current_obs.ocr_tokens else ""
+                cycle_trace.ui_elements_count = current_obs.perceived_elements_count
+                cycle_trace.screenshot_available = (
+                    current_obs.desktop_observation is not None
+                    and current_obs.desktop_observation.screenshot is not None
+                )
+
+                # -------------------------------------------------------------
+                # PHASE 2: INDEPENDENT GOAL VERIFICATION CHECK
+                # -------------------------------------------------------------
+                if self._goal_verifier is not None:
+                    try:
+                        goal_check = await self._goal_verifier.verify_goal_achievement(
+                            task_id=effective_task_id,
+                            objective=objective,
+                            current_observation=current_obs,
+                            step_history=step_history,
+                        )
+                        is_sat = getattr(goal_check, "is_satisfied", getattr(goal_check, "is_completed", False)) or (getattr(goal_check, "status", None) == TaskCompletionStatus.COMPLETED)
+                        cycle_trace.goal_verifier_evaluated = True
+                        cycle_trace.goal_satisfied = bool(is_sat)
+                        ev = getattr(goal_check, "evidence", None)
+                        cycle_trace.goal_supporting_evidence = getattr(goal_check, "evidence_reasons", []) or ([str(getattr(ev, "verified_text", ""))] if ev and getattr(ev, "verified_text", None) else [])
+
+                        if is_sat:
+                            logger.info("Independent GoalVerifier confirmed task completion for %s", effective_task_id)
+                            sm.transition_to(
+                                AgentLoopState.EVALUATING_PROGRESS,
+                                cycle_number=step_idx,
+                                observation_id=current_obs.observation_id,
+                                goal_satisfied=True,
+                            )
+                            sm.transition_to(
+                                AgentLoopState.COMPLETED,
+                                cycle_number=step_idx,
+                                observation_id=current_obs.observation_id,
+                                goal_satisfied=True,
+                            )
+                            cycle_trace.goal_progress = "COMPLETED"
+                            cycle_trace.meaningful_state_change = True
+                            formatted_trace = format_cycle_trace_block(cycle_trace)
+                            logger.info("\n%s", formatted_trace)
+                            cycle_traces.append(cycle_trace)
+
+                            return AgentExecutionResult(
+                                task_id=effective_task_id,
+                                objective=objective,
+                                is_success=True,
+                                total_steps=len(step_history),
+                                step_history=step_history,
+                                final_status=TaskCompletionStatus.COMPLETED,
+                                elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                                state_transitions=sm.history,
+                                cycle_traces=cycle_traces,
+                                recovery_records=self._recovery_manager.get_history(),
+                            )
+                    except Exception as gv_err:
+                        logger.debug("GoalVerifier evaluation notice: %s", gv_err)
+
+                # -------------------------------------------------------------
+                # PHASE 3: REASONING (Agent Decision Engine / Model Router)
+                # -------------------------------------------------------------
+                sm.transition_to(AgentLoopState.REASONING, cycle_number=step_idx, observation_id=current_obs.observation_id)
+
+                # Inject Phase 2G.1 Trajectory Memory feedback / loop prevention
+                trajectory_guidance = self._trajectory_memory.get_recovery_guidance()
+                if trajectory_guidance:
+                    if not context.get("feedback"):
+                        context["feedback"] = trajectory_guidance
+                    else:
+                        context["feedback"] = f"{context['feedback']} | {trajectory_guidance}"
+
+                decide_fn = getattr(self._decision_engine, "decide_next_step", None) or getattr(self._decision_engine, "decide_next_action", None)
+                if not callable(decide_fn):
+                    raise RuntimeError("No callable decision method found on decision engine.")
+                decide_kwargs: Dict[str, Any] = {
+                    "objective": objective,
+                    "observation": current_obs,
+                    "step_history": step_history,
+                    "step_index": step_idx,
+                }
+                try:
+                    sig = inspect.signature(decide_fn)
+                    if "routing_policy" in sig.parameters:
+                        decide_kwargs["routing_policy"] = routing_policy
+                    if "task_context" in sig.parameters:
+                        decide_kwargs["task_context"] = context
+                    if "task_requirements" in sig.parameters:
+                        decide_kwargs["task_requirements"] = getattr(objective, "task_requirements", None)
+                    if "failure_feedback" in sig.parameters:
+                        last_step = step_history[-1] if step_history else None
+                        last_diag = getattr(last_step, "failure_diagnosis", None) or getattr(last_step, "reason_summary", None) if (last_step and not getattr(last_step, "outcome_verified", False)) else None
+                        decide_kwargs["failure_feedback"] = last_diag
+                    if "user_goal" in sig.parameters:
+                        decide_kwargs["user_goal"] = getattr(objective, "user_goal", prompt)
+                except Exception:
+                    pass
+
+                decision: CognitiveDecision = await decide_fn(**decide_kwargs)
+
+                # Extract Model Routing & Decision Telemetry into trace
+                get_tr_fn = getattr(self._decision_engine, "get_recent_traces", None)
+                if callable(get_tr_fn):
+                    try:
+                        recent_traces = get_tr_fn(1)
+                        if isinstance(recent_traces, list) and recent_traces:
+                            dtrace = recent_traces[-1]
+                            if hasattr(dtrace, "model_id") and "mock" not in type(dtrace.model_id).__name__.lower():
+                                cycle_trace.model_id = str(dtrace.model_id)
+                                cycle_trace.model_provider = str(dtrace.model_provider)
+                                prov_upper = str(dtrace.model_provider).upper()
+                                is_local_provider = prov_upper in ("OLLAMA", "LM_STUDIO", "LOCAL_FILE") or "LOCAL" in prov_upper
+                                cycle_trace.local_or_cloud = "CLOUD" if (getattr(dtrace, "escalated_to_cloud", False) or not is_local_provider) else "LOCAL"
+                                cycle_trace.vision_capable = bool(getattr(dtrace, "used_vision", False))
+                                cycle_trace.screenshot_attached = "SCREENSHOT" in getattr(dtrace, "input_modalities", [])
+                                lat = getattr(dtrace, "model_latency_ms", None)
+                                cycle_trace.model_latency_ms = float(lat) if isinstance(lat, (int, float)) else None
+                                cycle_trace.capabilities = [str(c) for c in getattr(dtrace, "input_modalities", [])]
+                                cycle_trace.raw_model_response = getattr(dtrace, "raw_response", None)
+                    except Exception as tr_err:
+                        logger.debug("Trace extraction notice: %s", tr_err)
+
+                cycle_trace.decision_summary = decision.decision_summary or ""
+                cycle_trace.decision_confidence = float(decision.decision_confidence) if isinstance(decision.decision_confidence, (int, float)) else 1.0
+                cycle_trace.goal_progress = "GOAL_SATISFIED" if decision.is_goal_satisfied else "IN_PROGRESS"
+                cycle_trace.next_action_type = decision.next_action.action_type.value if decision.next_action else None
+                cycle_trace.next_action_params = decision.next_action.parameters if decision.next_action else {}
+
+                # Publish step event to EventBus
+                if self._event_bus:
+                    await self._event_bus.publish(
+                        RuntimeEvent(
+                            event_id=f"evt_{uuid4().hex[:12]}",
+                            event_type=EventType.EXECUTION_RECORD_UPDATED,
+                            session_id=session_id or "default_session",
+                            correlation_id=effective_task_id,
+                            timestamp=datetime.now(timezone.utc),
+                            payload={
+                                "task_id": effective_task_id,
+                                "step_index": step_idx,
+                                "decision_summary": decision.decision_summary,
+                                "action_type": decision.next_action.action_type.value if decision.next_action else None,
+                                "escalated_to_llm": decision.escalated_to_llm,
+                            },
+                        )
+                    )
+
+                # CRITICAL PRODUCTION INVARIANT 1: "MODEL DECISION IS NOT REALITY"
+                # If model claims goal is satisfied or emits COMPLETE_GOAL, independently verify with GoalVerifier!
+                is_model_claiming_completion = decision.is_goal_satisfied or (
+                    decision.next_action and decision.next_action.action_type == AbstractActionType.COMPLETE_GOAL
+                )
+
+                if is_model_claiming_completion:
+                    logger.info("Model proposed goal completion at step %d; verifying reality against live desktop", step_idx)
+                    goal_truly_verified = False
+                    g_eval: Optional[Any] = None
+                    if self._goal_verifier is not None:
+                        try:
+                            g_eval = await self._goal_verifier.verify_goal_achievement(
+                                task_id=effective_task_id,
+                                objective=objective,
+                                current_observation=current_obs,
+                                step_history=step_history,
+                            )
+                            is_sat = getattr(g_eval, "is_satisfied", getattr(g_eval, "is_completed", False)) or (getattr(g_eval, "status", None) == TaskCompletionStatus.COMPLETED)
+                            goal_truly_verified = bool(is_sat)
+                        except Exception as g_err:
+                            logger.debug("Goal verification evaluation error: %s", g_err)
+                            goal_truly_verified = False
+                    else:
+                        # PHASE F1 — Fail CLOSED: no independent verifier → completion CANNOT be confirmed
+                        goal_truly_verified = False
+
+                    if goal_truly_verified:
+                        sm.transition_to(
+                            AgentLoopState.EVALUATING_PROGRESS,
+                            cycle_number=step_idx,
+                            observation_id=current_obs.observation_id,
+                            decision_id=decision.decision_id,
+                            goal_satisfied=True,
+                        )
+                        sm.transition_to(
+                            AgentLoopState.COMPLETED,
+                            cycle_number=step_idx,
+                            observation_id=current_obs.observation_id,
+                            decision_id=decision.decision_id,
+                            goal_satisfied=True,
+                        )
+                        cycle_trace.goal_progress = "COMPLETED"
+                        cycle_trace.goal_satisfied = True
+                        cycle_trace.meaningful_state_change = True
+
+                        step_res = CognitiveStepResult(
+                            step_index=step_idx,
+                            decision=decision,
+                            action_dispatched=decision.next_action,
+                            execution_result=ActionExecutionResult(
+                                dispatch_success=True,
+                                expected_effect_observed=True,
+                                goal_satisfied=True,
+                                outcome_status=OutcomeStatus.EFFECT_VERIFIED,
+                            ),
+                            post_observation=current_obs,
+                            state_progress_detected=True,
+                            duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
+                            trace=cycle_trace,
+                        )
+                        step_history.append(step_res)
+                        cycle_traces.append(cycle_trace)
+                        logger.info("\n%s", format_cycle_trace_block(cycle_trace))
+
+                        return AgentExecutionResult(
+                            task_id=effective_task_id,
+                            objective=objective,
+                            is_success=True,
+                            total_steps=len(step_history),
+                            step_history=step_history,
+                            final_status=TaskCompletionStatus.COMPLETED,
+                            elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                            state_transitions=sm.history,
+                            cycle_traces=cycle_traces,
+                            recovery_records=self._recovery_manager.get_history(),
+                        )
+                    else:
+                        fail_r = getattr(g_eval, "failure_reason", "") if "g_eval" in locals() and g_eval else "no verifier eval"
+                        logger.warning("Goal satisfaction claimed by model, but independent reality check failed: %s; continuing closed-loop reasoning", fail_r)
+                        sm.transition_to(
+                            AgentLoopState.EVALUATING_PROGRESS,
+                            cycle_number=step_idx,
+                            observation_id=current_obs.observation_id,
+                            decision_id=decision.decision_id,
+                            goal_satisfied=False,
+                        )
+                        step_res = CognitiveStepResult(
+                            step_index=step_idx,
+                            decision=decision,
+                            action_dispatched=decision.next_action,
+                            execution_result=ActionExecutionResult(
+                                dispatch_success=False,
+                                expected_effect_observed=False,
+                                goal_satisfied=False,
+                                outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+                                error_message="Goal verification unverified or inconclusive; objective conditions not proven on live desktop",
+                            ),
+                            post_observation=current_obs,
+                            state_progress_detected=False,
+                            duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
+                            trace=cycle_trace,
+                        )
+                        step_history.append(step_res)
+                        cycle_traces.append(cycle_trace)
+                        context["feedback"] = "Premature completion claimed: Objective conditions are NOT met on screen. Inspect desktop and execute remaining sub-goals."
+                        step_idx += 1
+                        continue
+
+                # Handle ABORT from model
+                if decision.next_action and decision.next_action.action_type == AbstractActionType.ABORT_TASK:
+                    sm.transition_to(
+                        AgentLoopState.FAILED,
+                        cycle_number=step_idx,
+                        observation_id=current_obs.observation_id,
+                        decision_id=decision.decision_id,
+                        failure_reason=decision.reason_summary or decision.decision_summary,
+                    )
+                    step_res = CognitiveStepResult(
+                        step_index=step_idx,
+                        decision=decision,
+                        action_dispatched=decision.next_action,
+                        execution_result=ActionExecutionResult(
+                            dispatch_success=False,
+                            expected_effect_observed=False,
+                            goal_satisfied=False,
+                            outcome_status=OutcomeStatus.DISPATCH_FAILED,
+                            error_message=decision.reason_summary,
+                        ),
+                        post_observation=current_obs,
+                        state_progress_detected=False,
+                        duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
+                        trace=cycle_trace,
+                    )
+                    step_history.append(step_res)
+                    cycle_traces.append(cycle_trace)
+                    return AgentExecutionResult(
+                        task_id=effective_task_id,
+                        objective=objective,
+                        is_success=False,
+                        total_steps=len(step_history),
+                        step_history=step_history,
+                        final_status=TaskCompletionStatus.FAILED,
+                        failure_reason=decision.reason_summary or decision.decision_summary,
+                        failure_code="GOAL_UNACHIEVABLE",
+                        elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                        state_transitions=sm.history,
+                        cycle_traces=cycle_traces,
+                        recovery_records=self._recovery_manager.get_history(),
+                    )
+
+                action = decision.next_action
+                if not action:
+                    break
+
+                # PHASE B3: PrimitiveComposer is MANDATORY between decision engine and controller.
+                # The composer canonicalizes the action (enforces SemanticTarget, outcome_contract,
+                # no raw coordinates) while preserving the decision engine's action type authority.
+                _non_composable_types = (
+                    AbstractActionType.COMPLETE_GOAL,
+                    AbstractActionType.ABORT_TASK,
+                    AbstractActionType.WAIT,
+                    AbstractActionType.WAIT_SETTLE,
+                )
+                if action.action_type not in _non_composable_types:
+                    try:
+                        # Resolve active directive for current subgoal
+                        _active_directive = None
+                        if self._progress_graph is not None:
+                            _active_sg = self._progress_graph.get_active_subgoal()
+                            if _active_sg is not None:
+                                _active_directive = subgoal_directives.get(_active_sg.sub_id)
+
+                        if _active_directive is not None:
+                            # Compose from authoritative PlanDirective (preferred_primitives govern)
+                            composed_seq = self._primitive_composer.compose_from_directive(
+                                _active_directive
+                            )
+                            if composed_seq.actions:
+                                # Use the composed action whose type matches the decision engine's intent
+                                matching = [
+                                    a for a in composed_seq.actions
+                                    if a.action_type == action.action_type
+                                ]
+                                if matching:
+                                    # Merge: keep decision engine's parameters, use composer's contract/target
+                                    _composed = matching[0]
+                                    if not action.outcome_contract and _composed.outcome_contract:
+                                        action.outcome_contract = _composed.outcome_contract
+                                    if not action.target and _composed.target:
+                                        action.target = _composed.target
+                                    if not action.expected_effect and _composed.expected_effect:
+                                        action.expected_effect = _composed.expected_effect
+                                else:
+                                    # Decision engine selected a different valid primitive; validate it directly
+                                    val_res = self._primitive_validator.validate_action(action)
+                                    if val_res.is_valid and val_res.validated_action:
+                                        action = val_res.validated_action
+                        else:
+                            # No directive available: run through PrimitiveValidator directly to enforce contract
+                            val_res = self._primitive_validator.validate_action(action)
+                            if val_res.is_valid and val_res.validated_action:
+                                action = val_res.validated_action
+                    except Exception as _comp_err:
+                        logger.debug("[COMPOSER] Composition notice (non-fatal): %s", _comp_err)
+
+                # If outcome_contract is missing on basic action, attach a default fallback contract
+                if action.outcome_contract is None and action.action_type not in (
+                    AbstractActionType.WAIT,
+                    AbstractActionType.COMPLETE_GOAL,
+                    AbstractActionType.ABORT_TASK,
+                ):
+                    action.outcome_contract = ActionOutcomeContract(
+                        expected_state_transition=f"{action.action_type.value}_completed",
+                        verification_strategy=VerificationStrategy.AUTO_ROUTED,
+                    )
+
+                # -------------------------------------------------------------
+                # REPEATED ACTION & IDEMPOTENCY SAFETY GUARD (Requirements C & D)
+                # -------------------------------------------------------------
+                is_redundant = False
+                redundancy_reason = ""
+                app_target_name = ""
+
+                if action.action_type == AbstractActionType.LAUNCH_APPLICATION:
+                    app_target_name = str(
+                        action.parameters.get(
+                            "application_name",
+                            action.parameters.get("app_name", action.target.name if action.target else ""),
+                        )
+                    ).strip().lower()
+
+                    # 1. Inspect current DesktopObservation: Check if requested application is already open
+                    already_open_hwnd = None
+                    already_open_title = ""
+                    for win in current_obs.visible_windows:
+                        w_title = (win.get("title") or "").lower()
+                        w_proc = (win.get("process_name") or "").lower()
+                        if app_target_name in w_title or app_target_name in w_proc:
+                            already_open_hwnd = win.get("hwnd")
+                            already_open_title = win.get("title", "")
+                            break
+
+                    if not already_open_hwnd and current_obs.active_window_title and app_target_name in current_obs.active_window_title.lower():
+                        already_open_hwnd = current_obs.active_window_hwnd
+                        already_open_title = current_obs.active_window_title
+
+                    # 2. Check if LAUNCH_APPLICATION for this specific app was already executed in step_history
+                    launch_already_succeeded = any(
+                        s.action_dispatched
+                        and s.action_dispatched.action_type == AbstractActionType.LAUNCH_APPLICATION
+                        and str(
+                            s.action_dispatched.parameters.get(
+                                "application_name",
+                                s.action_dispatched.parameters.get("app_name", s.action_dispatched.target.name if s.action_dispatched.target else ""),
+                            )
+                        ).strip().lower() == app_target_name
+                        and s.execution_result
+                        and s.execution_result.expected_effect_observed
+                        for s in step_history
+                    )
+
+                    if already_open_hwnd or launch_already_succeeded:
+                        is_redundant = True
+                        redundancy_reason = (
+                            f"Application '{app_target_name}' is ALREADY RUNNING and usable on desktop "
+                            f"(HWND: {already_open_hwnd}, Window: '{already_open_title}'). Re-launching is blocked."
+                        )
+                        # Application is already running; re-launching is blocked
+
+                # 3. General semantic check: Identical action and target already successfully executed
+                if not is_redundant and step_history and action.action_type not in (
+                    AbstractActionType.WAIT,
+                    AbstractActionType.COMPLETE_GOAL,
+                    AbstractActionType.ABORT_TASK,
+                ):
+                    last_step = step_history[-1]
+                    if (
+                        last_step.action_dispatched
+                        and last_step.action_dispatched.action_type == action.action_type
+                        and last_step.action_dispatched.parameters == action.parameters
+                        and last_step.execution_result
+                        and last_step.execution_result.expected_effect_observed
+                    ):
+                        is_redundant = True
+                        redundancy_reason = f"Action '{action.action_type.value}' with identical parameters was already executed and verified in previous step."
+
+                if is_redundant:
+                    consecutive_redundant_actions += 1
+                    logger.warning(
+                        "[REPEATED ACTION SAFETY GUARD] BLOCKED REDUNDANT ACTION: %s (Count: %d/%d). Reason: %s",
+                        action.action_type.value,
+                        consecutive_redundant_actions,
+                        self._budget.max_repeated_actions_without_progress,
+                        redundancy_reason,
+                    )
+
+                    # Hard Emergency Circuit Breaker
+                    if consecutive_redundant_actions >= self._budget.max_repeated_actions_without_progress:
+                        sm.transition_to(
+                            AgentLoopState.FAILED,
+                            cycle_number=step_idx,
+                            observation_id=current_obs.observation_id,
+                            action_id=action.action_id,
+                            action_type=action.action_type.value,
+                            failure_reason=f"Emergency Circuit Breaker: Redundant action '{action.action_type.value}' repeated {consecutive_redundant_actions} times",
+                        )
+                        return AgentExecutionResult(
+                            task_id=effective_task_id,
+                            objective=objective,
+                            is_success=False,
+                            total_steps=len(step_history),
+                            step_history=step_history,
+                            final_status=TaskCompletionStatus.FAILED,
+                            failure_reason=f"Emergency Circuit Breaker: Redundant action '{action.action_type.value}' blocked {consecutive_redundant_actions} times",
+                            failure_code="CIRCUIT_BREAKER_REDUNDANT_ACTION",
+                            elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                            state_transitions=sm.history,
+                            cycle_traces=cycle_traces,
+                            recovery_records=self._recovery_manager.get_history(),
+                        )
+
+                    # Inject redundancy evidence into reasoning context to force next unmet sub-goal
+                    context["feedback"] = (
+                        f"CRITICAL GUIDANCE: Action '{action.action_type.value}' was BLOCKED because {redundancy_reason} "
+                        f"The application is open and active. Proceed immediately to the NEXT unmet sub-goal "
+                        f"(e.g. TYPE_TEXT with the requested text). DO NOT emit LAUNCH_APPLICATION."
+                    )
+
+                    cycle_trace.dispatch_attempted = False
+                    cycle_trace.dispatch_success = True
+                    cycle_trace.expected_effect = "Reused existing verified application"
+                    cycle_trace.observed_effect = redundancy_reason
+                    cycle_trace.expected_effect_observed = True
+                    cycle_trace.meaningful_state_change = False
+                    cycle_trace.repeated_actions_count = consecutive_redundant_actions
+
+                    exec_result = ActionExecutionResult(
+                        action_id=action.action_id,
+                        dispatch_success=True,
+                        expected_effect_observed=True,
+                        goal_satisfied=False,
+                        outcome_status=OutcomeStatus.REDUNDANT_BLOCKED,
+                        verification_strategy=VerificationStrategy.AUTO_ROUTED,
+                        verification_reason=redundancy_reason,
+                        observed_delta={"status": "REDUNDANT_BLOCKED", "reused_existing": True},
+                        duration_ms=50.0,
+                    )
+                    step_res = CognitiveStepResult(
+                        step_index=step_idx,
+                        decision=decision,
+                        action_dispatched=action,
+                        execution_result=exec_result,
+                        post_observation=current_obs,
+                        state_progress_detected=False,
+                        duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
+                        trace=cycle_trace,
+                    )
+                    step_history.append(step_res)
+                    cycle_traces.append(cycle_trace)
+
+                    sm.transition_to(
+                        AgentLoopState.EVALUATING_PROGRESS,
+                        cycle_number=step_idx,
+                        observation_id=current_obs.observation_id,
+                        action_id=action.action_id,
+                        action_type=action.action_type.value,
+                        expected_effect_observed=True,
+                    )
+
+                    logger.info("\n%s", format_cycle_trace_block(cycle_trace))
+                    step_idx += 1
+                    continue
+
+                consecutive_redundant_actions = 0
+
+                # Repeated Action Stagnation Detection
+                act_sig = f"{action.action_type.value}:{action.parameters}"
+                if act_sig == last_action_signature:
+                    consecutive_identical_actions += 1
+                    cycle_trace.repeated_actions_count = consecutive_identical_actions
+                    if consecutive_identical_actions >= self._budget.max_repeated_actions_without_progress:
+                        logger.warning("Repeated action limit reached without state progress: %s", act_sig)
+                        sm.transition_to(
+                            AgentLoopState.FAILED,
+                            cycle_number=step_idx,
+                            observation_id=current_obs.observation_id,
+                            action_id=action.action_id,
+                            action_type=action.action_type.value,
+                            failure_reason=f"Action repeated {consecutive_identical_actions} times without progress: {act_sig}",
+                        )
+                        return AgentExecutionResult(
+                            task_id=effective_task_id,
+                            objective=objective,
+                            is_success=False,
+                            total_steps=len(step_history),
+                            step_history=step_history,
+                            final_status=TaskCompletionStatus.FAILED,
+                            failure_reason=f"Action repeated {consecutive_identical_actions} times without progress: {act_sig}",
+                            failure_code="REPEATED_ACTION_STAGNATION",
+                            elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                            state_transitions=sm.history,
+                            cycle_traces=cycle_traces,
+                            recovery_records=self._recovery_manager.get_history(),
+                        )
+                else:
+                    consecutive_identical_actions = 0
+                    last_action_signature = act_sig
+
+                # -------------------------------------------------------------
+                # PHASE 4: VALIDATING_ACTION (Strict Protocol & Coordinate Isolation)
+                # -------------------------------------------------------------
+                sm.transition_to(
+                    AgentLoopState.VALIDATING_ACTION,
+                    cycle_number=step_idx,
+                    observation_id=current_obs.observation_id,
+                    action_id=action.action_id,
+                    action_type=action.action_type.value,
+                )
+
+                validation: ActionValidationResult = self._action_validator.validate(action)
+                if not validation.is_valid:
+                    logger.warning("Action validation failed for %s: %s (%s)", action.action_id, validation.failure_reason, validation.failure_code)
+                    exec_result = ActionExecutionResult(
+                        action_id=action.action_id,
+                        dispatch_success=False,
+                        expected_effect_observed=False,
+                        goal_satisfied=False,
+                        outcome_status=OutcomeStatus.DISPATCH_FAILED,
+                        error_message=validation.failure_reason,
+                        failure_code=validation.failure_code.value if validation.failure_code else "INVALID_ACTION",
+                    )
+                    step_res = CognitiveStepResult(
+                        step_index=step_idx,
+                        decision=decision,
+                        action_dispatched=action,
+                        execution_result=exec_result,
+                        post_observation=current_obs,
+                        state_progress_detected=False,
+                        duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
+                        trace=cycle_trace,
+                    )
+                    step_history.append(step_res)
+                    cycle_traces.append(cycle_trace)
+                    step_idx += 1
+                    current_obs = None
+                    continue
+
+                # -------------------------------------------------------------
+                # PHASE 5: GROUNDING_TARGET (Dynamic Coordinate Isolation Boundary)
+                # -------------------------------------------------------------
+                sm.transition_to(
+                    AgentLoopState.GROUNDING_TARGET,
+                    cycle_number=step_idx,
+                    observation_id=current_obs.observation_id,
+                    action_id=action.action_id,
+                    action_type=action.action_type.value,
+                )
+
+                # Only pointer-based interaction actions require physical screen coordinate grounding
+                requires_coordinates = action.action_type in (
+                    AbstractActionType.CLICK,
+                    AbstractActionType.DOUBLE_CLICK,
+                    AbstractActionType.RIGHT_CLICK,
+                )
+
+                resolved_coords = None
+                if action.target is not None and requires_coordinates:
+                    cycle_trace.semantic_target_name = action.target.name
+                    cycle_trace.semantic_target_role = action.target.role
+                    resolved_coords = await self._resolve_target_coordinates(action.target, observation=current_obs)
+                    if resolved_coords:
+                        cycle_trace.grounding_resolved = True
+                        cycle_trace.grounding_confidence = 0.95
+                        cycle_trace.resolved_coordinates = resolved_coords
+                        cycle_trace.target_evidence_source = "EVIDENCE_LOCATOR"
+                        target_resolution_failures = 0
+                    else:
+                        cycle_trace.grounding_resolved = False
+                        cycle_trace.grounding_confidence = 0.0
+                        cycle_trace.target_evidence_source = "RESOLUTION_FAILED"
+                        target_resolution_failures += 1
+                        logger.warning("Target resolution failed for target '%s' (failure %d/%d)", action.target.name, target_resolution_failures, self._budget.max_target_resolution_failures)
+                        if target_resolution_failures >= self._budget.max_target_resolution_failures:
+                            sm.transition_to(
+                                AgentLoopState.FAILED,
+                                cycle_number=step_idx,
+                                observation_id=current_obs.observation_id,
+                                action_id=action.action_id,
+                                failure_reason=f"Target resolution failed {target_resolution_failures} times for target '{action.target.name}'",
+                            )
+                            return AgentExecutionResult(
+                                task_id=effective_task_id,
+                                objective=objective,
+                                is_success=False,
+                                total_steps=len(step_history),
+                                step_history=step_history,
+                                final_status=TaskCompletionStatus.FAILED,
+                                failure_reason=f"Exceeded max target resolution failures for '{action.target.name}'",
+                                failure_code="TARGET_RESOLUTION_FAILED",
+                                elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                                state_transitions=sm.history,
+                                cycle_traces=cycle_traces,
+                                recovery_records=self._recovery_manager.get_history(),
+                            )
+                elif action.target is not None:
+                    # Target provided for semantic context (e.g. app name, window name, text field)
+                    cycle_trace.semantic_target_name = action.target.name
+                    cycle_trace.semantic_target_role = action.target.role
+                    cycle_trace.grounding_resolved = True
+                    cycle_trace.grounding_confidence = 1.0
+                    cycle_trace.target_evidence_source = "SEMANTIC_TARGET_RESOLVED"
+
+                # -------------------------------------------------------------
+                # PHASE 6: EXECUTING (Physical Action Dispatch)
+                # -------------------------------------------------------------
+                sm.transition_to(
+                    AgentLoopState.EXECUTING,
+                    cycle_number=step_idx,
+                    observation_id=current_obs.observation_id,
+                    action_id=action.action_id,
+                    action_type=action.action_type.value,
+                )
+
+                # Subgoal Lifecycle: Transition READY/PENDING -> IN_PROGRESS
+                if self._progress_graph:
+                    active_sg = self._progress_graph.get_active_subgoal()
+                    if active_sg and active_sg.status in (SubgoalStatus.READY, SubgoalStatus.PENDING):
+                        try:
+                            self._progress_graph.start_subgoal(active_sg.sub_id, action_id=action.action_id)
+                        except Exception:
+                            pass
+
+                cycle_trace.dispatch_attempted = True
+                controller_res = await self._primitive_execution_controller.execute_primitive(
+                    action=action,
+                    pre_observation=current_obs,
+                    objective=objective,
+                    grounding_fn=self._resolve_target_coordinates,
+                    safety_gate_fn=self._evaluate_safety_gate,
+                    observe_fn=self._observer.observe,
+                    cancel_token=cancel_token,
+                )
+                dispatch_success = controller_res.execution_outcome.dispatch_success
+                dispatch_err = controller_res.execution_outcome.error_message
+                post_obs = controller_res.post_observation
+                cycle_trace.dispatch_success = dispatch_success
+                cycle_trace.dispatch_error = dispatch_err
+
+                # -------------------------------------------------------------
+                # PHASE 7: WAITING_FOR_SETTLEMENT & FRESH POST-ACTION OBSERVATION
+                # -------------------------------------------------------------
+                sm.transition_to(
+                    AgentLoopState.WAITING_FOR_SETTLEMENT,
+                    cycle_number=step_idx,
+                    observation_id=current_obs.observation_id,
+                    action_id=action.action_id,
+                    action_type=action.action_type.value,
+                    dispatch_success=dispatch_success,
+                )
+
+                # Observation advancement verification (from controller's fresh observation)
+                cycle_trace.post_observation_id = post_obs.observation_id
+                cycle_trace.post_freshness_validated = (post_obs.observation_id != current_obs.observation_id)
+
+                obs_advanced = (post_obs.observation_id != current_obs.observation_id)
+                logger.info(
+                    "\n[CYCLE %d OBSERVATION VALIDATION]\n"
+                    "  Pre-Action Observation ID:  %s\n"
+                    "  Post-Action Observation ID: %s\n"
+                    "  Observation Advanced:       %s\n"
+                    "  Foreground Window Before:   '%s'\n"
+                    "  Foreground Window After:    '%s'\n"
+                    "  Visible Windows Before:     %s\n"
+                    "  Visible Windows After:      %s",
+                    step_idx,
+                    current_obs.observation_id,
+                    post_obs.observation_id,
+                    obs_advanced,
+                    current_obs.active_window_title,
+                    post_obs.active_window_title,
+                    [w.get("title") for w in current_obs.visible_windows[:4] if w.get("title")],
+                    [w.get("title") for w in post_obs.visible_windows[:4] if w.get("title")],
+                )
+
+                # -------------------------------------------------------------
+                # PHASE 8: VERIFYING_EFFECT (Immediate State Delta Verification)
+                # -------------------------------------------------------------
+                sm.transition_to(
+                    AgentLoopState.VERIFYING_EFFECT,
+                    cycle_number=step_idx,
+                    observation_id=post_obs.observation_id,
+                    action_id=action.action_id,
+                    action_type=action.action_type.value,
+                    dispatch_success=dispatch_success,
+                )
+
+                pre_state = DesktopStateSnapshot(
+                    snapshot_id=current_obs.observation_id,
+                    active_window_hwnd=current_obs.active_window_hwnd,
+                    active_window_title=current_obs.active_window_title,
+                    visible_windows=current_obs.visible_windows,
+                    target_app_exists=current_obs.target_app_exists,
+                    target_app_is_active=current_obs.target_app_is_active,
+                    canvas_status=current_obs.canvas_status or "UNKNOWN",
+                    ocr_tokens=current_obs.ocr_tokens,
+                )
+                post_state = DesktopStateSnapshot(
+                    snapshot_id=post_obs.observation_id,
+                    active_window_hwnd=post_obs.active_window_hwnd,
+                    active_window_title=post_obs.active_window_title,
+                    visible_windows=post_obs.visible_windows,
+                    target_app_exists=post_obs.target_app_exists,
+                    target_app_is_active=post_obs.target_app_is_active,
+                    canvas_status=post_obs.canvas_status or "UNKNOWN",
+                    ocr_tokens=post_obs.ocr_tokens,
+                )
+
+                outcome = await self._transition_verifier.verify_action_outcome(
+                    action=action,
+                    dispatch_success=dispatch_success,
+                    pre_state=pre_state,
+                    post_state=post_state,
+                    post_observation=post_obs.desktop_observation,
+                )
+
+                # Phase 2: Multi-Evidence Semantic Action Verification
+                me_res = await self._multi_evidence_verifier.verify_action_effect(
+                    action=action,
+                    pre_obs=current_obs,
+                    post_obs=post_obs,
+                )
+                if me_res.is_verified and not outcome.expected_effect_observed:
+                    outcome.expected_effect_observed = True
+                    outcome.verified = True
+                    outcome.outcome_status = OutcomeStatus.EFFECT_VERIFIED
+                    outcome.verification_reason = me_res.verification_reason
+
+                exec_result = ActionExecutionResult(
+                    action_id=action.action_id,
+                    dispatch_success=outcome.dispatch_success,
+                    expected_effect_observed=outcome.expected_effect_observed,
+                    goal_satisfied=outcome.goal_satisfied,
+                    outcome_status=outcome.outcome_status,
+                    verification_strategy=outcome.verification_strategy,
+                    verification_reason=outcome.verification_reason,
+                    observed_delta=outcome.observed_delta,
+                    error_message=dispatch_err or outcome.error_message,
+                    duration_ms=outcome.duration_ms,
+                )
+
+                cycle_trace.expected_effect = action.outcome_contract.expected_state_transition if action.outcome_contract else "visible_delta"
+                cycle_trace.observed_effect = str(outcome.observed_delta) if outcome.observed_delta is not None else "None"
+                cycle_trace.expected_effect_observed = outcome.expected_effect_observed
+                cycle_trace.verification_strategy = outcome.verification_strategy.value if hasattr(outcome.verification_strategy, "value") else str(outcome.verification_strategy)
+                cycle_trace.verification_reason = outcome.verification_reason or ""
+
+                # Structured diagnostics for TYPE_TEXT actions (Part 1)
+                if action.action_type == AbstractActionType.TYPE_TEXT:
+                    t_diag = getattr(self, "_last_text_input_diagnostics", {})
+                    txt_param = str(action.parameters.get("text", action.parameters.get("query", "")))
+                    logger.info(
+                        "\n[TYPE_TEXT EXECUTION & REALITY VERIFICATION]\n"
+                        "  Attempt ID:                  %s\n"
+                        "  Intended Text:               '%s' (len=%d)\n"
+                        "  Selected Strategy:           %s\n"
+                        "  Keyboard Adapter:            %s\n"
+                        "  Target Window (Before):      %s\n"
+                        "  Target Window (After):       %s\n"
+                        "  Dispatch Result:             %s\n"
+                        "  Actual Text Detected:        '%s'\n"
+                        "  Text Match Result:           %s\n"
+                        "  Verification Method:         %s\n"
+                        "  Expected Effect Observed:    %s\n"
+                        "  Goal Satisfied:              %s",
+                        t_diag.get("input_attempt_id", "N/A"),
+                        txt_param,
+                        len(txt_param),
+                        t_diag.get("selected_input_strategy", "NONE"),
+                        t_diag.get("keyboard_adapter_name", "NONE"),
+                        t_diag.get("target_window_before_typing", "UNKNOWN"),
+                        t_diag.get("target_window_after_typing", "UNKNOWN"),
+                        outcome.dispatch_success,
+                        outcome.observed_delta.get("observed_text", "NONE"),
+                        outcome.observed_delta.get("match_state", "UNKNOWN"),
+                        outcome.observed_delta.get("text_verification", {}).get("primary_source", "NONE"),
+                        outcome.expected_effect_observed,
+                        outcome.goal_satisfied,
+                    )
+
+                # -------------------------------------------------------------
+                # PHASE 9: RECOVERY OR PROGRESS EVALUATION
+                # -------------------------------------------------------------
+                # TRIPARTITE REALITY DISTINCTION:
+                # dispatch_success == True DOES NOT imply expected_effect_observed == True!
+                if not exec_result.expected_effect_observed:
+                    logger.warning("Action %s dispatched but expected effect was NOT observed; evaluating recovery", action.action_id)
+
+                    # PHASE C1-C2: Diagnostic Root-Cause Analysis (Guardrail 9)
+                    failure_rep = self._failure_analyst.analyze_failure(
+                        action=action,
+                        pre_obs=current_obs,
+                        post_obs=post_obs,
+                        exec_outcome=outcome,
+                        world_model=self._world_model,
+                    )
+                    logger.info(
+                        "[FAILURE ANALYST] Diagnosis for action %s: %s [%s] -> Remediation: %s",
+                        action.action_id,
+                        failure_rep.diagnosis,
+                        failure_rep.category.value,
+                        failure_rep.suggested_remediation_direction,
+                    )
+
+                    # PHASE C4: Classify failure — strategic failures trigger Planner replan
+                    # Strategic = non-transient or categories that cannot be fixed by tactical recovery
+                    _strategic_categories = {
+                        FailureCategory.TARGET_NOT_FOUND,
+                        FailureCategory.APPLICATION_CRASHED,
+                        FailureCategory.ENVIRONMENT_BLOCKED,
+                        FailureCategory.PERMISSION_DENIED,
+                    }
+                    _is_strategic_failure = (
+                        not failure_rep.is_transient
+                        or failure_rep.category in _strategic_categories
+                    )
+
+                    if self._recovery_manager.can_attempt_recovery():
+                        if _is_strategic_failure and self._progress_graph is not None:
+                            # PHASE C4: Strategic failure → AgentPlanner.replan() for new PlanDirective
+                            _active_sg_for_replan = self._progress_graph.get_active_subgoal()
+                            if _active_sg_for_replan is not None:
+                                logger.info(
+                                    "[STRATEGIC REPLAN] Failure category '%s' for subgoal '%s' triggers Planner replan",
+                                    failure_rep.category.value,
+                                    _active_sg_for_replan.sub_id,
+                                )
+                                # Inject failure diagnosis into world model so planner has context
+                                _updated_known = dict(self._world_model.known_information)
+                                _updated_known["last_failure_diagnosis"] = failure_rep.diagnosis
+                                _updated_known["last_failure_category"] = failure_rep.category.value
+                                self._world_model = self._world_model.model_copy(update={
+                                    "known_information": _updated_known,
+                                })
+                                try:
+                                    sub_obj = SubObjective(
+                                        sub_id=_active_sg_for_replan.sub_id,
+                                        title=_active_sg_for_replan.title,
+                                        description=_active_sg_for_replan.description,
+                                        dependencies=_active_sg_for_replan.dependencies,
+                                    )
+                                    new_directive, new_sem_report = self._planner.plan_subgoal(
+                                        objective=objective,
+                                        subgoal=sub_obj,
+                                        world_model=self._world_model,
+                                        observation=post_obs,
+                                    )
+                                    if new_sem_report.is_feasible and new_directive is not None:
+                                        # PHASE C5: New PlanDirective enters Composer→Validator→Controller next cycle
+                                        subgoal_directives[_active_sg_for_replan.sub_id] = new_directive
+                                        logger.info(
+                                            "[STRATEGIC REPLAN] New PlanDirective '%s' stored for subgoal '%s'",
+                                            new_directive.directive_id,
+                                            _active_sg_for_replan.sub_id,
+                                        )
+                                    else:
+                                        logger.warning(
+                                            "[STRATEGIC REPLAN] Replanning for subgoal '%s' infeasible: %s",
+                                            _active_sg_for_replan.sub_id,
+                                            getattr(new_sem_report, 'rejection_reasons', ''),
+                                        )
+                                except Exception as _replan_err:
+                                    logger.warning("[STRATEGIC REPLAN] Planner replan raised: %s", _replan_err)
+
+                        strategy, diag = self._recovery_manager.diagnose_failure(action, current_obs, post_obs, exec_result)
+                        sm.transition_to(
+                            AgentLoopState.RECOVERING,
+                            cycle_number=step_idx,
+                            observation_id=post_obs.observation_id,
+                            action_id=action.action_id,
+                            failure_reason=diag,
+                            recovery_attempt=self._recovery_manager.current_transition_recoveries + 1,
+                        )
+                        t_rec_start = time.perf_counter()
+                        recovery_action = None
+                        if hasattr(self._recovery_manager, "synthesize_recovery_primitive"):
+                            raw_action = self._recovery_manager.synthesize_recovery_primitive(strategy, action, post_obs)
+                            if isinstance(raw_action, AbstractAction):
+                                recovery_action = raw_action
+
+                        if hasattr(self._recovery_manager, "execute_recovery"):
+                            try:
+                                legacy_res = self._recovery_manager.execute_recovery(
+                                    strategy, action, post_obs, cycle_number=step_idx
+                                )
+                                if inspect.isawaitable(legacy_res):
+                                    await legacy_res
+                            except Exception as l_ex:
+                                logger.debug("execute_recovery invocation notice: %s", l_ex)
+
+                        rec_success = False
+                        rec_err = None
+
+                        if recovery_action is not None:
+                            logger.info(
+                                "[AGENT RECOVERY] Dispatching synthesized recovery primitive %s (%s) through PrimitiveExecutionController",
+                                recovery_action.action_type.value,
+                                recovery_action.action_id,
+                            )
+                            rec_ctrl_res = await self._primitive_execution_controller.execute_primitive(
+                                action=recovery_action,
+                                pre_observation=post_obs,
+                                grounding_fn=self._resolve_target_coordinates,
+                                safety_gate_fn=self._evaluate_safety_gate,
+                                observe_fn=self._observer.observe,
+                                objective=objective,
+                                cancel_token=cancel_token,
+                            )
+                            rec_outcome = rec_ctrl_res.execution_outcome
+                            post_obs = rec_ctrl_res.post_observation
+                            rec_success = rec_outcome.dispatch_success and rec_outcome.expected_effect_observed
+                            rec_err = rec_outcome.error_message
+                        else:
+                            logger.info("[AGENT RECOVERY] Strategy %s requires no physical action; refreshing observation for replanning", strategy.value)
+                            post_obs = await self._observer.observe(objective)
+                            rec_success = True
+
+                        rec_dur = (time.perf_counter() - t_rec_start) * 1000.0
+                        rec_record = self._recovery_manager.record_recovery(
+                            cycle_number=step_idx,
+                            strategy=strategy,
+                            action=action,
+                            diagnosis=diag,
+                            recovery_success=rec_success,
+                            details={"error": rec_err, "recovery_action": recovery_action.action_id if recovery_action else None},
+                            duration_ms=rec_dur,
+                        )
+                        cycle_trace.recovery_count = rec_record.attempt_number
+                        cycle_trace.post_observation_id = post_obs.observation_id
+                    else:
+                        # PHASE A3: Recovery budget exhausted — mark active subgoal FAILED in ProgressGraph
+                        logger.warning("Recovery budget exceeded for current transition; marking subgoal FAILED")
+                        if self._progress_graph is not None:
+                            _failed_sg = self._progress_graph.get_active_subgoal()
+                            if _failed_sg is not None and _failed_sg.status == SubgoalStatus.IN_PROGRESS:
+                                retry_allowed = self._progress_graph.fail_subgoal(
+                                    _failed_sg.sub_id,
+                                    reason=f"Recovery budget exhausted after action '{action.action_id}' failure: {failure_rep.diagnosis}",
+                                    allow_retry=(_failed_sg.retry_count < _failed_sg.max_retries),
+                                )
+                                logger.info(
+                                    "[PROGRESS GRAPH] Subgoal '%s' marked FAILED (retry_allowed=%s)",
+                                    _failed_sg.sub_id,
+                                    retry_allowed,
+                                )
+                else:
+                    self._recovery_manager.reset_transition_counter()
+
+                # PHASE 10: EVALUATING_PROGRESS
+                sm.transition_to(
+                    AgentLoopState.EVALUATING_PROGRESS,
+                    cycle_number=step_idx,
+                    observation_id=post_obs.observation_id,
+                    action_id=action.action_id,
+                    expected_effect_observed=exec_result.expected_effect_observed,
+                )
+
+                progress_detected = self._evaluate_state_progress(current_obs, post_obs, exec_result)
+                cycle_trace.meaningful_state_change = progress_detected
+
+                if progress_detected:
+                    last_progress_time = time.perf_counter()
+                    consecutive_identical_actions = 0
+                    if self._progress_graph:
+                        active_sg = self._progress_graph.get_active_subgoal()
+                        if active_sg and active_sg.status == SubgoalStatus.IN_PROGRESS:
+                            self._progress_graph.complete_subgoal(
+                                active_sg.sub_id,
+                                evidence={"step_index": step_idx, "action_id": action.action_id},
+                            )
+
+                # PHASE A: Update WorldModel from post_obs every cycle (continuous world model update)
+                self._world_model = WorldModelUpdater.update_from_observation(self._world_model, post_obs)
+                if self._progress_graph:
+                    self._world_model = self._world_model.model_copy(
+                        update={"progress_snapshot": self._progress_graph.create_snapshot()}
+                    )
+
+                # Log formatted trace block
+                formatted_trace = format_cycle_trace_block(cycle_trace)
+                logger.info("\n%s", formatted_trace)
+
+                step_res = CognitiveStepResult(
+                    step_index=step_idx,
+                    decision=decision,
+                    action_dispatched=action,
+                    execution_result=exec_result,
+                    post_observation=post_obs,
+                    state_progress_detected=progress_detected,
+                    duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
+                    trace=cycle_trace,
+                )
+                step_history.append(step_res)
+                cycle_traces.append(cycle_trace)
+
+                # Phase 2G.1: Record step in TrajectoryMemory
+                self._trajectory_memory.record_step(
+                    step_res,
+                    active_window_title=current_obs.active_window_title if hasattr(current_obs, "active_window_title") else None,
+                )
+
+                # Phase 2G.1: Capture ContextCheckpoint on cadence or milestone
+                if self._checkpoint_manager.should_checkpoint(step_idx, is_milestone_completed=progress_detected):
+                    self._checkpoint_manager.create_checkpoint(
+                        step_index=step_idx,
+                        objective=objective,
+                        observation=current_obs if isinstance(current_obs, CurrentStateObservation) else None,
+                        accumulated_summary=decision.decision_summary or "",
+                        recent_actions_summary=f"Dispatched {action.action_type.value} -> {'Verified' if progress_detected else 'Unverified'}",
+                        is_milestone_boundary=progress_detected,
+                    )
+
+                # Pass fresh post-action observation into next cycle (N+1)
+                current_obs = post_obs
+                step_idx += 1
+
+            # Budget exhausted without completion
+            sm.transition_to(
+                AgentLoopState.FAILED,
+                cycle_number=step_idx,
+                observation_id=last_observed_id or "",
+                failure_reason=f"Exceeded maximum action budget ({self._budget.max_total_actions})",
+            )
+            return AgentExecutionResult(
+                task_id=effective_task_id,
+                objective=objective,
+                is_success=False,
+                total_steps=len(step_history),
+                step_history=step_history,
+                final_status=TaskCompletionStatus.FAILED,
+                failure_reason=f"Exceeded maximum action budget ({self._budget.max_total_actions})",
+                failure_code="ACTION_BUDGET_EXCEEDED",
+                elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                state_transitions=sm.history,
+                cycle_traces=cycle_traces,
+                recovery_records=self._recovery_manager.get_history(),
+            )
+        finally:
+            if self._active_task_memory is not None:
+                self._active_task_memory.wipe()
+                self._active_task_memory = None
+
+    async def _execute_and_verify_action(
+        self,
+        action: AbstractAction,
+        pre_obs: CurrentStateObservation,
+        objective: Optional[StructuredObjective] = None,
+        cancel_token: Optional[CancellationToken] = None,
+    ) -> Tuple[ActionExecutionResult, CurrentStateObservation]:
+        effective_obj = objective or StructuredObjective(raw_prompt="", user_goal="", end_condition="goal_completed")
+        ctrl_res = await self._primitive_execution_controller.execute_primitive(
+            action=action,
+            pre_observation=pre_obs,
+            grounding_fn=self._resolve_target_coordinates,
+            safety_gate_fn=self._evaluate_safety_gate,
+            observe_fn=self._observer.observe,
+            objective=effective_obj,
+            cancel_token=cancel_token,
+        )
+        outcome = ctrl_res.execution_outcome
+        exec_res = ActionExecutionResult(
+            action_id=action.action_id,
+            dispatch_success=outcome.dispatch_success,
+            expected_effect_observed=outcome.expected_effect_observed,
+            goal_satisfied=outcome.expected_effect_observed and (action.action_type == AbstractActionType.COMPLETE_GOAL),
+            outcome_status=outcome.outcome_status,
+            verification_strategy=VerificationStrategy.AUTO_ROUTED,
+            verification_reason=outcome.verification_reason or "",
+            error_message=outcome.error_message,
+            duration_ms=outcome.duration_ms,
+        )
+        return exec_res, ctrl_res.post_observation
+
+    def _evaluate_safety_gate(
+        self,
+        action: AbstractAction,
+        resolved_coords: Optional[Tuple[int, int]] = None,
+    ) -> Tuple[bool, Optional[str]]:
+        """Pre-dispatch safety gate guarding physical OS execution."""
+        if resolved_coords is not None:
+            x, y = resolved_coords
+            if x < 0 or y < 0:
+                return False, f"Coordinates ({x}, {y}) out of screen bounds"
+        if action.action_type == AbstractActionType.LAUNCH_APPLICATION:
+            app = str(action.parameters.get("application_name", "")).lower()
+            if any(danger in app for danger in ("format", "diskpart", "shutdown", "regedit")):
+                return False, f"Destructive system application blocked by safety gate: '{app}'"
+        return True, None
+
+    async def _resolve_target_coordinates(
+        self,
+        target: Optional[SemanticTarget],
+        observation: Optional[Union[CurrentStateObservation, DesktopObservation]] = None,
+    ) -> Optional[Tuple[int, int]]:
+        """Resolve semantic target to runtime physical screen coordinates using EvidenceBasedTargetLocator."""
+        if target is None:
+            return None
+
+        target_intent = TargetIntent(
+            name=target.name,
+            role=target.role,
+            strategy=TargetStrategy.ACCESSIBILITY_ELEMENT,
+        )
+
+        try:
+            if self._target_locator is not None:
+                locate_fn = getattr(self._target_locator, "locate_target", None) or getattr(self._target_locator, "resolve", None)
+                if locate_fn:
+                    obs_payload = getattr(observation, "desktop_observation", observation) or observation
+                    res_raw = locate_fn(target_intent, obs_payload)
+                    res = await res_raw if inspect.isawaitable(res_raw) else res_raw
+                    is_res = getattr(res, "is_resolved", False) or (getattr(res, "status", None) == TargetResolutionStatus.RESOLVED if hasattr(res, "status") else False)
+                    tgt = getattr(res, "target", None) or getattr(res, "resolved_target", None)
+                    cand_coords = None
+                    if is_res and tgt and hasattr(tgt, "safe_point") and tgt.safe_point:
+                        cand_coords = (int(tgt.safe_point.x), int(tgt.safe_point.y))
+                    elif is_res and tgt and hasattr(tgt, "bounding_box") and tgt.bounding_box:
+                        b = tgt.bounding_box
+                        cand_coords = (int((b.left + b.right) / 2), int((b.top + b.bottom) / 2))
+                    elif is_res and tgt and hasattr(tgt, "bounds") and tgt.bounds:
+                        b = tgt.bounds
+                        cand_coords = (int((b.left + b.right) / 2), int((b.top + b.bottom) / 2))
+
+                    if cand_coords is not None:
+                        # Pass through GroundingValidator (Guardrail 4)
+                        g_val = self._grounding_validator.validate_grounding(
+                            target=target,
+                            resolved_target=tgt,
+                            candidate_coords=cand_coords,
+                        )
+                        if g_val.is_valid and g_val.validated_point:
+                            return g_val.validated_point
+                        else:
+                            logger.warning(
+                                "[GROUNDING VALIDATOR] Rejected candidate coordinates %s for target '%s': %s",
+                                cand_coords,
+                                target.name,
+                                g_val.failure_reason,
+                            )
+        except Exception as ex:
+            logger.debug("TargetLocator resolution notice: %s", ex)
+
+        return None
+
+    def _evaluate_state_progress(
+        self,
+        pre_obs: CurrentStateObservation,
+        post_obs: CurrentStateObservation,
+        exec_res: ActionExecutionResult,
+    ) -> bool:
+        """Determine if live desktop state moved measurably closer to the goal."""
+        if not exec_res.dispatch_success:
+            return False
+
+        if not pre_obs.target_app_exists and post_obs.target_app_exists:
+            return True
+        if not pre_obs.target_app_is_active and post_obs.target_app_is_active:
+            return True
+        if pre_obs.canvas_status != post_obs.canvas_status:
+            return True
+        if pre_obs.active_window_hwnd != post_obs.active_window_hwnd:
+            return True
+        if set(post_obs.ocr_tokens) != set(pre_obs.ocr_tokens):
+            return True
+        if post_obs.perceived_elements_count != pre_obs.perceived_elements_count:
+            return True
+        if exec_res.observed_delta and isinstance(exec_res.observed_delta, dict) and any(v for v in exec_res.observed_delta.values() if v is not None and v is not False):
+            return True
+
+        return False
+
+    async def _execute_deterministic_text_input(
+        self,
+        text: str,
+        preferred_strategy: str = "KEYBOARD_STREAM",
+        window_title: Optional[str] = None,
+        hwnd: Optional[int] = None,
+        clear_first: bool = False,
+    ) -> Tuple[bool, Optional[str], Dict[str, Any]]:
+        """Text reliability testing helper routing through PrimitiveExecutionController."""
+        diag: Dict[str, Any] = {
+            "selected_input_strategy": preferred_strategy,
+            "completion_time_ns": time.time_ns(),
+        }
+        action = AbstractAction(
+            action_type=AbstractActionType.TYPE_TEXT,
+            parameters={"text": text},
+        )
+        if self._keyboard is not None:
+            self._primitive_execution_controller._keyboard = self._keyboard
+        dispatch_success, err_msg = await self._primitive_execution_controller.dispatch_physical_action(
+            action=action,
+            pre_obs=CurrentStateObservation(),
+        )
+        if not dispatch_success:
+            diag["error_message"] = err_msg or "Keyboard capability not available"
+            return False, err_msg or "Dispatch failed", diag
+        return True, None, diag
+
+
+CapabilityAwareAgentLoop = AgentExecutionLoop
+
+
+

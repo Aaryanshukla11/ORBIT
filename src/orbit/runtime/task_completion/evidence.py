@@ -9,7 +9,6 @@ from PIL import Image
 
 from orbit.adapters.observation.snapshot import ObservationSnapshot, ObservedWindow
 from orbit.runtime.perception.models import OCRResult, OCRTextRegion
-from orbit.runtime.plan_execution.models import PlanExecutionResult
 from orbit.runtime.task_completion.models import TaskCompletionEvidence
 
 logger = logging.getLogger(__name__)
@@ -20,8 +19,8 @@ class CompletionEvidenceCollector:
 
     def build_evidence(
         self,
-        snapshot: Optional[ObservationSnapshot],
-        plan_result: Optional[PlanExecutionResult] = None,
+        snapshot: Optional[ObservationSnapshot] = None,
+        plan_result: Optional[Any] = None,
         target_app: Optional[str] = None,
         target_hwnd: Optional[int] = None,
         verified_text: Optional[str] = None,

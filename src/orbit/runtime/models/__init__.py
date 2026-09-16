@@ -16,7 +16,13 @@ from orbit.runtime.models.adapters import (
     OpenAICompatibleAdapter,
     create_runtime_adapter,
 )
-from orbit.runtime.models.capabilities import infer_capabilities, matches_capabilities
+from orbit.runtime.models.capabilities import (
+    CANONICAL_MODEL_PROFILES,
+    ModelCapabilityProfile,
+    get_model_capability_profile,
+    infer_capabilities,
+    matches_capabilities,
+)
 from orbit.runtime.models.discovery import (
     DiscoveryResult,
     ModelDiscoveryEngine,

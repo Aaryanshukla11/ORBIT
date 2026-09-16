@@ -20,6 +20,7 @@ from orbit.adapters.pointer.safety import (
     ORBIT_EXTRA_INFO_SIGNATURE,
     AbiGate,
     MouseButton,
+    create_mouse_input_packet,
     get_button_down_flag,
     get_button_up_flag,
     query_windows_observable_button_pressed,
@@ -189,15 +190,7 @@ class ButtonTransactionExecutor:
 
         # Build native INPUT packet
         flag = get_button_down_flag(button)
-        mi = MOUSEINPUT(
-            dx=0,
-            dy=0,
-            mouseData=0,
-            dwFlags=flag,
-            time=0,
-            dwExtraInfo=ORBIT_EXTRA_INFO_SIGNATURE,
-        )
-        packet = INPUT(type=INPUT_MOUSE, mi=mi)
+        packet = create_mouse_input_packet(dw_flags=flag)
 
         # Checkpoint: Immediate pre-dispatch cancellation
         if cancellation_token is not None and cancellation_token.is_cancelled:
@@ -290,15 +283,7 @@ class ButtonTransactionExecutor:
 
         # Build native INPUT packet
         flag = get_button_up_flag(button)
-        mi = MOUSEINPUT(
-            dx=0,
-            dy=0,
-            mouseData=0,
-            dwFlags=flag,
-            time=0,
-            dwExtraInfo=ORBIT_EXTRA_INFO_SIGNATURE,
-        )
-        packet = INPUT(type=INPUT_MOUSE, mi=mi)
+        packet = create_mouse_input_packet(dw_flags=flag)
 
         accepted, win32_err, disp_dur_us = self.gateway.dispatch_single_packet(packet)
 
@@ -316,7 +301,10 @@ class ButtonTransactionExecutor:
                 is_locked=False,
             )
         else:
-            token = self.state_mgr.fail_button_up_and_lock(button, LockoutReason.BUTTON_UP_DISPATCH_FAILED)
+            token = self.state_mgr.fail_button_up_and_lock(
+                button=button,
+                reason=LockoutReason.BUTTON_UP_DISPATCH_FAILED,
+            )
             return ButtonTransactionResult(
                 status=ButtonExecutionStatus.DISPATCH_ZERO_LOCKED,
                 button=button,
@@ -335,13 +323,13 @@ class ButtonTransactionExecutor:
         dwell_ms: float = 50.0,
         cancellation_token: Optional[CancellationToken] = None,
     ) -> ClickTransactionResult:
-        """Execute an atomic controlled click transaction (DOWN -> dwell -> UP)."""
-        t0 = time.perf_counter()
+        """Execute an atomic BUTTON_DOWN -> DWELL -> BUTTON_UP transaction."""
+        start_ns = time.perf_counter_ns()
 
         def elapsed_ms() -> float:
-            return (time.perf_counter() - t0) * 1000.0
+            return (time.perf_counter_ns() - start_ns) / 1_000_000.0
 
-        # Step 1: Pre-dispatch checks
+        # Step 1: Pre-flight sanity checks
         if not self.abi_gate.is_abi_valid():
             return ClickTransactionResult(
                 status=ClickExecutionStatus.REJECTED_ABI_INVALID,
@@ -463,6 +451,24 @@ class ButtonTransactionExecutor:
                 duration_us=elapsed_us(),
             )
 
+        if not self.abi_gate.is_abi_valid():
+            if not self.state_mgr.is_locked:
+                token = self.state_mgr.fail_emergency_sanitization_and_lock(LockoutReason.ABI_GATE_FAILED)
+                return SanitizationResult(
+                    success=False,
+                    is_locked=True,
+                    lockout_reason=LockoutReason.ABI_GATE_FAILED,
+                    recovery_token=token,
+                    duration_us=elapsed_us(),
+                )
+            else:
+                return SanitizationResult(
+                    success=False,
+                    is_locked=True,
+                    lockout_reason=self.state_mgr.lockout_reason,
+                    duration_us=elapsed_us(),
+                )
+
         try:
             self.state_mgr.start_emergency_sanitization()
         except RuntimeError:
@@ -479,15 +485,7 @@ class ButtonTransactionExecutor:
 
         for btn in held:
             flag = get_button_up_flag(btn)
-            mi = MOUSEINPUT(
-                dx=0,
-                dy=0,
-                mouseData=0,
-                dwFlags=flag,
-                time=0,
-                dwExtraInfo=ORBIT_EXTRA_INFO_SIGNATURE,
-            )
-            packet = INPUT(type=INPUT_MOUSE, mi=mi)
+            packet = create_mouse_input_packet(dw_flags=flag)
             accepted, _, _ = self.gateway.dispatch_single_packet(packet)
             if accepted == 1:
                 released.append(btn)

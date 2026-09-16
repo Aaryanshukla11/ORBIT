@@ -51,8 +51,18 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
         provider: Optional[CloudModelProvider] = None,
     ) -> None:
         super().__init__(descriptor)
+        import os
         self._provider = provider
-        self._api_key = api_key or (provider._api_key if provider else None)
+        env_key = None
+        p_str = f"{descriptor.provider.value if hasattr(descriptor.provider, 'value') else descriptor.provider}:{descriptor.model_id}".lower()
+        if "openai" in p_str or "gpt" in p_str or "o1" in p_str or "o3" in p_str:
+            env_key = os.environ.get("OPENAI_API_KEY")
+        elif "anthropic" in p_str or "claude" in p_str:
+            env_key = os.environ.get("ANTHROPIC_API_KEY")
+        elif "gemini" in p_str or "google" in p_str:
+            env_key = os.environ.get("GEMINI_API_KEY")
+
+        self._api_key = api_key or (provider._api_key if provider else None) or env_key
         self._base_url = (base_url or (provider.endpoint if provider else None) or descriptor.endpoint or "https://api.openai.com/v1").rstrip("/")
         self._runtime_kind = ModelRuntimeKind.REMOTE
         self._client: Optional[httpx.AsyncClient] = None
@@ -259,10 +269,20 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
                 return await self._provider.chat(self._descriptor.provider_model_name, request)
 
             client = await self._get_client()
-            messages = [
-                {"role": m.role, "content": m.content}
-                for m in request.messages
-            ]
+            messages = []
+            for m in request.messages:
+                if m.images and len(m.images) > 0:
+                    content_parts = [{"type": "text", "text": m.content}]
+                    for img in m.images:
+                        if img.startswith("data:image"):
+                            url = img
+                        else:
+                            url = f"data:image/png;base64,{img}"
+                        content_parts.append({"type": "image_url", "image_url": {"url": url}})
+                    messages.append({"role": m.role, "content": content_parts})
+                else:
+                    messages.append({"role": m.role, "content": m.content})
+
             payload: Dict[str, Any] = {
                 "model": self._descriptor.provider_model_name,
                 "messages": messages,

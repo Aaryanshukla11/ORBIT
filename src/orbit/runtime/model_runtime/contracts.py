@@ -160,7 +160,7 @@ class ModelActivationRequest(BaseModel):
     """Request envelope to activate a model in ORBIT."""
 
     model_id: str = Field(..., description="Target model ID to activate")
-    timeout_seconds: float = Field(default=30.0, gt=0.0, description="Timeout in seconds")
+    timeout_seconds: float = Field(default=60.0, gt=0.0, description="Timeout in seconds")
     preload_weights: bool = Field(default=True, description="Whether to preload weights/warmup")
     required_capabilities: Set[ModelCapability] = Field(
         default_factory=set,

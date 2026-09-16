@@ -1,0 +1,13 @@
+{
+  "task_id": "task_026",
+  "title": "Launch Windows Calculator",
+  "split": "UNSEEN",
+  "category": "APPLICATION_LAUNCH",
+  "natural_language_goal": "Start Calculator",
+  "expectations": {
+    "expected_window_title": "Calculator",
+    "require_app_open": true
+  },
+  "timeout_sec": 30.0,
+  "max_steps": 5
+}

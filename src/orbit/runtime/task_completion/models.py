@@ -14,9 +14,7 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 from pydantic import BaseModel, Field
 
-from orbit.runtime.plan_execution.models import PlanExecutionResult
-from orbit.runtime.planning.models import ExecutableTaskPlan
-from orbit.runtime.task_understanding.models import TaskUnderstandingResult
+
 
 
 class TaskCompletionStatus(str, Enum):
@@ -79,9 +77,9 @@ class TaskExecutionResult(BaseModel):
     task_id: str = Field(default_factory=lambda: f"task_{uuid4().hex[:8]}", description="Unique task identifier")
     session_id: str = Field(default="default_session", description="Session identifier")
     goal: str = Field(..., description="Original raw natural language goal text")
-    understanding: Optional[TaskUnderstandingResult] = Field(default=None, description="Parsed task understanding")
-    plan: Optional[ExecutableTaskPlan] = Field(default=None, description="Generated task execution plan")
-    plan_execution_result: Optional[PlanExecutionResult] = Field(default=None, description="Plan step execution details")
+    understanding: Optional[Any] = Field(default=None, description="Parsed task understanding")
+    plan: Optional[Any] = Field(default=None, description="Generated task execution plan")
+    plan_execution_result: Optional[Any] = Field(default=None, description="Plan step execution details")
     goal_verification_result: GoalVerificationResult = Field(..., description="Independent final goal verification result")
     completion_status: TaskCompletionStatus = Field(..., description="Overall task completion status")
     is_success: bool = Field(default=False, description="True ONLY when completion_status == COMPLETED")

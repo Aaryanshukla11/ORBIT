@@ -1,0 +1,17 @@
+{
+  "task_id": "task_033",
+  "title": "Write Markdown Summary Deliverable",
+  "split": "UNSEEN",
+  "category": "FILESYSTEM",
+  "natural_language_goal": "Create a markdown file 'summary.md' containing '# Executive Summary\\nAll tests passed.'",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "summary.md",
+      "format": "text",
+      "min_size_bytes": 15,
+      "expected_content_substr": "Executive Summary"
+    }
+  },
+  "timeout_sec": 30.0,
+  "max_steps": 6
+}

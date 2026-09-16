@@ -1,0 +1,17 @@
+{
+  "task_id": "task_010",
+  "title": "Save Paint Drawing to PNG",
+  "split": "DEVELOPMENT",
+  "category": "SAVE_EXPORT",
+  "natural_language_goal": "Open Paint, draw a line on canvas, and save the drawing as 'saved_drawing.png'",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "saved_drawing.png",
+      "format": "png",
+      "min_size_bytes": 100,
+      "magic_bytes_hex": "89504e47"
+    }
+  },
+  "timeout_sec": 60.0,
+  "max_steps": 10
+}

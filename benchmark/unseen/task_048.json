@@ -1,0 +1,17 @@
+{
+  "task_id": "task_048",
+  "title": "Notepad and Filesystem Synchronized Deliverable",
+  "split": "UNSEEN",
+  "category": "MIXED_WORKFLOW",
+  "natural_language_goal": "Open Notepad, type 'Batch Process Complete', save as 'batch.log', and confirm file exists",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "batch.log",
+      "format": "text",
+      "min_size_bytes": 15,
+      "expected_content_substr": "Batch Process Complete"
+    }
+  },
+  "timeout_sec": 60.0,
+  "max_steps": 10
+}

@@ -38,13 +38,21 @@ const defaultSystemHealth: SystemHealth = {
 
 const OrbitContext = createContext<OrbitContextType | undefined>(undefined);
 
+import { loadStoredSettings, saveStoredSettings } from './SettingsContext';
+
 export const OrbitProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [activePage, setActivePage] = useState<NavigationPage>('home');
   const [connectionState, setConnectionState] = useState<ConnectionState>('DISCONNECTED');
-  const [gatewayUrl, setGatewayUrl] = useState<string>('ws://127.0.0.1:8765/ws');
+  const [gatewayUrl, setGatewayUrlState] = useState<string>(() => loadStoredSettings().gatewayUrl || 'ws://127.0.0.1:8765/ws');
   const [activeModel, setActiveModel] = useState<ActiveModelInfo | null>(null);
   const [systemHealth, setSystemHealth] = useState<SystemHealth>(defaultSystemHealth);
   const [telemetryLogs, setTelemetryLogs] = useState<TelemetryLog[]>([]);
+
+  const setGatewayUrl = useCallback((url: string) => {
+    setGatewayUrlState(url);
+    const curr = loadStoredSettings();
+    saveStoredSettings({ ...curr, gatewayUrl: url });
+  }, []);
 
   const addTelemetryLog = useCallback((
     level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG' | 'ACTION', 

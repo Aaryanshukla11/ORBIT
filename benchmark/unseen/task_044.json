@@ -1,0 +1,13 @@
+{
+  "task_id": "task_044",
+  "title": "Select Green Color Swatch in Paint",
+  "split": "UNSEEN",
+  "category": "VISUAL_GROUNDING",
+  "natural_language_goal": "Open Paint and click the Green color box in the color palette ribbon",
+  "expectations": {
+    "expected_window_title": "Paint",
+    "require_app_open": true
+  },
+  "timeout_sec": 45.0,
+  "max_steps": 8
+}

@@ -1,0 +1,17 @@
+{
+  "task_id": "task_041",
+  "title": "Append Revision to Existing File",
+  "split": "UNSEEN",
+  "category": "MULTI_STEP_EDITING",
+  "natural_language_goal": "Open Notepad, type 'Version 1.0', save as 'release.txt', then add 'Revision A' and re-save",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "release.txt",
+      "format": "text",
+      "min_size_bytes": 10,
+      "expected_content_substr": "Revision A"
+    }
+  },
+  "timeout_sec": 70.0,
+  "max_steps": 12
+}

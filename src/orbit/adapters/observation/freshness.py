@@ -29,9 +29,14 @@ class FreshnessEvaluator:
 
         Returns (FreshnessState, is_stale, invalidation_reason).
         """
-        now_ns = time.perf_counter_ns()
         if snapshot.timestamp_ns <= 0:
             return FreshnessState.UNKNOWN, True, "INVALID_TIMESTAMP"
+
+        # Epoch timestamp (> 1e18 ns) vs monotonic perf_counter_ns
+        if snapshot.timestamp_ns > 1_000_000_000_000_000_000:
+            now_ns = time.time_ns()
+        else:
+            now_ns = time.perf_counter_ns()
 
         age_ms = (now_ns - snapshot.timestamp_ns) / 1_000_000.0
         ttl_limit = custom_ttl_ms if custom_ttl_ms is not None else self.max_ttl_ms

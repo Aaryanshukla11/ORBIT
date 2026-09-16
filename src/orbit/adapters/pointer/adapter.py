@@ -77,13 +77,23 @@ class ProductionPointerAdapter(BaseCapabilityAdapter, PointerCapability):
     async def _on_initialize(self) -> None:
         """Initialize DPI awareness, enforce Win32 C ABI gate, and verify display topology."""
         try:
-            # 1. Initialize DPI awareness if available
+            # 1. Initialize DPI awareness & attach to interactive desktop
             if sys.platform == "win32":
                 try:
                     import ctypes
                     ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
                 except Exception as ex:
                     logger.debug("SetProcessDpiAwarenessContext notice: %s", ex)
+                try:
+                    u32 = ctypes.windll.user32
+                    hwinsta = u32.OpenWindowStationW("WinSta0", False, 0x37F)
+                    if hwinsta:
+                        u32.SetProcessWindowStation(hwinsta)
+                    hdesk = u32.OpenDesktopW("Default", 0, False, 0x1FF)
+                    if hdesk:
+                        u32.SetThreadDesktop(hdesk)
+                except Exception as ex:
+                    logger.debug("Desktop station attachment notice: %s", ex)
 
             # 2. Enforce Win32 SendInput C ABI Layout
             abi_res = validate_runtime_abi(simulated_override=self._abi_override)
@@ -221,9 +231,12 @@ class ProductionPointerAdapter(BaseCapabilityAdapter, PointerCapability):
         # Step 1: Move to target coordinates if supplied
         if x is not None and y is not None:
             await self.move_to(x, y, cancellation_token=cancellation_token)
+            await asyncio.sleep(0.015)
 
         # Step 2: Execute atomic clicks
-        for _ in range(count):
+        for i in range(count):
+            if i > 0:
+                await asyncio.sleep(0.030)
             res = await asyncio.to_thread(
                 self._button_executor.execute_click,
                 button=btn,
@@ -304,6 +317,22 @@ class ProductionPointerAdapter(BaseCapabilityAdapter, PointerCapability):
                 f"Pointer entered UNRESOLVED_LOCKED (reason: {res.lockout_reason.value}, token: {res.recovery_token})"
             )
         raise PointerError(f"[{res.status.value}] Button-up execution failed: {res.status.value}")
+
+    async def button_down(
+        self,
+        button: str = "left",
+        cancellation_token: Optional[CancellationToken] = None,
+    ) -> bool:
+        """Alias for press_down for backward and cross-capability protocol compatibility."""
+        return await self.press_down(button=button, cancellation_token=cancellation_token)
+
+    async def button_up(
+        self,
+        button: str = "left",
+        cancellation_token: Optional[CancellationToken] = None,
+    ) -> bool:
+        """Alias for release_up for backward and cross-capability protocol compatibility."""
+        return await self.release_up(button=button, cancellation_token=cancellation_token)
 
     async def emergency_release_all(
         self,

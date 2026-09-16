@@ -1,0 +1,13 @@
+{
+  "task_id": "task_045",
+  "title": "Recover from Minimized Window",
+  "split": "UNSEEN",
+  "category": "STATE_RECOVERY",
+  "natural_language_goal": "Open Paint, minimize Paint, restore Paint window to foreground",
+  "expectations": {
+    "expected_window_title": "Paint",
+    "require_app_open": true
+  },
+  "timeout_sec": 50.0,
+  "max_steps": 10
+}

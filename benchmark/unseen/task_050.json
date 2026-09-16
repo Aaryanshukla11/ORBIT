@@ -1,0 +1,19 @@
+{
+  "task_id": "task_050",
+  "title": "End-to-End Autonomous System Check",
+  "split": "UNSEEN",
+  "category": "MIXED_WORKFLOW",
+  "natural_language_goal": "Open Paint, draw a shape, save as 'final_check.png', open Notepad, write 'Phase 2G Unseen Benchmark Verified', save as 'final_check.txt', and close all open applications",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "final_check.png",
+      "format": "png",
+      "min_size_bytes": 100,
+      "magic_bytes_hex": "89504e47"
+    },
+    "expected_process_name": "notepad.exe",
+    "require_app_closed": true
+  },
+  "timeout_sec": 120.0,
+  "max_steps": 20
+}
