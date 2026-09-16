@@ -108,6 +108,9 @@ from orbit.runtime.environment.drawing_provider import CanvasDrawingProvider
 from orbit.runtime.environment.registry import EnvironmentProviderRegistry, get_default_environment_registry
 from orbit.runtime.world_model import AgentWorldModel, WorldModelUpdater
 from orbit.runtime.agent.progress_graph import ProgressGraph, SubgoalStatus
+from orbit.runtime.cognitive.context_checkpoint import CheckpointManager, ContextCheckpoint
+from orbit.runtime.cognitive.context_compactor import ContextCompactor
+from orbit.runtime.cognitive.trajectory_memory import TrajectoryMemory
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +144,7 @@ class AgentExecutionLoop:
         planner: Optional[AgentPlanner] = None,
         clarification_manager: Optional[ClarificationManager] = None,
         vlm_grounding_verifier: Optional[VLMGroundingVerifier] = None,
+        multi_evidence_verifier: Optional[MultiEvidenceActionVerifier] = None,
         environment_registry: Optional[EnvironmentProviderRegistry] = None,
         event_bus: Optional[Any] = None,
     ) -> None:
@@ -200,7 +204,7 @@ class AgentExecutionLoop:
 
         # Phase 2: Closed-Loop Primitive Engine Components
         self._primitive_validator = PrimitiveValidator()
-        self._multi_evidence_verifier = MultiEvidenceActionVerifier()
+        self._multi_evidence_verifier = multi_evidence_verifier or MultiEvidenceActionVerifier()
         self._primitive_composer = PrimitiveComposer(
             model_client=self._session_manager,
             validator=self._primitive_validator,
@@ -222,6 +226,31 @@ class AgentExecutionLoop:
         # Phase 4: Failure Diagnosis & Replanning
         self._failure_analyst = CognitiveFailureAnalyst()
         self._progress_graph: Optional[Any] = None
+
+        # Phase 2G.1: Long-Horizon Context, Checkpointing & Trajectory Memory
+        self._checkpoint_manager = CheckpointManager()
+        self._context_compactor = ContextCompactor()
+        self._trajectory_memory = TrajectoryMemory()
+
+    @property
+    def checkpoint_manager(self) -> CheckpointManager:
+        return self._checkpoint_manager
+
+    @property
+    def context_compactor(self) -> ContextCompactor:
+        return self._context_compactor
+
+    @property
+    def trajectory_memory(self) -> TrajectoryMemory:
+        return self._trajectory_memory
+
+    @property
+    def recovery_manager(self) -> AgentRecoveryManager:
+        return self._recovery_manager
+
+    @property
+    def recovery_records(self) -> List[RecoveryRecord]:
+        return self._recovery_manager.get_history()
 
     @property
     def progress_graph(self) -> Optional[Any]:
@@ -620,6 +649,14 @@ class AgentExecutionLoop:
                 # -------------------------------------------------------------
                 sm.transition_to(AgentLoopState.REASONING, cycle_number=step_idx, observation_id=current_obs.observation_id)
 
+                # Inject Phase 2G.1 Trajectory Memory feedback / loop prevention
+                trajectory_guidance = self._trajectory_memory.get_recovery_guidance()
+                if trajectory_guidance:
+                    if not context.get("feedback"):
+                        context["feedback"] = trajectory_guidance
+                    else:
+                        context["feedback"] = f"{context['feedback']} | {trajectory_guidance}"
+
                 decide_fn = getattr(self._decision_engine, "decide_next_step", None) or getattr(self._decision_engine, "decide_next_action", None)
                 if not callable(decide_fn):
                     raise RuntimeError("No callable decision method found on decision engine.")
@@ -638,7 +675,8 @@ class AgentExecutionLoop:
                     if "task_requirements" in sig.parameters:
                         decide_kwargs["task_requirements"] = getattr(objective, "task_requirements", None)
                     if "failure_feedback" in sig.parameters:
-                        last_diag = step_history[-1].failure_diagnosis if (step_history and not step_history[-1].outcome_verified) else None
+                        last_step = step_history[-1] if step_history else None
+                        last_diag = getattr(last_step, "failure_diagnosis", None) or getattr(last_step, "reason_summary", None) if (last_step and not getattr(last_step, "outcome_verified", False)) else None
                         decide_kwargs["failure_feedback"] = last_diag
                     if "user_goal" in sig.parameters:
                         decide_kwargs["user_goal"] = getattr(objective, "user_goal", prompt)
@@ -1598,6 +1636,23 @@ class AgentExecutionLoop:
                 )
                 step_history.append(step_res)
                 cycle_traces.append(cycle_trace)
+
+                # Phase 2G.1: Record step in TrajectoryMemory
+                self._trajectory_memory.record_step(
+                    step_res,
+                    active_window_title=current_obs.active_window_title if hasattr(current_obs, "active_window_title") else None,
+                )
+
+                # Phase 2G.1: Capture ContextCheckpoint on cadence or milestone
+                if self._checkpoint_manager.should_checkpoint(step_idx, is_milestone_completed=progress_detected):
+                    self._checkpoint_manager.create_checkpoint(
+                        step_index=step_idx,
+                        objective=objective,
+                        observation=current_obs if isinstance(current_obs, CurrentStateObservation) else None,
+                        accumulated_summary=decision.decision_summary or "",
+                        recent_actions_summary=f"Dispatched {action.action_type.value} -> {'Verified' if progress_detected else 'Unverified'}",
+                        is_milestone_boundary=progress_detected,
+                    )
 
                 # Pass fresh post-action observation into next cycle (N+1)
                 current_obs = post_obs

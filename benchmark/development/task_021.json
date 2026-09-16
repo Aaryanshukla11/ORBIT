@@ -1,0 +1,18 @@
+{
+  "task_id": "task_021",
+  "title": "12-Step Audit Log Report Creation",
+  "split": "DEVELOPMENT",
+  "category": "LONG_HORIZON",
+  "natural_language_goal": "Open Notepad, write 5 bulleted status lines, save the file as 'audit_log.txt', and close Notepad",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "audit_log.txt",
+      "format": "text",
+      "min_size_bytes": 20
+    },
+    "expected_process_name": "notepad.exe",
+    "require_app_closed": true
+  },
+  "timeout_sec": 90.0,
+  "max_steps": 15
+}

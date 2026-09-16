@@ -1,0 +1,17 @@
+{
+  "task_id": "task_047",
+  "title": "Create Valid CSV Deliverable",
+  "split": "UNSEEN",
+  "category": "ARTIFACT_VALIDATION",
+  "natural_language_goal": "Create a file 'table.csv' with columns: id,status,score and one data row: 1,PASS,98",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "table.csv",
+      "format": "text",
+      "min_size_bytes": 15,
+      "expected_content_substr": "id,status,score"
+    }
+  },
+  "timeout_sec": 30.0,
+  "max_steps": 6
+}

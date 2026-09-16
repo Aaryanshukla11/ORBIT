@@ -1,0 +1,4504 @@
+{
+  "TEST_A": {
+    "prompt": "Open Notepad",
+    "task_id": "task_f01d7bc31e0b",
+    "status": "FAILED",
+    "duration_ms": 996.5132999968773,
+    "error": {
+      "code": "GOAL_UNACHIEVABLE",
+      "message": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+      "details": null,
+      "recoverable": false
+    },
+    "metadata": {
+      "agent_execution_result": {
+        "task_id": "task_f01d7bc31e0b",
+        "objective": {
+          "objective_id": "obj_e71eb0d5",
+          "raw_prompt": "Open Notepad",
+          "user_goal": "Open Notepad",
+          "end_condition": "notepad_is_open_and_active",
+          "target_entities": [
+            "notepad"
+          ],
+          "constraints": [],
+          "parameters": {
+            "app_name": "notepad",
+            "action_type": "open"
+          },
+          "deliverable": null,
+          "success_criteria": [],
+          "assumptions": [],
+          "subtasks": [],
+          "created_at": "2026-09-16 08:59:32.289864+00:00"
+        },
+        "is_success": false,
+        "total_steps": 1,
+        "step_history": [
+          {
+            "step_index": 0,
+            "decision": {
+              "decision_id": "dec_a5425a07",
+              "step_index": 0,
+              "decision_summary": "MODEL_UNAVAILABLE: No authoritative multimodal model session or client available.",
+              "decision_confidence": 0.0,
+              "evidence_used": [
+                "model_session_manager:none"
+              ],
+              "expected_state_transition": "none",
+              "reason_summary": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+              "is_goal_satisfied": false,
+              "escalated_to_llm": false,
+              "next_action": {
+                "action_id": "act_458b3f78",
+                "action_type": "ABORT_TASK",
+                "target": null,
+                "parameters": {
+                  "error_code": "MODEL_UNAVAILABLE",
+                  "diagnostic": "No active multimodal decision model configured."
+                },
+                "outcome_contract": {
+                  "expected_state_transition": "task_aborted",
+                  "verification_strategy": "AUTO_ROUTED",
+                  "target_role": null,
+                  "target_name": null,
+                  "expected_window_title": null,
+                  "expected_text": null,
+                  "required_evidence": null,
+                  "timeout_sec": 5.0,
+                  "match_criteria": null
+                },
+                "expected_effect": "Abort task due to missing decision model",
+                "rationale": ""
+              }
+            },
+            "action_dispatched": {
+              "action_id": "act_458b3f78",
+              "action_type": "ABORT_TASK",
+              "target": null,
+              "parameters": {
+                "error_code": "MODEL_UNAVAILABLE",
+                "diagnostic": "No active multimodal decision model configured."
+              },
+              "outcome_contract": {
+                "expected_state_transition": "task_aborted",
+                "verification_strategy": "AUTO_ROUTED",
+                "target_role": null,
+                "target_name": null,
+                "expected_window_title": null,
+                "expected_text": null,
+                "required_evidence": null,
+                "timeout_sec": 5.0,
+                "match_criteria": null
+              },
+              "expected_effect": "Abort task due to missing decision model",
+              "rationale": ""
+            },
+            "execution_result": {
+              "action_id": "act_f5918544",
+              "dispatch_success": false,
+              "expected_effect_observed": false,
+              "goal_satisfied": false,
+              "outcome_status": "DISPATCH_FAILED",
+              "verified": false,
+              "verification_strategy": "AUTO_ROUTED",
+              "verification_reason": "",
+              "pre_action_state": null,
+              "post_action_state": null,
+              "observed_delta": {},
+              "verification_evidence": {},
+              "error_message": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+              "failure_code": null,
+              "duration_ms": 0.0,
+              "text_verification": null
+            },
+            "post_observation": {
+              "observation_id": "obs_532d092f",
+              "timestamp_utc": "2026-09-16 08:59:32.546859+00:00",
+              "active_window_hwnd": 66954,
+              "active_window_title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+              "active_window_class": "Chrome_WidgetWin_1",
+              "active_process_name": "Antigravity IDE.exe",
+              "visible_windows": [
+                {
+                  "hwnd": 263462,
+                  "title": "QA OSD",
+                  "class_name": "JUCE_1a0a86a380d",
+                  "process_id": 13288,
+                  "process_name": "AQAUserPS.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 66954,
+                  "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "class_name": "Chrome_WidgetWin_1",
+                  "process_id": 22036,
+                  "process_name": "Antigravity IDE.exe",
+                  "is_foreground": true
+                },
+                {
+                  "hwnd": 399072,
+                  "title": "Startup - Investor - Brave",
+                  "class_name": "Chrome_WidgetWin_1",
+                  "process_id": 17824,
+                  "process_name": "brave.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 66694,
+                  "title": "Startup - Founder - Brave",
+                  "class_name": "Chrome_WidgetWin_1",
+                  "process_id": 17824,
+                  "process_name": "brave.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 136810,
+                  "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                  "class_name": "mintty",
+                  "process_id": 8312,
+                  "process_name": "mintty.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 202096,
+                  "title": "ORBIT - File Explorer",
+                  "class_name": "CabinetWClass",
+                  "process_id": 11784,
+                  "process_name": "explorer.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 656016,
+                  "title": "Settings",
+                  "class_name": "Windows.UI.Core.CoreWindow",
+                  "process_id": 2056,
+                  "process_name": "SystemSettings.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 460648,
+                  "title": "Settings",
+                  "class_name": "ApplicationFrameWindow",
+                  "process_id": 8520,
+                  "process_name": "ApplicationFrameHost.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 132424,
+                  "title": "Raycast",
+                  "class_name": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                  "process_id": 17612,
+                  "process_name": "Raycast.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 196804,
+                  "title": "RaycastNodeGracefulShutdownWindow",
+                  "class_name": "RaycastNodeGracefulShutdownClass",
+                  "process_id": 19140,
+                  "process_name": "node.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 853266,
+                  "title": "Raycast",
+                  "class_name": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                  "process_id": 17612,
+                  "process_name": "Raycast.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 131922,
+                  "title": "Windows Input Experience",
+                  "class_name": "Windows.UI.Core.CoreWindow",
+                  "process_id": 17896,
+                  "process_name": "TextInputHost.exe",
+                  "is_foreground": false
+                }
+              ],
+              "target_app_exists": false,
+              "target_app_is_active": false,
+              "screen_summary": "=== LIVE DESKTOP STATE (2880x1800) ===\nActive Window: 'ORBIT - Antigravity IDE - trajectory_memory.py' (Class: Chrome_WidgetWin_1, HWND: 66954)\nVisible Windows: 'QA OSD', 'ORBIT - Antigravity IDE - trajectory_memory.py', 'Startup - Investor - Brave', 'Startup - Founder - Brave', 'MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT'\nInteractive Elements:\n- Custom: 'Chrome Legacy Window' (Confidence: 0.90)\n- Custom: 'Unnamed Control' (Confidence: 0.90)\n- Application_Window: 'Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'' (Confidence: 1.00)",
+              "canvas_status": "UNKNOWN",
+              "ocr_tokens": [],
+              "raw_evidence": {
+                "target_app_name": "notepad",
+                "visible_window_count": 12,
+                "is_consistent": true,
+                "consistency_warnings": [],
+                "perceived_elements_count": 3
+              },
+              "desktop_observation": {
+                "observation_id": "obs_532d092f",
+                "timestamp": "2026-09-16 08:59:32.545858+00:00",
+                "screen_width": 2880,
+                "screen_height": 1800,
+                "foreground_window": {
+                  "hwnd": 66954,
+                  "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "window_class": "Chrome_WidgetWin_1",
+                  "is_foreground": true,
+                  "is_visible": true,
+                  "is_minimized": false,
+                  "is_maximized": true,
+                  "window_bounds": {
+                    "left": -13,
+                    "top": -13,
+                    "width": 2906,
+                    "height": 1826
+                  },
+                  "client_bounds": {
+                    "left": 0,
+                    "top": 0,
+                    "width": 2880,
+                    "height": 1798
+                  },
+                  "process_id": 22036,
+                  "process_name": "Antigravity IDE.exe"
+                },
+                "visible_windows": [
+                  {
+                    "hwnd": 263462,
+                    "title": "QA OSD",
+                    "window_class": "JUCE_1a0a86a380d",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 1262,
+                      "top": 36,
+                      "width": 356,
+                      "height": 256
+                    },
+                    "client_bounds": {
+                      "left": 1262,
+                      "top": 36,
+                      "width": 356,
+                      "height": 256
+                    },
+                    "process_id": 13288,
+                    "process_name": "AQAUserPS.exe"
+                  },
+                  {
+                    "hwnd": 66954,
+                    "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "window_class": "Chrome_WidgetWin_1",
+                    "is_foreground": true,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "process_id": 22036,
+                    "process_name": "Antigravity IDE.exe"
+                  },
+                  {
+                    "hwnd": 399072,
+                    "title": "Startup - Investor - Brave",
+                    "window_class": "Chrome_WidgetWin_1",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "process_id": 17824,
+                    "process_name": "brave.exe"
+                  },
+                  {
+                    "hwnd": 66694,
+                    "title": "Startup - Founder - Brave",
+                    "window_class": "Chrome_WidgetWin_1",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "process_id": 17824,
+                    "process_name": "brave.exe"
+                  },
+                  {
+                    "hwnd": 136810,
+                    "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                    "window_class": "mintty",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 147,
+                      "top": 147,
+                      "width": 1182,
+                      "height": 697
+                    },
+                    "client_bounds": {
+                      "left": 160,
+                      "top": 205,
+                      "width": 1122,
+                      "height": 626
+                    },
+                    "process_id": 8312,
+                    "process_name": "mintty.exe"
+                  },
+                  {
+                    "hwnd": 202096,
+                    "title": "ORBIT - File Explorer",
+                    "window_class": "CabinetWClass",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": -13,
+                      "width": 2880,
+                      "height": 1813
+                    },
+                    "process_id": 11784,
+                    "process_name": "explorer.exe"
+                  },
+                  {
+                    "hwnd": 656016,
+                    "title": "Settings",
+                    "window_class": "Windows.UI.Core.CoreWindow",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 0,
+                      "top": 13,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 13,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "process_id": 2056,
+                    "process_name": "SystemSettings.exe"
+                  },
+                  {
+                    "hwnd": 460648,
+                    "title": "Settings",
+                    "window_class": "ApplicationFrameWindow",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": -13,
+                      "width": 2880,
+                      "height": 1813
+                    },
+                    "process_id": 8520,
+                    "process_name": "ApplicationFrameHost.exe"
+                  },
+                  {
+                    "hwnd": 132424,
+                    "title": "Raycast",
+                    "window_class": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 690,
+                      "top": 425,
+                      "width": 1500,
+                      "height": 950
+                    },
+                    "client_bounds": {
+                      "left": 690,
+                      "top": 425,
+                      "width": 1500,
+                      "height": 950
+                    },
+                    "process_id": 17612,
+                    "process_name": "Raycast.exe"
+                  },
+                  {
+                    "hwnd": 196804,
+                    "title": "RaycastNodeGracefulShutdownWindow",
+                    "window_class": "RaycastNodeGracefulShutdownClass",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "process_id": 19140,
+                    "process_name": "node.exe"
+                  },
+                  {
+                    "hwnd": 853266,
+                    "title": "Raycast",
+                    "window_class": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 196,
+                      "top": 196,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "client_bounds": {
+                      "left": 196,
+                      "top": 196,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "process_id": 17612,
+                    "process_name": "Raycast.exe"
+                  },
+                  {
+                    "hwnd": 131922,
+                    "title": "Windows Input Experience",
+                    "window_class": "Windows.UI.Core.CoreWindow",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "process_id": 17896,
+                    "process_name": "TextInputHost.exe"
+                  }
+                ],
+                "screenshot_reference": {
+                  "capture_id": "cap_e913fe94",
+                  "timestamp_utc": "2026-09-16 08:59:32.329802+00:00",
+                  "width": 2880,
+                  "height": 1800,
+                  "image_base64": null,
+                  "capture_method": "OBSERVATION_CAPABILITY",
+                  "format": "jpeg",
+                  "raw_bytes": null
+                },
+                "ocr_tokens": [],
+                "uia_elements": [
+                  {
+                    "element_id": "win32_0a0c9051",
+                    "name": "Chrome Legacy Window",
+                    "control_type": "Custom",
+                    "automation_id": null,
+                    "class_name": "Chrome_RenderWidgetHostHWND",
+                    "is_enabled": true,
+                    "is_visible": true,
+                    "has_keyboard_focus": false,
+                    "bounding_box": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "parent_context": null,
+                    "hwnd": 66976
+                  },
+                  {
+                    "element_id": "win32_a10aadef",
+                    "name": null,
+                    "control_type": "Custom",
+                    "automation_id": null,
+                    "class_name": "Intermediate D3D Window",
+                    "is_enabled": true,
+                    "is_visible": true,
+                    "has_keyboard_focus": false,
+                    "bounding_box": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "parent_context": null,
+                    "hwnd": 66980
+                  }
+                ],
+                "visual_regions": [
+                  {
+                    "region_id": "vreg_win_66954",
+                    "region_type": "APPLICATION_WINDOW",
+                    "bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "confidence": 1.0,
+                    "description": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                    "source": "WIN32",
+                    "raw_metadata": {}
+                  }
+                ],
+                "perceived_elements": [
+                  {
+                    "element_id": "pe_7105492d",
+                    "name": "Chrome Legacy Window",
+                    "role": "custom",
+                    "context": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "evidence": {
+                      "evidence_sources": [
+                        "UIA"
+                      ],
+                      "confidence": 0.9,
+                      "matched_tokens": [],
+                      "matched_uia_role": "Custom",
+                      "raw_metadata": {}
+                    },
+                    "confidence": 0.9,
+                    "uia_element": {
+                      "element_id": "win32_0a0c9051",
+                      "name": "Chrome Legacy Window",
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Chrome_RenderWidgetHostHWND",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66976
+                    },
+                    "ocr_tokens": [],
+                    "visual_region": null
+                  },
+                  {
+                    "element_id": "pe_e35976ad",
+                    "name": "Unnamed Control",
+                    "role": "custom",
+                    "context": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "evidence": {
+                      "evidence_sources": [
+                        "UIA"
+                      ],
+                      "confidence": 0.9,
+                      "matched_tokens": [],
+                      "matched_uia_role": "Custom",
+                      "raw_metadata": {}
+                    },
+                    "confidence": 0.9,
+                    "uia_element": {
+                      "element_id": "win32_a10aadef",
+                      "name": null,
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Intermediate D3D Window",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66980
+                    },
+                    "ocr_tokens": [],
+                    "visual_region": null
+                  },
+                  {
+                    "element_id": "pe_vreg_vreg_win_66954",
+                    "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                    "role": "application_window",
+                    "context": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "evidence": {
+                      "evidence_sources": [
+                        "WIN32"
+                      ],
+                      "confidence": 1.0,
+                      "matched_tokens": [],
+                      "matched_uia_role": null,
+                      "raw_metadata": {}
+                    },
+                    "confidence": 1.0,
+                    "uia_element": null,
+                    "ocr_tokens": [],
+                    "visual_region": {
+                      "region_id": "vreg_win_66954",
+                      "region_type": "APPLICATION_WINDOW",
+                      "bounds": {
+                        "left": -13,
+                        "top": -13,
+                        "width": 2906,
+                        "height": 1826
+                      },
+                      "confidence": 1.0,
+                      "description": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "source": "WIN32",
+                      "raw_metadata": {}
+                    }
+                  }
+                ],
+                "focused_element": null,
+                "desktop_summary": "=== LIVE DESKTOP STATE (2880x1800) ===\nActive Window: 'ORBIT - Antigravity IDE - trajectory_memory.py' (Class: Chrome_WidgetWin_1, HWND: 66954)\nVisible Windows: 'QA OSD', 'ORBIT - Antigravity IDE - trajectory_memory.py', 'Startup - Investor - Brave', 'Startup - Founder - Brave', 'MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT'\nInteractive Elements:\n- Custom: 'Chrome Legacy Window' (Confidence: 0.90)\n- Custom: 'Unnamed Control' (Confidence: 0.90)\n- Application_Window: 'Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'' (Confidence: 1.00)",
+                "canvas_status": "UNKNOWN",
+                "uia_status": "SUCCESS",
+                "ocr_status": "UNAVAILABLE",
+                "screenshot_status": "SUCCESS",
+                "is_consistent": true,
+                "consistency_warnings": [],
+                "capture_started_at": "2026-09-16 08:59:32.290436+00:00",
+                "capture_completed_at": "2026-09-16 08:59:32.545858+00:00",
+                "capture_duration_ms": 254.92920000033337,
+                "capture_metadata": {}
+              },
+              "world_state": {
+                "raw_evidence": {
+                  "observation_id": "obs_532d092f",
+                  "timestamp_utc": "2026-09-16 08:59:32.546859+00:00",
+                  "screen_width": 1920,
+                  "screen_height": 1080,
+                  "raw_screenshot_shape": [
+                    1080,
+                    1920,
+                    3
+                  ],
+                  "dpi_scale": 1.0,
+                  "active_hwnd": 66954,
+                  "active_window_hwnd": 66954,
+                  "raw_window_list": [
+                    {
+                      "hwnd": 263462,
+                      "title": "QA OSD",
+                      "class_name": "JUCE_1a0a86a380d",
+                      "process_id": 13288,
+                      "process_name": "AQAUserPS.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66954,
+                      "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 22036,
+                      "process_name": "Antigravity IDE.exe",
+                      "is_foreground": true
+                    },
+                    {
+                      "hwnd": 399072,
+                      "title": "Startup - Investor - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66694,
+                      "title": "Startup - Founder - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 136810,
+                      "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                      "class_name": "mintty",
+                      "process_id": 8312,
+                      "process_name": "mintty.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 202096,
+                      "title": "ORBIT - File Explorer",
+                      "class_name": "CabinetWClass",
+                      "process_id": 11784,
+                      "process_name": "explorer.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 656016,
+                      "title": "Settings",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 2056,
+                      "process_name": "SystemSettings.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 460648,
+                      "title": "Settings",
+                      "class_name": "ApplicationFrameWindow",
+                      "process_id": 8520,
+                      "process_name": "ApplicationFrameHost.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 132424,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 196804,
+                      "title": "RaycastNodeGracefulShutdownWindow",
+                      "class_name": "RaycastNodeGracefulShutdownClass",
+                      "process_id": 19140,
+                      "process_name": "node.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 853266,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 131922,
+                      "title": "Windows Input Experience",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 17896,
+                      "process_name": "TextInputHost.exe",
+                      "is_foreground": false
+                    }
+                  ],
+                  "raw_uia_tree": [
+                    {
+                      "element_id": "win32_0a0c9051",
+                      "name": "Chrome Legacy Window",
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Chrome_RenderWidgetHostHWND",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66976
+                    },
+                    {
+                      "element_id": "win32_a10aadef",
+                      "name": null,
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Intermediate D3D Window",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66980
+                    }
+                  ],
+                  "raw_ocr_tokens": [],
+                  "raw_uia_count": 2,
+                  "raw_ocr_count": 0,
+                  "raw_screenshot_bytes_len": 0
+                },
+                "perception_fusion": {
+                  "settle_result": null,
+                  "fused_controls": [
+                    {
+                      "control_id": "ctl_21415488",
+                      "name": "Chrome Legacy Window",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_21d3a601",
+                      "name": "",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_d4024f2e",
+                      "name": "Chrome Legacy Window",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_9dded9d8",
+                      "name": "Unnamed Control",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_4f118152",
+                      "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "role": "application_window",
+                      "automation_id": null,
+                      "bounds": [
+                        -13,
+                        -13,
+                        1813,
+                        2893
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    }
+                  ],
+                  "detected_modals": [],
+                  "text_clusters_count": 0,
+                  "visual_icons_count": 0
+                },
+                "canonical_state": {
+                  "observation_id": "obs_532d092f",
+                  "timestamp_utc": "2026-09-16 08:59:32.546859+00:00",
+                  "active_process_name": "Antigravity IDE.exe",
+                  "active_window_title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "active_window_hwnd": 66954,
+                  "active_window_bounds": null,
+                  "visible_windows": [
+                    {
+                      "hwnd": 263462,
+                      "title": "QA OSD",
+                      "class_name": "JUCE_1a0a86a380d",
+                      "process_id": 13288,
+                      "process_name": "AQAUserPS.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66954,
+                      "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 22036,
+                      "process_name": "Antigravity IDE.exe",
+                      "is_foreground": true
+                    },
+                    {
+                      "hwnd": 399072,
+                      "title": "Startup - Investor - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66694,
+                      "title": "Startup - Founder - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 136810,
+                      "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                      "class_name": "mintty",
+                      "process_id": 8312,
+                      "process_name": "mintty.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 202096,
+                      "title": "ORBIT - File Explorer",
+                      "class_name": "CabinetWClass",
+                      "process_id": 11784,
+                      "process_name": "explorer.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 656016,
+                      "title": "Settings",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 2056,
+                      "process_name": "SystemSettings.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 460648,
+                      "title": "Settings",
+                      "class_name": "ApplicationFrameWindow",
+                      "process_id": 8520,
+                      "process_name": "ApplicationFrameHost.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 132424,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 196804,
+                      "title": "RaycastNodeGracefulShutdownWindow",
+                      "class_name": "RaycastNodeGracefulShutdownClass",
+                      "process_id": 19140,
+                      "process_name": "node.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 853266,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 131922,
+                      "title": "Windows Input Experience",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 17896,
+                      "process_name": "TextInputHost.exe",
+                      "is_foreground": false
+                    }
+                  ],
+                  "interactive_elements": [
+                    {
+                      "control_id": "ctl_21415488",
+                      "name": "Chrome Legacy Window",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_21d3a601",
+                      "name": "",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_d4024f2e",
+                      "name": "Chrome Legacy Window",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_9dded9d8",
+                      "name": "Unnamed Control",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_4f118152",
+                      "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "role": "application_window",
+                      "automation_id": null,
+                      "bounds": [
+                        -13,
+                        -13,
+                        1813,
+                        2893
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    }
+                  ],
+                  "active_modal": null,
+                  "canvas_status": "UNKNOWN",
+                  "filesystem_snapshot": {},
+                  "generation_id": 0
+                },
+                "compact_context": {
+                  "observation_id": "obs_532d092f",
+                  "active_app_summary": "Window: \"ORBIT - Antigravity IDE - trajectory_memory.py\" | Process: Antigravity IDE.exe (HWND: 66954)",
+                  "foreground_window_title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "active_process_name": "Antigravity IDE.exe",
+                  "screen_resolution": "1920x1080",
+                  "app_context": "Desktop",
+                  "interactive_summary": [
+                    {
+                      "name": "Chrome Legacy Window",
+                      "role": "Custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "",
+                      "role": "Custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "Chrome Legacy Window",
+                      "role": "custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "Unnamed Control",
+                      "role": "custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "role": "application_window",
+                      "bounds": [
+                        -13,
+                        -13,
+                        1813,
+                        2893
+                      ],
+                      "source": "UIA"
+                    }
+                  ],
+                  "visible_controls_text": "- [Custom] \"Chrome Legacy Window\" at [0, 0, 1798, 2880]\n- [Custom] \"\" at [0, 0, 1798, 2880]\n- [custom] \"Chrome Legacy Window\" at [0, 0, 1798, 2880]\n- [custom] \"Unnamed Control\" at [0, 0, 1798, 2880]\n- [application_window] \"Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'\" at [-13, -13, 1813, 2893]",
+                  "active_modal_warning": null,
+                  "estimated_tokens": 106
+                }
+              },
+              "uia_status": "SUCCESS",
+              "ocr_status": "UNAVAILABLE",
+              "screenshot_status": "SUCCESS",
+              "perceived_elements_count": 3
+            },
+            "state_progress_detected": false,
+            "duration_ms": 12.855200002377387,
+            "trace": {
+              "trace_id": "trc_7c7ac3a1",
+              "cycle_number": 0,
+              "timestamp_utc": "2026-09-16 08:59:32.551456+00:00",
+              "observation_id": "obs_532d092f",
+              "freshness_validated": true,
+              "foreground_window": "ORBIT - Antigravity IDE - trajectory_memory.py",
+              "visible_windows": [
+                "QA OSD",
+                "ORBIT - Antigravity IDE - trajectory_memory.py",
+                "Startup - Investor - Brave",
+                "Startup - Founder - Brave",
+                "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                "ORBIT - File Explorer",
+                "Settings",
+                "Settings",
+                "Raycast",
+                "RaycastNodeGracefulShutdownWindow",
+                "Raycast",
+                "Windows Input Experience"
+              ],
+              "ocr_summary": "",
+              "ui_elements_count": 3,
+              "screenshot_available": true,
+              "model_id": "UNKNOWN",
+              "model_provider": "UNKNOWN",
+              "local_or_cloud": "LOCAL",
+              "capabilities": [],
+              "vision_capable": false,
+              "screenshot_attached": false,
+              "model_latency_ms": null,
+              "raw_model_response": null,
+              "decision_summary": "MODEL_UNAVAILABLE: No authoritative multimodal model session or client available.",
+              "decision_confidence": 0.0,
+              "goal_progress": "IN_PROGRESS",
+              "next_action_type": "ABORT_TASK",
+              "next_action_params": {
+                "error_code": "MODEL_UNAVAILABLE",
+                "diagnostic": "No active multimodal decision model configured."
+              },
+              "semantic_target_name": null,
+              "semantic_target_role": null,
+              "target_evidence_source": "NONE",
+              "grounding_confidence": 0.0,
+              "grounding_resolved": false,
+              "resolved_coordinates": null,
+              "dispatch_attempted": false,
+              "dispatch_success": false,
+              "dispatch_error": null,
+              "post_observation_id": "",
+              "post_freshness_validated": false,
+              "expected_effect": "",
+              "observed_effect": "",
+              "expected_effect_observed": false,
+              "verification_strategy": "STATE_DELTA",
+              "verification_reason": "",
+              "goal_satisfied": false,
+              "goal_supporting_evidence": [],
+              "goal_verifier_evaluated": true,
+              "meaningful_state_change": false,
+              "repeated_actions_count": 0,
+              "recovery_count": 0,
+              "remaining_action_budget": 50
+            }
+          }
+        ],
+        "final_status": "FAILED",
+        "failure_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+        "failure_code": "GOAL_UNACHIEVABLE",
+        "elapsed_duration_ms": 279.64820000124746,
+        "state_transitions": [
+          {
+            "transition_id": "tra_3ea3923f",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:32.551456+00:00",
+            "state_before": "INITIALIZING",
+            "state_after": "OBSERVING",
+            "observation_id": "",
+            "decision_id": null,
+            "selected_model": null,
+            "selected_model_provider": null,
+            "action_id": null,
+            "action_type": null,
+            "dispatch_success": false,
+            "expected_effect_observed": false,
+            "goal_satisfied": false,
+            "failure_reason": null,
+            "recovery_attempt": 0,
+            "duration_ms": 266.81119999921066
+          },
+          {
+            "transition_id": "tra_b09f4a78",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:32.557260+00:00",
+            "state_before": "OBSERVING",
+            "state_after": "REASONING",
+            "observation_id": "obs_532d092f",
+            "decision_id": null,
+            "selected_model": null,
+            "selected_model_provider": null,
+            "action_id": null,
+            "action_type": null,
+            "dispatch_success": false,
+            "expected_effect_observed": false,
+            "goal_satisfied": false,
+            "failure_reason": null,
+            "recovery_attempt": 0,
+            "duration_ms": 6.275600000662962
+          },
+          {
+            "transition_id": "tra_2bca0997",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:32.559600+00:00",
+            "state_before": "REASONING",
+            "state_after": "FAILED",
+            "observation_id": "obs_532d092f",
+            "decision_id": "dec_a5425a07",
+            "selected_model": null,
+            "selected_model_provider": null,
+            "action_id": null,
+            "action_type": null,
+            "dispatch_success": false,
+            "expected_effect_observed": false,
+            "goal_satisfied": false,
+            "failure_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+            "recovery_attempt": 0,
+            "duration_ms": 1.392000001942506
+          }
+        ],
+        "cycle_traces": [
+          {
+            "trace_id": "trc_7c7ac3a1",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:32.551456+00:00",
+            "observation_id": "obs_532d092f",
+            "freshness_validated": true,
+            "foreground_window": "ORBIT - Antigravity IDE - trajectory_memory.py",
+            "visible_windows": [
+              "QA OSD",
+              "ORBIT - Antigravity IDE - trajectory_memory.py",
+              "Startup - Investor - Brave",
+              "Startup - Founder - Brave",
+              "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+              "ORBIT - File Explorer",
+              "Settings",
+              "Settings",
+              "Raycast",
+              "RaycastNodeGracefulShutdownWindow",
+              "Raycast",
+              "Windows Input Experience"
+            ],
+            "ocr_summary": "",
+            "ui_elements_count": 3,
+            "screenshot_available": true,
+            "model_id": "UNKNOWN",
+            "model_provider": "UNKNOWN",
+            "local_or_cloud": "LOCAL",
+            "capabilities": [],
+            "vision_capable": false,
+            "screenshot_attached": false,
+            "model_latency_ms": null,
+            "raw_model_response": null,
+            "decision_summary": "MODEL_UNAVAILABLE: No authoritative multimodal model session or client available.",
+            "decision_confidence": 0.0,
+            "goal_progress": "IN_PROGRESS",
+            "next_action_type": "ABORT_TASK",
+            "next_action_params": {
+              "error_code": "MODEL_UNAVAILABLE",
+              "diagnostic": "No active multimodal decision model configured."
+            },
+            "semantic_target_name": null,
+            "semantic_target_role": null,
+            "target_evidence_source": "NONE",
+            "grounding_confidence": 0.0,
+            "grounding_resolved": false,
+            "resolved_coordinates": null,
+            "dispatch_attempted": false,
+            "dispatch_success": false,
+            "dispatch_error": null,
+            "post_observation_id": "",
+            "post_freshness_validated": false,
+            "expected_effect": "",
+            "observed_effect": "",
+            "expected_effect_observed": false,
+            "verification_strategy": "STATE_DELTA",
+            "verification_reason": "",
+            "goal_satisfied": false,
+            "goal_supporting_evidence": [],
+            "goal_verifier_evaluated": true,
+            "meaningful_state_change": false,
+            "repeated_actions_count": 0,
+            "recovery_count": 0,
+            "remaining_action_budget": 50
+          }
+        ],
+        "recovery_records": []
+      },
+      "task_objective": {
+        "objective_id": "obj_e71eb0d5",
+        "raw_prompt": "Open Notepad",
+        "user_goal": "Open Notepad",
+        "end_condition": "notepad_is_open_and_active",
+        "target_entities": [
+          "notepad"
+        ],
+        "constraints": [],
+        "parameters": {
+          "app_name": "notepad",
+          "action_type": "open"
+        },
+        "deliverable": null,
+        "success_criteria": [],
+        "assumptions": [],
+        "subtasks": [],
+        "created_at": "2026-09-16 08:59:32.289864+00:00"
+      }
+    },
+    "history_record": {
+      "execution_id": "exec_90ab71a0d206",
+      "task_id": "task_f01d7bc31e0b",
+      "session_id": "live_session_test_a",
+      "goal": "Open Notepad",
+      "status": "FAILED",
+      "started_at": "2026-09-16T08:59:31.842516Z",
+      "completed_at": "2026-09-16T08:59:32.616509Z",
+      "duration_ms": 773.993,
+      "active_model": null,
+      "model_provider": null,
+      "applications_involved": [],
+      "steps": [],
+      "steps_completed": 0,
+      "total_steps": 1,
+      "replanning_count": 0,
+      "replan_history": [],
+      "failure_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+      "failure_code": "GOAL_UNACHIEVABLE",
+      "cancellation_reason": null,
+      "evidence": null,
+      "diagnostics": {}
+    }
+  },
+  "TEST_B": {
+    "prompt": "Open Notepad and type HELLO ORBIT",
+    "task_id": "task_2669969d038c",
+    "status": "FAILED",
+    "duration_ms": 858.3967000013217,
+    "error": {
+      "code": "GOAL_UNACHIEVABLE",
+      "message": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+      "details": null,
+      "recoverable": false
+    },
+    "metadata": {
+      "agent_execution_result": {
+        "task_id": "task_2669969d038c",
+        "objective": {
+          "objective_id": "obj_c8fbf1ec",
+          "raw_prompt": "Open Notepad and type HELLO ORBIT",
+          "user_goal": "Open Notepad and type HELLO ORBIT",
+          "end_condition": "notepad_contains_text",
+          "target_entities": [
+            "notepad"
+          ],
+          "constraints": [],
+          "parameters": {
+            "app_name": "notepad",
+            "action_type": "type",
+            "text": "HELLO ORBIT"
+          },
+          "deliverable": null,
+          "success_criteria": [],
+          "assumptions": [],
+          "subtasks": [],
+          "created_at": "2026-09-16 08:59:34.246803+00:00"
+        },
+        "is_success": false,
+        "total_steps": 1,
+        "step_history": [
+          {
+            "step_index": 0,
+            "decision": {
+              "decision_id": "dec_b959dddc",
+              "step_index": 0,
+              "decision_summary": "MODEL_UNAVAILABLE: No authoritative multimodal model session or client available.",
+              "decision_confidence": 0.0,
+              "evidence_used": [
+                "model_session_manager:none"
+              ],
+              "expected_state_transition": "none",
+              "reason_summary": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+              "is_goal_satisfied": false,
+              "escalated_to_llm": false,
+              "next_action": {
+                "action_id": "act_e7c7317a",
+                "action_type": "ABORT_TASK",
+                "target": null,
+                "parameters": {
+                  "error_code": "MODEL_UNAVAILABLE",
+                  "diagnostic": "No active multimodal decision model configured."
+                },
+                "outcome_contract": {
+                  "expected_state_transition": "task_aborted",
+                  "verification_strategy": "AUTO_ROUTED",
+                  "target_role": null,
+                  "target_name": null,
+                  "expected_window_title": null,
+                  "expected_text": null,
+                  "required_evidence": null,
+                  "timeout_sec": 5.0,
+                  "match_criteria": null
+                },
+                "expected_effect": "Abort task due to missing decision model",
+                "rationale": ""
+              }
+            },
+            "action_dispatched": {
+              "action_id": "act_e7c7317a",
+              "action_type": "ABORT_TASK",
+              "target": null,
+              "parameters": {
+                "error_code": "MODEL_UNAVAILABLE",
+                "diagnostic": "No active multimodal decision model configured."
+              },
+              "outcome_contract": {
+                "expected_state_transition": "task_aborted",
+                "verification_strategy": "AUTO_ROUTED",
+                "target_role": null,
+                "target_name": null,
+                "expected_window_title": null,
+                "expected_text": null,
+                "required_evidence": null,
+                "timeout_sec": 5.0,
+                "match_criteria": null
+              },
+              "expected_effect": "Abort task due to missing decision model",
+              "rationale": ""
+            },
+            "execution_result": {
+              "action_id": "act_bcac0f8e",
+              "dispatch_success": false,
+              "expected_effect_observed": false,
+              "goal_satisfied": false,
+              "outcome_status": "DISPATCH_FAILED",
+              "verified": false,
+              "verification_strategy": "AUTO_ROUTED",
+              "verification_reason": "",
+              "pre_action_state": null,
+              "post_action_state": null,
+              "observed_delta": {},
+              "verification_evidence": {},
+              "error_message": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+              "failure_code": null,
+              "duration_ms": 0.0,
+              "text_verification": null
+            },
+            "post_observation": {
+              "observation_id": "obs_faaee7d0",
+              "timestamp_utc": "2026-09-16 08:59:34.438752+00:00",
+              "active_window_hwnd": 66954,
+              "active_window_title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+              "active_window_class": "Chrome_WidgetWin_1",
+              "active_process_name": "Antigravity IDE.exe",
+              "visible_windows": [
+                {
+                  "hwnd": 263462,
+                  "title": "QA OSD",
+                  "class_name": "JUCE_1a0a86a380d",
+                  "process_id": 13288,
+                  "process_name": "AQAUserPS.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 66954,
+                  "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "class_name": "Chrome_WidgetWin_1",
+                  "process_id": 22036,
+                  "process_name": "Antigravity IDE.exe",
+                  "is_foreground": true
+                },
+                {
+                  "hwnd": 399072,
+                  "title": "Startup - Investor - Brave",
+                  "class_name": "Chrome_WidgetWin_1",
+                  "process_id": 17824,
+                  "process_name": "brave.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 66694,
+                  "title": "Startup - Founder - Brave",
+                  "class_name": "Chrome_WidgetWin_1",
+                  "process_id": 17824,
+                  "process_name": "brave.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 136810,
+                  "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                  "class_name": "mintty",
+                  "process_id": 8312,
+                  "process_name": "mintty.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 202096,
+                  "title": "ORBIT - File Explorer",
+                  "class_name": "CabinetWClass",
+                  "process_id": 11784,
+                  "process_name": "explorer.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 656016,
+                  "title": "Settings",
+                  "class_name": "Windows.UI.Core.CoreWindow",
+                  "process_id": 2056,
+                  "process_name": "SystemSettings.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 460648,
+                  "title": "Settings",
+                  "class_name": "ApplicationFrameWindow",
+                  "process_id": 8520,
+                  "process_name": "ApplicationFrameHost.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 132424,
+                  "title": "Raycast",
+                  "class_name": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                  "process_id": 17612,
+                  "process_name": "Raycast.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 196804,
+                  "title": "RaycastNodeGracefulShutdownWindow",
+                  "class_name": "RaycastNodeGracefulShutdownClass",
+                  "process_id": 19140,
+                  "process_name": "node.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 853266,
+                  "title": "Raycast",
+                  "class_name": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                  "process_id": 17612,
+                  "process_name": "Raycast.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 131922,
+                  "title": "Windows Input Experience",
+                  "class_name": "Windows.UI.Core.CoreWindow",
+                  "process_id": 17896,
+                  "process_name": "TextInputHost.exe",
+                  "is_foreground": false
+                }
+              ],
+              "target_app_exists": false,
+              "target_app_is_active": false,
+              "screen_summary": "=== LIVE DESKTOP STATE (2880x1800) ===\nActive Window: 'ORBIT - Antigravity IDE - trajectory_memory.py' (Class: Chrome_WidgetWin_1, HWND: 66954)\nVisible Windows: 'QA OSD', 'ORBIT - Antigravity IDE - trajectory_memory.py', 'Startup - Investor - Brave', 'Startup - Founder - Brave', 'MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT'\nInteractive Elements:\n- Custom: 'Chrome Legacy Window' (Confidence: 0.90)\n- Custom: 'Unnamed Control' (Confidence: 0.90)\n- Application_Window: 'Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'' (Confidence: 1.00)",
+              "canvas_status": "UNKNOWN",
+              "ocr_tokens": [],
+              "raw_evidence": {
+                "target_app_name": "notepad",
+                "visible_window_count": 12,
+                "is_consistent": true,
+                "consistency_warnings": [],
+                "perceived_elements_count": 3
+              },
+              "desktop_observation": {
+                "observation_id": "obs_faaee7d0",
+                "timestamp": "2026-09-16 08:59:34.437751+00:00",
+                "screen_width": 2880,
+                "screen_height": 1800,
+                "foreground_window": {
+                  "hwnd": 66954,
+                  "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "window_class": "Chrome_WidgetWin_1",
+                  "is_foreground": true,
+                  "is_visible": true,
+                  "is_minimized": false,
+                  "is_maximized": true,
+                  "window_bounds": {
+                    "left": -13,
+                    "top": -13,
+                    "width": 2906,
+                    "height": 1826
+                  },
+                  "client_bounds": {
+                    "left": 0,
+                    "top": 0,
+                    "width": 2880,
+                    "height": 1798
+                  },
+                  "process_id": 22036,
+                  "process_name": "Antigravity IDE.exe"
+                },
+                "visible_windows": [
+                  {
+                    "hwnd": 263462,
+                    "title": "QA OSD",
+                    "window_class": "JUCE_1a0a86a380d",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 1262,
+                      "top": 36,
+                      "width": 356,
+                      "height": 256
+                    },
+                    "client_bounds": {
+                      "left": 1262,
+                      "top": 36,
+                      "width": 356,
+                      "height": 256
+                    },
+                    "process_id": 13288,
+                    "process_name": "AQAUserPS.exe"
+                  },
+                  {
+                    "hwnd": 66954,
+                    "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "window_class": "Chrome_WidgetWin_1",
+                    "is_foreground": true,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "process_id": 22036,
+                    "process_name": "Antigravity IDE.exe"
+                  },
+                  {
+                    "hwnd": 399072,
+                    "title": "Startup - Investor - Brave",
+                    "window_class": "Chrome_WidgetWin_1",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "process_id": 17824,
+                    "process_name": "brave.exe"
+                  },
+                  {
+                    "hwnd": 66694,
+                    "title": "Startup - Founder - Brave",
+                    "window_class": "Chrome_WidgetWin_1",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "process_id": 17824,
+                    "process_name": "brave.exe"
+                  },
+                  {
+                    "hwnd": 136810,
+                    "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                    "window_class": "mintty",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 147,
+                      "top": 147,
+                      "width": 1182,
+                      "height": 697
+                    },
+                    "client_bounds": {
+                      "left": 160,
+                      "top": 205,
+                      "width": 1122,
+                      "height": 626
+                    },
+                    "process_id": 8312,
+                    "process_name": "mintty.exe"
+                  },
+                  {
+                    "hwnd": 202096,
+                    "title": "ORBIT - File Explorer",
+                    "window_class": "CabinetWClass",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": -13,
+                      "width": 2880,
+                      "height": 1813
+                    },
+                    "process_id": 11784,
+                    "process_name": "explorer.exe"
+                  },
+                  {
+                    "hwnd": 656016,
+                    "title": "Settings",
+                    "window_class": "Windows.UI.Core.CoreWindow",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 0,
+                      "top": 13,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 13,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "process_id": 2056,
+                    "process_name": "SystemSettings.exe"
+                  },
+                  {
+                    "hwnd": 460648,
+                    "title": "Settings",
+                    "window_class": "ApplicationFrameWindow",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": -13,
+                      "width": 2880,
+                      "height": 1813
+                    },
+                    "process_id": 8520,
+                    "process_name": "ApplicationFrameHost.exe"
+                  },
+                  {
+                    "hwnd": 132424,
+                    "title": "Raycast",
+                    "window_class": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 690,
+                      "top": 425,
+                      "width": 1500,
+                      "height": 950
+                    },
+                    "client_bounds": {
+                      "left": 690,
+                      "top": 425,
+                      "width": 1500,
+                      "height": 950
+                    },
+                    "process_id": 17612,
+                    "process_name": "Raycast.exe"
+                  },
+                  {
+                    "hwnd": 196804,
+                    "title": "RaycastNodeGracefulShutdownWindow",
+                    "window_class": "RaycastNodeGracefulShutdownClass",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "process_id": 19140,
+                    "process_name": "node.exe"
+                  },
+                  {
+                    "hwnd": 853266,
+                    "title": "Raycast",
+                    "window_class": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 196,
+                      "top": 196,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "client_bounds": {
+                      "left": 196,
+                      "top": 196,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "process_id": 17612,
+                    "process_name": "Raycast.exe"
+                  },
+                  {
+                    "hwnd": 131922,
+                    "title": "Windows Input Experience",
+                    "window_class": "Windows.UI.Core.CoreWindow",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "process_id": 17896,
+                    "process_name": "TextInputHost.exe"
+                  }
+                ],
+                "screenshot_reference": {
+                  "capture_id": "cap_7ba63bec",
+                  "timestamp_utc": "2026-09-16 08:59:34.252533+00:00",
+                  "width": 2880,
+                  "height": 1800,
+                  "image_base64": null,
+                  "capture_method": "OBSERVATION_CAPABILITY",
+                  "format": "jpeg",
+                  "raw_bytes": null
+                },
+                "ocr_tokens": [],
+                "uia_elements": [
+                  {
+                    "element_id": "win32_56fe56fe",
+                    "name": "Chrome Legacy Window",
+                    "control_type": "Custom",
+                    "automation_id": null,
+                    "class_name": "Chrome_RenderWidgetHostHWND",
+                    "is_enabled": true,
+                    "is_visible": true,
+                    "has_keyboard_focus": false,
+                    "bounding_box": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "parent_context": null,
+                    "hwnd": 66976
+                  },
+                  {
+                    "element_id": "win32_04de2623",
+                    "name": null,
+                    "control_type": "Custom",
+                    "automation_id": null,
+                    "class_name": "Intermediate D3D Window",
+                    "is_enabled": true,
+                    "is_visible": true,
+                    "has_keyboard_focus": false,
+                    "bounding_box": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "parent_context": null,
+                    "hwnd": 66980
+                  }
+                ],
+                "visual_regions": [
+                  {
+                    "region_id": "vreg_win_66954",
+                    "region_type": "APPLICATION_WINDOW",
+                    "bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "confidence": 1.0,
+                    "description": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                    "source": "WIN32",
+                    "raw_metadata": {}
+                  }
+                ],
+                "perceived_elements": [
+                  {
+                    "element_id": "pe_d409af7b",
+                    "name": "Chrome Legacy Window",
+                    "role": "custom",
+                    "context": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "evidence": {
+                      "evidence_sources": [
+                        "UIA"
+                      ],
+                      "confidence": 0.9,
+                      "matched_tokens": [],
+                      "matched_uia_role": "Custom",
+                      "raw_metadata": {}
+                    },
+                    "confidence": 0.9,
+                    "uia_element": {
+                      "element_id": "win32_56fe56fe",
+                      "name": "Chrome Legacy Window",
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Chrome_RenderWidgetHostHWND",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66976
+                    },
+                    "ocr_tokens": [],
+                    "visual_region": null
+                  },
+                  {
+                    "element_id": "pe_befca289",
+                    "name": "Unnamed Control",
+                    "role": "custom",
+                    "context": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "evidence": {
+                      "evidence_sources": [
+                        "UIA"
+                      ],
+                      "confidence": 0.9,
+                      "matched_tokens": [],
+                      "matched_uia_role": "Custom",
+                      "raw_metadata": {}
+                    },
+                    "confidence": 0.9,
+                    "uia_element": {
+                      "element_id": "win32_04de2623",
+                      "name": null,
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Intermediate D3D Window",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66980
+                    },
+                    "ocr_tokens": [],
+                    "visual_region": null
+                  },
+                  {
+                    "element_id": "pe_vreg_vreg_win_66954",
+                    "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                    "role": "application_window",
+                    "context": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "evidence": {
+                      "evidence_sources": [
+                        "WIN32"
+                      ],
+                      "confidence": 1.0,
+                      "matched_tokens": [],
+                      "matched_uia_role": null,
+                      "raw_metadata": {}
+                    },
+                    "confidence": 1.0,
+                    "uia_element": null,
+                    "ocr_tokens": [],
+                    "visual_region": {
+                      "region_id": "vreg_win_66954",
+                      "region_type": "APPLICATION_WINDOW",
+                      "bounds": {
+                        "left": -13,
+                        "top": -13,
+                        "width": 2906,
+                        "height": 1826
+                      },
+                      "confidence": 1.0,
+                      "description": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "source": "WIN32",
+                      "raw_metadata": {}
+                    }
+                  }
+                ],
+                "focused_element": null,
+                "desktop_summary": "=== LIVE DESKTOP STATE (2880x1800) ===\nActive Window: 'ORBIT - Antigravity IDE - trajectory_memory.py' (Class: Chrome_WidgetWin_1, HWND: 66954)\nVisible Windows: 'QA OSD', 'ORBIT - Antigravity IDE - trajectory_memory.py', 'Startup - Investor - Brave', 'Startup - Founder - Brave', 'MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT'\nInteractive Elements:\n- Custom: 'Chrome Legacy Window' (Confidence: 0.90)\n- Custom: 'Unnamed Control' (Confidence: 0.90)\n- Application_Window: 'Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'' (Confidence: 1.00)",
+                "canvas_status": "UNKNOWN",
+                "uia_status": "SUCCESS",
+                "ocr_status": "UNAVAILABLE",
+                "screenshot_status": "SUCCESS",
+                "is_consistent": true,
+                "consistency_warnings": [],
+                "capture_started_at": "2026-09-16 08:59:34.247803+00:00",
+                "capture_completed_at": "2026-09-16 08:59:34.437751+00:00",
+                "capture_duration_ms": 189.85429999884218,
+                "capture_metadata": {}
+              },
+              "world_state": {
+                "raw_evidence": {
+                  "observation_id": "obs_faaee7d0",
+                  "timestamp_utc": "2026-09-16 08:59:34.438752+00:00",
+                  "screen_width": 1920,
+                  "screen_height": 1080,
+                  "raw_screenshot_shape": [
+                    1080,
+                    1920,
+                    3
+                  ],
+                  "dpi_scale": 1.0,
+                  "active_hwnd": 66954,
+                  "active_window_hwnd": 66954,
+                  "raw_window_list": [
+                    {
+                      "hwnd": 263462,
+                      "title": "QA OSD",
+                      "class_name": "JUCE_1a0a86a380d",
+                      "process_id": 13288,
+                      "process_name": "AQAUserPS.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66954,
+                      "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 22036,
+                      "process_name": "Antigravity IDE.exe",
+                      "is_foreground": true
+                    },
+                    {
+                      "hwnd": 399072,
+                      "title": "Startup - Investor - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66694,
+                      "title": "Startup - Founder - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 136810,
+                      "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                      "class_name": "mintty",
+                      "process_id": 8312,
+                      "process_name": "mintty.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 202096,
+                      "title": "ORBIT - File Explorer",
+                      "class_name": "CabinetWClass",
+                      "process_id": 11784,
+                      "process_name": "explorer.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 656016,
+                      "title": "Settings",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 2056,
+                      "process_name": "SystemSettings.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 460648,
+                      "title": "Settings",
+                      "class_name": "ApplicationFrameWindow",
+                      "process_id": 8520,
+                      "process_name": "ApplicationFrameHost.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 132424,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 196804,
+                      "title": "RaycastNodeGracefulShutdownWindow",
+                      "class_name": "RaycastNodeGracefulShutdownClass",
+                      "process_id": 19140,
+                      "process_name": "node.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 853266,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 131922,
+                      "title": "Windows Input Experience",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 17896,
+                      "process_name": "TextInputHost.exe",
+                      "is_foreground": false
+                    }
+                  ],
+                  "raw_uia_tree": [
+                    {
+                      "element_id": "win32_56fe56fe",
+                      "name": "Chrome Legacy Window",
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Chrome_RenderWidgetHostHWND",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66976
+                    },
+                    {
+                      "element_id": "win32_04de2623",
+                      "name": null,
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Intermediate D3D Window",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66980
+                    }
+                  ],
+                  "raw_ocr_tokens": [],
+                  "raw_uia_count": 2,
+                  "raw_ocr_count": 0,
+                  "raw_screenshot_bytes_len": 0
+                },
+                "perception_fusion": {
+                  "settle_result": null,
+                  "fused_controls": [
+                    {
+                      "control_id": "ctl_1827a6e3",
+                      "name": "Chrome Legacy Window",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_5d447a1d",
+                      "name": "",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_cda41c0b",
+                      "name": "Chrome Legacy Window",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_5762d7f8",
+                      "name": "Unnamed Control",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_a5c2cf15",
+                      "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "role": "application_window",
+                      "automation_id": null,
+                      "bounds": [
+                        -13,
+                        -13,
+                        1813,
+                        2893
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    }
+                  ],
+                  "detected_modals": [],
+                  "text_clusters_count": 0,
+                  "visual_icons_count": 0
+                },
+                "canonical_state": {
+                  "observation_id": "obs_faaee7d0",
+                  "timestamp_utc": "2026-09-16 08:59:34.438752+00:00",
+                  "active_process_name": "Antigravity IDE.exe",
+                  "active_window_title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "active_window_hwnd": 66954,
+                  "active_window_bounds": null,
+                  "visible_windows": [
+                    {
+                      "hwnd": 263462,
+                      "title": "QA OSD",
+                      "class_name": "JUCE_1a0a86a380d",
+                      "process_id": 13288,
+                      "process_name": "AQAUserPS.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66954,
+                      "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 22036,
+                      "process_name": "Antigravity IDE.exe",
+                      "is_foreground": true
+                    },
+                    {
+                      "hwnd": 399072,
+                      "title": "Startup - Investor - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66694,
+                      "title": "Startup - Founder - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 136810,
+                      "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                      "class_name": "mintty",
+                      "process_id": 8312,
+                      "process_name": "mintty.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 202096,
+                      "title": "ORBIT - File Explorer",
+                      "class_name": "CabinetWClass",
+                      "process_id": 11784,
+                      "process_name": "explorer.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 656016,
+                      "title": "Settings",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 2056,
+                      "process_name": "SystemSettings.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 460648,
+                      "title": "Settings",
+                      "class_name": "ApplicationFrameWindow",
+                      "process_id": 8520,
+                      "process_name": "ApplicationFrameHost.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 132424,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 196804,
+                      "title": "RaycastNodeGracefulShutdownWindow",
+                      "class_name": "RaycastNodeGracefulShutdownClass",
+                      "process_id": 19140,
+                      "process_name": "node.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 853266,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 131922,
+                      "title": "Windows Input Experience",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 17896,
+                      "process_name": "TextInputHost.exe",
+                      "is_foreground": false
+                    }
+                  ],
+                  "interactive_elements": [
+                    {
+                      "control_id": "ctl_1827a6e3",
+                      "name": "Chrome Legacy Window",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_5d447a1d",
+                      "name": "",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_cda41c0b",
+                      "name": "Chrome Legacy Window",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_5762d7f8",
+                      "name": "Unnamed Control",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_a5c2cf15",
+                      "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "role": "application_window",
+                      "automation_id": null,
+                      "bounds": [
+                        -13,
+                        -13,
+                        1813,
+                        2893
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    }
+                  ],
+                  "active_modal": null,
+                  "canvas_status": "UNKNOWN",
+                  "filesystem_snapshot": {},
+                  "generation_id": 0
+                },
+                "compact_context": {
+                  "observation_id": "obs_faaee7d0",
+                  "active_app_summary": "Window: \"ORBIT - Antigravity IDE - trajectory_memory.py\" | Process: Antigravity IDE.exe (HWND: 66954)",
+                  "foreground_window_title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "active_process_name": "Antigravity IDE.exe",
+                  "screen_resolution": "1920x1080",
+                  "app_context": "Desktop",
+                  "interactive_summary": [
+                    {
+                      "name": "Chrome Legacy Window",
+                      "role": "Custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "",
+                      "role": "Custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "Chrome Legacy Window",
+                      "role": "custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "Unnamed Control",
+                      "role": "custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "role": "application_window",
+                      "bounds": [
+                        -13,
+                        -13,
+                        1813,
+                        2893
+                      ],
+                      "source": "UIA"
+                    }
+                  ],
+                  "visible_controls_text": "- [Custom] \"Chrome Legacy Window\" at [0, 0, 1798, 2880]\n- [Custom] \"\" at [0, 0, 1798, 2880]\n- [custom] \"Chrome Legacy Window\" at [0, 0, 1798, 2880]\n- [custom] \"Unnamed Control\" at [0, 0, 1798, 2880]\n- [application_window] \"Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'\" at [-13, -13, 1813, 2893]",
+                  "active_modal_warning": null,
+                  "estimated_tokens": 106
+                }
+              },
+              "uia_status": "SUCCESS",
+              "ocr_status": "UNAVAILABLE",
+              "screenshot_status": "SUCCESS",
+              "perceived_elements_count": 3
+            },
+            "state_progress_detected": false,
+            "duration_ms": 1.8024999990302604,
+            "trace": {
+              "trace_id": "trc_023b7b77",
+              "cycle_number": 0,
+              "timestamp_utc": "2026-09-16 08:59:34.439754+00:00",
+              "observation_id": "obs_faaee7d0",
+              "freshness_validated": true,
+              "foreground_window": "ORBIT - Antigravity IDE - trajectory_memory.py",
+              "visible_windows": [
+                "QA OSD",
+                "ORBIT - Antigravity IDE - trajectory_memory.py",
+                "Startup - Investor - Brave",
+                "Startup - Founder - Brave",
+                "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                "ORBIT - File Explorer",
+                "Settings",
+                "Settings",
+                "Raycast",
+                "RaycastNodeGracefulShutdownWindow",
+                "Raycast",
+                "Windows Input Experience"
+              ],
+              "ocr_summary": "",
+              "ui_elements_count": 3,
+              "screenshot_available": true,
+              "model_id": "UNKNOWN",
+              "model_provider": "UNKNOWN",
+              "local_or_cloud": "LOCAL",
+              "capabilities": [],
+              "vision_capable": false,
+              "screenshot_attached": false,
+              "model_latency_ms": null,
+              "raw_model_response": null,
+              "decision_summary": "MODEL_UNAVAILABLE: No authoritative multimodal model session or client available.",
+              "decision_confidence": 0.0,
+              "goal_progress": "IN_PROGRESS",
+              "next_action_type": "ABORT_TASK",
+              "next_action_params": {
+                "error_code": "MODEL_UNAVAILABLE",
+                "diagnostic": "No active multimodal decision model configured."
+              },
+              "semantic_target_name": null,
+              "semantic_target_role": null,
+              "target_evidence_source": "NONE",
+              "grounding_confidence": 0.0,
+              "grounding_resolved": false,
+              "resolved_coordinates": null,
+              "dispatch_attempted": false,
+              "dispatch_success": false,
+              "dispatch_error": null,
+              "post_observation_id": "",
+              "post_freshness_validated": false,
+              "expected_effect": "",
+              "observed_effect": "",
+              "expected_effect_observed": false,
+              "verification_strategy": "STATE_DELTA",
+              "verification_reason": "",
+              "goal_satisfied": false,
+              "goal_supporting_evidence": [],
+              "goal_verifier_evaluated": true,
+              "meaningful_state_change": false,
+              "repeated_actions_count": 0,
+              "recovery_count": 0,
+              "remaining_action_budget": 50
+            }
+          }
+        ],
+        "final_status": "FAILED",
+        "failure_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+        "failure_code": "GOAL_UNACHIEVABLE",
+        "elapsed_duration_ms": 195.87449999744422,
+        "state_transitions": [
+          {
+            "transition_id": "tra_0dcef2a3",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:34.439754+00:00",
+            "state_before": "INITIALIZING",
+            "state_after": "OBSERVING",
+            "observation_id": "",
+            "decision_id": null,
+            "selected_model": null,
+            "selected_model_provider": null,
+            "action_id": null,
+            "action_type": null,
+            "dispatch_success": false,
+            "expected_effect_observed": false,
+            "goal_satisfied": false,
+            "failure_reason": null,
+            "recovery_attempt": 0,
+            "duration_ms": 194.08060000205296
+          },
+          {
+            "transition_id": "tra_b7eb94ae",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:34.441161+00:00",
+            "state_before": "OBSERVING",
+            "state_after": "REASONING",
+            "observation_id": "obs_faaee7d0",
+            "decision_id": null,
+            "selected_model": null,
+            "selected_model_provider": null,
+            "action_id": null,
+            "action_type": null,
+            "dispatch_success": false,
+            "expected_effect_observed": false,
+            "goal_satisfied": false,
+            "failure_reason": null,
+            "recovery_attempt": 0,
+            "duration_ms": 1.113399997848319
+          },
+          {
+            "transition_id": "tra_3b64eb91",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:34.441161+00:00",
+            "state_before": "REASONING",
+            "state_after": "FAILED",
+            "observation_id": "obs_faaee7d0",
+            "decision_id": "dec_b959dddc",
+            "selected_model": null,
+            "selected_model_provider": null,
+            "action_id": null,
+            "action_type": null,
+            "dispatch_success": false,
+            "expected_effect_observed": false,
+            "goal_satisfied": false,
+            "failure_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+            "recovery_attempt": 0,
+            "duration_ms": 0.5698000022675842
+          }
+        ],
+        "cycle_traces": [
+          {
+            "trace_id": "trc_023b7b77",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:34.439754+00:00",
+            "observation_id": "obs_faaee7d0",
+            "freshness_validated": true,
+            "foreground_window": "ORBIT - Antigravity IDE - trajectory_memory.py",
+            "visible_windows": [
+              "QA OSD",
+              "ORBIT - Antigravity IDE - trajectory_memory.py",
+              "Startup - Investor - Brave",
+              "Startup - Founder - Brave",
+              "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+              "ORBIT - File Explorer",
+              "Settings",
+              "Settings",
+              "Raycast",
+              "RaycastNodeGracefulShutdownWindow",
+              "Raycast",
+              "Windows Input Experience"
+            ],
+            "ocr_summary": "",
+            "ui_elements_count": 3,
+            "screenshot_available": true,
+            "model_id": "UNKNOWN",
+            "model_provider": "UNKNOWN",
+            "local_or_cloud": "LOCAL",
+            "capabilities": [],
+            "vision_capable": false,
+            "screenshot_attached": false,
+            "model_latency_ms": null,
+            "raw_model_response": null,
+            "decision_summary": "MODEL_UNAVAILABLE: No authoritative multimodal model session or client available.",
+            "decision_confidence": 0.0,
+            "goal_progress": "IN_PROGRESS",
+            "next_action_type": "ABORT_TASK",
+            "next_action_params": {
+              "error_code": "MODEL_UNAVAILABLE",
+              "diagnostic": "No active multimodal decision model configured."
+            },
+            "semantic_target_name": null,
+            "semantic_target_role": null,
+            "target_evidence_source": "NONE",
+            "grounding_confidence": 0.0,
+            "grounding_resolved": false,
+            "resolved_coordinates": null,
+            "dispatch_attempted": false,
+            "dispatch_success": false,
+            "dispatch_error": null,
+            "post_observation_id": "",
+            "post_freshness_validated": false,
+            "expected_effect": "",
+            "observed_effect": "",
+            "expected_effect_observed": false,
+            "verification_strategy": "STATE_DELTA",
+            "verification_reason": "",
+            "goal_satisfied": false,
+            "goal_supporting_evidence": [],
+            "goal_verifier_evaluated": true,
+            "meaningful_state_change": false,
+            "repeated_actions_count": 0,
+            "recovery_count": 0,
+            "remaining_action_budget": 50
+          }
+        ],
+        "recovery_records": []
+      },
+      "task_objective": {
+        "objective_id": "obj_c8fbf1ec",
+        "raw_prompt": "Open Notepad and type HELLO ORBIT",
+        "user_goal": "Open Notepad and type HELLO ORBIT",
+        "end_condition": "notepad_contains_text",
+        "target_entities": [
+          "notepad"
+        ],
+        "constraints": [],
+        "parameters": {
+          "app_name": "notepad",
+          "action_type": "type",
+          "text": "HELLO ORBIT"
+        },
+        "deliverable": null,
+        "success_criteria": [],
+        "assumptions": [],
+        "subtasks": [],
+        "created_at": "2026-09-16 08:59:34.246803+00:00"
+      }
+    },
+    "history_record": {
+      "execution_id": "exec_d1cdf9614661",
+      "task_id": "task_2669969d038c",
+      "session_id": "live_session_test_b",
+      "goal": "Open Notepad and type HELLO ORBIT",
+      "status": "FAILED",
+      "started_at": "2026-09-16T08:59:33.856477Z",
+      "completed_at": "2026-09-16T08:59:34.483798Z",
+      "duration_ms": 627.321,
+      "active_model": null,
+      "model_provider": null,
+      "applications_involved": [],
+      "steps": [],
+      "steps_completed": 0,
+      "total_steps": 1,
+      "replanning_count": 0,
+      "replan_history": [],
+      "failure_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+      "failure_code": "GOAL_UNACHIEVABLE",
+      "cancellation_reason": null,
+      "evidence": null,
+      "diagnostics": {}
+    }
+  },
+  "TEST_C": {
+    "prompt": "Open Calculator",
+    "task_id": "task_f9c21953bbb1",
+    "status": "FAILED",
+    "duration_ms": 814.0749000012875,
+    "error": {
+      "code": "GOAL_UNACHIEVABLE",
+      "message": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+      "details": null,
+      "recoverable": false
+    },
+    "metadata": {
+      "agent_execution_result": {
+        "task_id": "task_f9c21953bbb1",
+        "objective": {
+          "objective_id": "obj_2e624add",
+          "raw_prompt": "Open Calculator",
+          "user_goal": "Open Calculator",
+          "end_condition": "calculator_is_open_and_active",
+          "target_entities": [
+            "calculator"
+          ],
+          "constraints": [],
+          "parameters": {
+            "app_name": "calculator",
+            "action_type": "open"
+          },
+          "deliverable": null,
+          "success_criteria": [],
+          "assumptions": [],
+          "subtasks": [],
+          "created_at": "2026-09-16 08:59:37.026854+00:00"
+        },
+        "is_success": false,
+        "total_steps": 1,
+        "step_history": [
+          {
+            "step_index": 0,
+            "decision": {
+              "decision_id": "dec_e5284328",
+              "step_index": 0,
+              "decision_summary": "MODEL_UNAVAILABLE: No authoritative multimodal model session or client available.",
+              "decision_confidence": 0.0,
+              "evidence_used": [
+                "model_session_manager:none"
+              ],
+              "expected_state_transition": "none",
+              "reason_summary": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+              "is_goal_satisfied": false,
+              "escalated_to_llm": false,
+              "next_action": {
+                "action_id": "act_fcb728fb",
+                "action_type": "ABORT_TASK",
+                "target": null,
+                "parameters": {
+                  "error_code": "MODEL_UNAVAILABLE",
+                  "diagnostic": "No active multimodal decision model configured."
+                },
+                "outcome_contract": {
+                  "expected_state_transition": "task_aborted",
+                  "verification_strategy": "AUTO_ROUTED",
+                  "target_role": null,
+                  "target_name": null,
+                  "expected_window_title": null,
+                  "expected_text": null,
+                  "required_evidence": null,
+                  "timeout_sec": 5.0,
+                  "match_criteria": null
+                },
+                "expected_effect": "Abort task due to missing decision model",
+                "rationale": ""
+              }
+            },
+            "action_dispatched": {
+              "action_id": "act_fcb728fb",
+              "action_type": "ABORT_TASK",
+              "target": null,
+              "parameters": {
+                "error_code": "MODEL_UNAVAILABLE",
+                "diagnostic": "No active multimodal decision model configured."
+              },
+              "outcome_contract": {
+                "expected_state_transition": "task_aborted",
+                "verification_strategy": "AUTO_ROUTED",
+                "target_role": null,
+                "target_name": null,
+                "expected_window_title": null,
+                "expected_text": null,
+                "required_evidence": null,
+                "timeout_sec": 5.0,
+                "match_criteria": null
+              },
+              "expected_effect": "Abort task due to missing decision model",
+              "rationale": ""
+            },
+            "execution_result": {
+              "action_id": "act_fd3d3381",
+              "dispatch_success": false,
+              "expected_effect_observed": false,
+              "goal_satisfied": false,
+              "outcome_status": "DISPATCH_FAILED",
+              "verified": false,
+              "verification_strategy": "AUTO_ROUTED",
+              "verification_reason": "",
+              "pre_action_state": null,
+              "post_action_state": null,
+              "observed_delta": {},
+              "verification_evidence": {},
+              "error_message": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+              "failure_code": null,
+              "duration_ms": 0.0,
+              "text_verification": null
+            },
+            "post_observation": {
+              "observation_id": "obs_8169e2dc",
+              "timestamp_utc": "2026-09-16 08:59:37.215973+00:00",
+              "active_window_hwnd": 66954,
+              "active_window_title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+              "active_window_class": "Chrome_WidgetWin_1",
+              "active_process_name": "Antigravity IDE.exe",
+              "visible_windows": [
+                {
+                  "hwnd": 263462,
+                  "title": "QA OSD",
+                  "class_name": "JUCE_1a0a86a380d",
+                  "process_id": 13288,
+                  "process_name": "AQAUserPS.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 66954,
+                  "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "class_name": "Chrome_WidgetWin_1",
+                  "process_id": 22036,
+                  "process_name": "Antigravity IDE.exe",
+                  "is_foreground": true
+                },
+                {
+                  "hwnd": 399072,
+                  "title": "Startup - Investor - Brave",
+                  "class_name": "Chrome_WidgetWin_1",
+                  "process_id": 17824,
+                  "process_name": "brave.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 66694,
+                  "title": "Startup - Founder - Brave",
+                  "class_name": "Chrome_WidgetWin_1",
+                  "process_id": 17824,
+                  "process_name": "brave.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 136810,
+                  "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                  "class_name": "mintty",
+                  "process_id": 8312,
+                  "process_name": "mintty.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 202096,
+                  "title": "ORBIT - File Explorer",
+                  "class_name": "CabinetWClass",
+                  "process_id": 11784,
+                  "process_name": "explorer.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 656016,
+                  "title": "Settings",
+                  "class_name": "Windows.UI.Core.CoreWindow",
+                  "process_id": 2056,
+                  "process_name": "SystemSettings.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 460648,
+                  "title": "Settings",
+                  "class_name": "ApplicationFrameWindow",
+                  "process_id": 8520,
+                  "process_name": "ApplicationFrameHost.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 132424,
+                  "title": "Raycast",
+                  "class_name": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                  "process_id": 17612,
+                  "process_name": "Raycast.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 196804,
+                  "title": "RaycastNodeGracefulShutdownWindow",
+                  "class_name": "RaycastNodeGracefulShutdownClass",
+                  "process_id": 19140,
+                  "process_name": "node.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 853266,
+                  "title": "Raycast",
+                  "class_name": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                  "process_id": 17612,
+                  "process_name": "Raycast.exe",
+                  "is_foreground": false
+                },
+                {
+                  "hwnd": 131922,
+                  "title": "Windows Input Experience",
+                  "class_name": "Windows.UI.Core.CoreWindow",
+                  "process_id": 17896,
+                  "process_name": "TextInputHost.exe",
+                  "is_foreground": false
+                }
+              ],
+              "target_app_exists": false,
+              "target_app_is_active": false,
+              "screen_summary": "=== LIVE DESKTOP STATE (2880x1800) ===\nActive Window: 'ORBIT - Antigravity IDE - trajectory_memory.py' (Class: Chrome_WidgetWin_1, HWND: 66954)\nVisible Windows: 'QA OSD', 'ORBIT - Antigravity IDE - trajectory_memory.py', 'Startup - Investor - Brave', 'Startup - Founder - Brave', 'MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT'\nInteractive Elements:\n- Custom: 'Chrome Legacy Window' (Confidence: 0.90)\n- Custom: 'Unnamed Control' (Confidence: 0.90)\n- Application_Window: 'Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'' (Confidence: 1.00)",
+              "canvas_status": "UNKNOWN",
+              "ocr_tokens": [],
+              "raw_evidence": {
+                "target_app_name": "calculator",
+                "visible_window_count": 12,
+                "is_consistent": true,
+                "consistency_warnings": [],
+                "perceived_elements_count": 3
+              },
+              "desktop_observation": {
+                "observation_id": "obs_8169e2dc",
+                "timestamp": "2026-09-16 08:59:37.215973+00:00",
+                "screen_width": 2880,
+                "screen_height": 1800,
+                "foreground_window": {
+                  "hwnd": 66954,
+                  "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "window_class": "Chrome_WidgetWin_1",
+                  "is_foreground": true,
+                  "is_visible": true,
+                  "is_minimized": false,
+                  "is_maximized": true,
+                  "window_bounds": {
+                    "left": -13,
+                    "top": -13,
+                    "width": 2906,
+                    "height": 1826
+                  },
+                  "client_bounds": {
+                    "left": 0,
+                    "top": 0,
+                    "width": 2880,
+                    "height": 1798
+                  },
+                  "process_id": 22036,
+                  "process_name": "Antigravity IDE.exe"
+                },
+                "visible_windows": [
+                  {
+                    "hwnd": 263462,
+                    "title": "QA OSD",
+                    "window_class": "JUCE_1a0a86a380d",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 1262,
+                      "top": 36,
+                      "width": 356,
+                      "height": 256
+                    },
+                    "client_bounds": {
+                      "left": 1262,
+                      "top": 36,
+                      "width": 356,
+                      "height": 256
+                    },
+                    "process_id": 13288,
+                    "process_name": "AQAUserPS.exe"
+                  },
+                  {
+                    "hwnd": 66954,
+                    "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "window_class": "Chrome_WidgetWin_1",
+                    "is_foreground": true,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "process_id": 22036,
+                    "process_name": "Antigravity IDE.exe"
+                  },
+                  {
+                    "hwnd": 399072,
+                    "title": "Startup - Investor - Brave",
+                    "window_class": "Chrome_WidgetWin_1",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "process_id": 17824,
+                    "process_name": "brave.exe"
+                  },
+                  {
+                    "hwnd": 66694,
+                    "title": "Startup - Founder - Brave",
+                    "window_class": "Chrome_WidgetWin_1",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "process_id": 17824,
+                    "process_name": "brave.exe"
+                  },
+                  {
+                    "hwnd": 136810,
+                    "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                    "window_class": "mintty",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 147,
+                      "top": 147,
+                      "width": 1182,
+                      "height": 697
+                    },
+                    "client_bounds": {
+                      "left": 160,
+                      "top": 205,
+                      "width": 1122,
+                      "height": 626
+                    },
+                    "process_id": 8312,
+                    "process_name": "mintty.exe"
+                  },
+                  {
+                    "hwnd": 202096,
+                    "title": "ORBIT - File Explorer",
+                    "window_class": "CabinetWClass",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": -13,
+                      "width": 2880,
+                      "height": 1813
+                    },
+                    "process_id": 11784,
+                    "process_name": "explorer.exe"
+                  },
+                  {
+                    "hwnd": 656016,
+                    "title": "Settings",
+                    "window_class": "Windows.UI.Core.CoreWindow",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 0,
+                      "top": 13,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 13,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "process_id": 2056,
+                    "process_name": "SystemSettings.exe"
+                  },
+                  {
+                    "hwnd": 460648,
+                    "title": "Settings",
+                    "window_class": "ApplicationFrameWindow",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": true,
+                    "window_bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": -13,
+                      "width": 2880,
+                      "height": 1813
+                    },
+                    "process_id": 8520,
+                    "process_name": "ApplicationFrameHost.exe"
+                  },
+                  {
+                    "hwnd": 132424,
+                    "title": "Raycast",
+                    "window_class": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 690,
+                      "top": 425,
+                      "width": 1500,
+                      "height": 950
+                    },
+                    "client_bounds": {
+                      "left": 690,
+                      "top": 425,
+                      "width": 1500,
+                      "height": 950
+                    },
+                    "process_id": 17612,
+                    "process_name": "Raycast.exe"
+                  },
+                  {
+                    "hwnd": 196804,
+                    "title": "RaycastNodeGracefulShutdownWindow",
+                    "window_class": "RaycastNodeGracefulShutdownClass",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "process_id": 19140,
+                    "process_name": "node.exe"
+                  },
+                  {
+                    "hwnd": 853266,
+                    "title": "Raycast",
+                    "window_class": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 196,
+                      "top": 196,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "client_bounds": {
+                      "left": 196,
+                      "top": 196,
+                      "width": 2,
+                      "height": 2
+                    },
+                    "process_id": 17612,
+                    "process_name": "Raycast.exe"
+                  },
+                  {
+                    "hwnd": 131922,
+                    "title": "Windows Input Experience",
+                    "window_class": "Windows.UI.Core.CoreWindow",
+                    "is_foreground": false,
+                    "is_visible": true,
+                    "is_minimized": false,
+                    "is_maximized": false,
+                    "window_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "client_bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1800
+                    },
+                    "process_id": 17896,
+                    "process_name": "TextInputHost.exe"
+                  }
+                ],
+                "screenshot_reference": {
+                  "capture_id": "cap_2be466ef",
+                  "timestamp_utc": "2026-09-16 08:59:37.034877+00:00",
+                  "width": 2880,
+                  "height": 1800,
+                  "image_base64": null,
+                  "capture_method": "OBSERVATION_CAPABILITY",
+                  "format": "jpeg",
+                  "raw_bytes": null
+                },
+                "ocr_tokens": [],
+                "uia_elements": [
+                  {
+                    "element_id": "win32_f315b88f",
+                    "name": "Chrome Legacy Window",
+                    "control_type": "Custom",
+                    "automation_id": null,
+                    "class_name": "Chrome_RenderWidgetHostHWND",
+                    "is_enabled": true,
+                    "is_visible": true,
+                    "has_keyboard_focus": false,
+                    "bounding_box": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "parent_context": null,
+                    "hwnd": 66976
+                  },
+                  {
+                    "element_id": "win32_ff934c28",
+                    "name": null,
+                    "control_type": "Custom",
+                    "automation_id": null,
+                    "class_name": "Intermediate D3D Window",
+                    "is_enabled": true,
+                    "is_visible": true,
+                    "has_keyboard_focus": false,
+                    "bounding_box": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "parent_context": null,
+                    "hwnd": 66980
+                  }
+                ],
+                "visual_regions": [
+                  {
+                    "region_id": "vreg_win_66954",
+                    "region_type": "APPLICATION_WINDOW",
+                    "bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "confidence": 1.0,
+                    "description": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                    "source": "WIN32",
+                    "raw_metadata": {}
+                  }
+                ],
+                "perceived_elements": [
+                  {
+                    "element_id": "pe_6e34b361",
+                    "name": "Chrome Legacy Window",
+                    "role": "custom",
+                    "context": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "evidence": {
+                      "evidence_sources": [
+                        "UIA"
+                      ],
+                      "confidence": 0.9,
+                      "matched_tokens": [],
+                      "matched_uia_role": "Custom",
+                      "raw_metadata": {}
+                    },
+                    "confidence": 0.9,
+                    "uia_element": {
+                      "element_id": "win32_f315b88f",
+                      "name": "Chrome Legacy Window",
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Chrome_RenderWidgetHostHWND",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66976
+                    },
+                    "ocr_tokens": [],
+                    "visual_region": null
+                  },
+                  {
+                    "element_id": "pe_3347823f",
+                    "name": "Unnamed Control",
+                    "role": "custom",
+                    "context": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "bounds": {
+                      "left": 0,
+                      "top": 0,
+                      "width": 2880,
+                      "height": 1798
+                    },
+                    "evidence": {
+                      "evidence_sources": [
+                        "UIA"
+                      ],
+                      "confidence": 0.9,
+                      "matched_tokens": [],
+                      "matched_uia_role": "Custom",
+                      "raw_metadata": {}
+                    },
+                    "confidence": 0.9,
+                    "uia_element": {
+                      "element_id": "win32_ff934c28",
+                      "name": null,
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Intermediate D3D Window",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66980
+                    },
+                    "ocr_tokens": [],
+                    "visual_region": null
+                  },
+                  {
+                    "element_id": "pe_vreg_vreg_win_66954",
+                    "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                    "role": "application_window",
+                    "context": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                    "bounds": {
+                      "left": -13,
+                      "top": -13,
+                      "width": 2906,
+                      "height": 1826
+                    },
+                    "evidence": {
+                      "evidence_sources": [
+                        "WIN32"
+                      ],
+                      "confidence": 1.0,
+                      "matched_tokens": [],
+                      "matched_uia_role": null,
+                      "raw_metadata": {}
+                    },
+                    "confidence": 1.0,
+                    "uia_element": null,
+                    "ocr_tokens": [],
+                    "visual_region": {
+                      "region_id": "vreg_win_66954",
+                      "region_type": "APPLICATION_WINDOW",
+                      "bounds": {
+                        "left": -13,
+                        "top": -13,
+                        "width": 2906,
+                        "height": 1826
+                      },
+                      "confidence": 1.0,
+                      "description": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "source": "WIN32",
+                      "raw_metadata": {}
+                    }
+                  }
+                ],
+                "focused_element": null,
+                "desktop_summary": "=== LIVE DESKTOP STATE (2880x1800) ===\nActive Window: 'ORBIT - Antigravity IDE - trajectory_memory.py' (Class: Chrome_WidgetWin_1, HWND: 66954)\nVisible Windows: 'QA OSD', 'ORBIT - Antigravity IDE - trajectory_memory.py', 'Startup - Investor - Brave', 'Startup - Founder - Brave', 'MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT'\nInteractive Elements:\n- Custom: 'Chrome Legacy Window' (Confidence: 0.90)\n- Custom: 'Unnamed Control' (Confidence: 0.90)\n- Application_Window: 'Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'' (Confidence: 1.00)",
+                "canvas_status": "UNKNOWN",
+                "uia_status": "SUCCESS",
+                "ocr_status": "UNAVAILABLE",
+                "screenshot_status": "SUCCESS",
+                "is_consistent": true,
+                "consistency_warnings": [],
+                "capture_started_at": "2026-09-16 08:59:37.027861+00:00",
+                "capture_completed_at": "2026-09-16 08:59:37.215973+00:00",
+                "capture_duration_ms": 187.6970999983314,
+                "capture_metadata": {}
+              },
+              "world_state": {
+                "raw_evidence": {
+                  "observation_id": "obs_8169e2dc",
+                  "timestamp_utc": "2026-09-16 08:59:37.215973+00:00",
+                  "screen_width": 1920,
+                  "screen_height": 1080,
+                  "raw_screenshot_shape": [
+                    1080,
+                    1920,
+                    3
+                  ],
+                  "dpi_scale": 1.0,
+                  "active_hwnd": 66954,
+                  "active_window_hwnd": 66954,
+                  "raw_window_list": [
+                    {
+                      "hwnd": 263462,
+                      "title": "QA OSD",
+                      "class_name": "JUCE_1a0a86a380d",
+                      "process_id": 13288,
+                      "process_name": "AQAUserPS.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66954,
+                      "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 22036,
+                      "process_name": "Antigravity IDE.exe",
+                      "is_foreground": true
+                    },
+                    {
+                      "hwnd": 399072,
+                      "title": "Startup - Investor - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66694,
+                      "title": "Startup - Founder - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 136810,
+                      "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                      "class_name": "mintty",
+                      "process_id": 8312,
+                      "process_name": "mintty.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 202096,
+                      "title": "ORBIT - File Explorer",
+                      "class_name": "CabinetWClass",
+                      "process_id": 11784,
+                      "process_name": "explorer.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 656016,
+                      "title": "Settings",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 2056,
+                      "process_name": "SystemSettings.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 460648,
+                      "title": "Settings",
+                      "class_name": "ApplicationFrameWindow",
+                      "process_id": 8520,
+                      "process_name": "ApplicationFrameHost.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 132424,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 196804,
+                      "title": "RaycastNodeGracefulShutdownWindow",
+                      "class_name": "RaycastNodeGracefulShutdownClass",
+                      "process_id": 19140,
+                      "process_name": "node.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 853266,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 131922,
+                      "title": "Windows Input Experience",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 17896,
+                      "process_name": "TextInputHost.exe",
+                      "is_foreground": false
+                    }
+                  ],
+                  "raw_uia_tree": [
+                    {
+                      "element_id": "win32_f315b88f",
+                      "name": "Chrome Legacy Window",
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Chrome_RenderWidgetHostHWND",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66976
+                    },
+                    {
+                      "element_id": "win32_ff934c28",
+                      "name": null,
+                      "control_type": "Custom",
+                      "automation_id": null,
+                      "class_name": "Intermediate D3D Window",
+                      "is_enabled": true,
+                      "is_visible": true,
+                      "has_keyboard_focus": false,
+                      "bounding_box": {
+                        "left": 0,
+                        "top": 0,
+                        "width": 2880,
+                        "height": 1798
+                      },
+                      "parent_context": null,
+                      "hwnd": 66980
+                    }
+                  ],
+                  "raw_ocr_tokens": [],
+                  "raw_uia_count": 2,
+                  "raw_ocr_count": 0,
+                  "raw_screenshot_bytes_len": 0
+                },
+                "perception_fusion": {
+                  "settle_result": null,
+                  "fused_controls": [
+                    {
+                      "control_id": "ctl_05e25f25",
+                      "name": "Chrome Legacy Window",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_7801d2ea",
+                      "name": "",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_80e9932d",
+                      "name": "Chrome Legacy Window",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_9a779538",
+                      "name": "Unnamed Control",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_209a724b",
+                      "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "role": "application_window",
+                      "automation_id": null,
+                      "bounds": [
+                        -13,
+                        -13,
+                        1813,
+                        2893
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    }
+                  ],
+                  "detected_modals": [],
+                  "text_clusters_count": 0,
+                  "visual_icons_count": 0
+                },
+                "canonical_state": {
+                  "observation_id": "obs_8169e2dc",
+                  "timestamp_utc": "2026-09-16 08:59:37.215973+00:00",
+                  "active_process_name": "Antigravity IDE.exe",
+                  "active_window_title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "active_window_hwnd": 66954,
+                  "active_window_bounds": null,
+                  "visible_windows": [
+                    {
+                      "hwnd": 263462,
+                      "title": "QA OSD",
+                      "class_name": "JUCE_1a0a86a380d",
+                      "process_id": 13288,
+                      "process_name": "AQAUserPS.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66954,
+                      "title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 22036,
+                      "process_name": "Antigravity IDE.exe",
+                      "is_foreground": true
+                    },
+                    {
+                      "hwnd": 399072,
+                      "title": "Startup - Investor - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 66694,
+                      "title": "Startup - Founder - Brave",
+                      "class_name": "Chrome_WidgetWin_1",
+                      "process_id": 17824,
+                      "process_name": "brave.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 136810,
+                      "title": "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                      "class_name": "mintty",
+                      "process_id": 8312,
+                      "process_name": "mintty.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 202096,
+                      "title": "ORBIT - File Explorer",
+                      "class_name": "CabinetWClass",
+                      "process_id": 11784,
+                      "process_name": "explorer.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 656016,
+                      "title": "Settings",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 2056,
+                      "process_name": "SystemSettings.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 460648,
+                      "title": "Settings",
+                      "class_name": "ApplicationFrameWindow",
+                      "process_id": 8520,
+                      "process_name": "ApplicationFrameHost.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 132424,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;e33ee2d2-f304-44db-8be6-8fd36604fc39]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 196804,
+                      "title": "RaycastNodeGracefulShutdownWindow",
+                      "class_name": "RaycastNodeGracefulShutdownClass",
+                      "process_id": 19140,
+                      "process_name": "node.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 853266,
+                      "title": "Raycast",
+                      "class_name": "HwndWrapper[Raycast;Main;26cfd082-4eeb-4425-ac8d-9a35c2ac0988]",
+                      "process_id": 17612,
+                      "process_name": "Raycast.exe",
+                      "is_foreground": false
+                    },
+                    {
+                      "hwnd": 131922,
+                      "title": "Windows Input Experience",
+                      "class_name": "Windows.UI.Core.CoreWindow",
+                      "process_id": 17896,
+                      "process_name": "TextInputHost.exe",
+                      "is_foreground": false
+                    }
+                  ],
+                  "interactive_elements": [
+                    {
+                      "control_id": "ctl_05e25f25",
+                      "name": "Chrome Legacy Window",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_7801d2ea",
+                      "name": "",
+                      "role": "Custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    },
+                    {
+                      "control_id": "ctl_80e9932d",
+                      "name": "Chrome Legacy Window",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_9a779538",
+                      "name": "Unnamed Control",
+                      "role": "custom",
+                      "automation_id": null,
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 0.9
+                    },
+                    {
+                      "control_id": "ctl_209a724b",
+                      "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "role": "application_window",
+                      "automation_id": null,
+                      "bounds": [
+                        -13,
+                        -13,
+                        1813,
+                        2893
+                      ],
+                      "pixel_bounds": null,
+                      "is_interactive": true,
+                      "ocr_text": null,
+                      "evidence_source": "UIA",
+                      "confidence": 1.0
+                    }
+                  ],
+                  "active_modal": null,
+                  "canvas_status": "UNKNOWN",
+                  "filesystem_snapshot": {},
+                  "generation_id": 0
+                },
+                "compact_context": {
+                  "observation_id": "obs_8169e2dc",
+                  "active_app_summary": "Window: \"ORBIT - Antigravity IDE - trajectory_memory.py\" | Process: Antigravity IDE.exe (HWND: 66954)",
+                  "foreground_window_title": "ORBIT - Antigravity IDE - trajectory_memory.py",
+                  "active_process_name": "Antigravity IDE.exe",
+                  "screen_resolution": "1920x1080",
+                  "app_context": "Desktop",
+                  "interactive_summary": [
+                    {
+                      "name": "Chrome Legacy Window",
+                      "role": "Custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "",
+                      "role": "Custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "Chrome Legacy Window",
+                      "role": "custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "Unnamed Control",
+                      "role": "custom",
+                      "bounds": [
+                        0,
+                        0,
+                        1798,
+                        2880
+                      ],
+                      "source": "UIA"
+                    },
+                    {
+                      "name": "Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'",
+                      "role": "application_window",
+                      "bounds": [
+                        -13,
+                        -13,
+                        1813,
+                        2893
+                      ],
+                      "source": "UIA"
+                    }
+                  ],
+                  "visible_controls_text": "- [Custom] \"Chrome Legacy Window\" at [0, 0, 1798, 2880]\n- [Custom] \"\" at [0, 0, 1798, 2880]\n- [custom] \"Chrome Legacy Window\" at [0, 0, 1798, 2880]\n- [custom] \"Unnamed Control\" at [0, 0, 1798, 2880]\n- [application_window] \"Active application window 'ORBIT - Antigravity IDE - trajectory_memory.py'\" at [-13, -13, 1813, 2893]",
+                  "active_modal_warning": null,
+                  "estimated_tokens": 106
+                }
+              },
+              "uia_status": "SUCCESS",
+              "ocr_status": "UNAVAILABLE",
+              "screenshot_status": "SUCCESS",
+              "perceived_elements_count": 3
+            },
+            "state_progress_detected": false,
+            "duration_ms": 1.9683999998960644,
+            "trace": {
+              "trace_id": "trc_ff36b485",
+              "cycle_number": 0,
+              "timestamp_utc": "2026-09-16 08:59:37.217438+00:00",
+              "observation_id": "obs_8169e2dc",
+              "freshness_validated": true,
+              "foreground_window": "ORBIT - Antigravity IDE - trajectory_memory.py",
+              "visible_windows": [
+                "QA OSD",
+                "ORBIT - Antigravity IDE - trajectory_memory.py",
+                "Startup - Investor - Brave",
+                "Startup - Founder - Brave",
+                "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+                "ORBIT - File Explorer",
+                "Settings",
+                "Settings",
+                "Raycast",
+                "RaycastNodeGracefulShutdownWindow",
+                "Raycast",
+                "Windows Input Experience"
+              ],
+              "ocr_summary": "",
+              "ui_elements_count": 3,
+              "screenshot_available": true,
+              "model_id": "UNKNOWN",
+              "model_provider": "UNKNOWN",
+              "local_or_cloud": "LOCAL",
+              "capabilities": [],
+              "vision_capable": false,
+              "screenshot_attached": false,
+              "model_latency_ms": null,
+              "raw_model_response": null,
+              "decision_summary": "MODEL_UNAVAILABLE: No authoritative multimodal model session or client available.",
+              "decision_confidence": 0.0,
+              "goal_progress": "IN_PROGRESS",
+              "next_action_type": "ABORT_TASK",
+              "next_action_params": {
+                "error_code": "MODEL_UNAVAILABLE",
+                "diagnostic": "No active multimodal decision model configured."
+              },
+              "semantic_target_name": null,
+              "semantic_target_role": null,
+              "target_evidence_source": "NONE",
+              "grounding_confidence": 0.0,
+              "grounding_resolved": false,
+              "resolved_coordinates": null,
+              "dispatch_attempted": false,
+              "dispatch_success": false,
+              "dispatch_error": null,
+              "post_observation_id": "",
+              "post_freshness_validated": false,
+              "expected_effect": "",
+              "observed_effect": "",
+              "expected_effect_observed": false,
+              "verification_strategy": "STATE_DELTA",
+              "verification_reason": "",
+              "goal_satisfied": false,
+              "goal_supporting_evidence": [],
+              "goal_verifier_evaluated": true,
+              "meaningful_state_change": false,
+              "repeated_actions_count": 0,
+              "recovery_count": 0,
+              "remaining_action_budget": 50
+            }
+          }
+        ],
+        "final_status": "FAILED",
+        "failure_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+        "failure_code": "GOAL_UNACHIEVABLE",
+        "elapsed_duration_ms": 192.4962000011874,
+        "state_transitions": [
+          {
+            "transition_id": "tra_1a715a17",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:37.217438+00:00",
+            "state_before": "INITIALIZING",
+            "state_after": "OBSERVING",
+            "observation_id": "",
+            "decision_id": null,
+            "selected_model": null,
+            "selected_model_provider": null,
+            "action_id": null,
+            "action_type": null,
+            "dispatch_success": false,
+            "expected_effect_observed": false,
+            "goal_satisfied": false,
+            "failure_reason": null,
+            "recovery_attempt": 0,
+            "duration_ms": 190.5445000011241
+          },
+          {
+            "transition_id": "tra_15f0542c",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:37.217988+00:00",
+            "state_before": "OBSERVING",
+            "state_after": "REASONING",
+            "observation_id": "obs_8169e2dc",
+            "decision_id": null,
+            "selected_model": null,
+            "selected_model_provider": null,
+            "action_id": null,
+            "action_type": null,
+            "dispatch_success": false,
+            "expected_effect_observed": false,
+            "goal_satisfied": false,
+            "failure_reason": null,
+            "recovery_attempt": 0,
+            "duration_ms": 0.5636999994749203
+          },
+          {
+            "transition_id": "tra_d151d372",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:37.219004+00:00",
+            "state_before": "REASONING",
+            "state_after": "FAILED",
+            "observation_id": "obs_8169e2dc",
+            "decision_id": "dec_e5284328",
+            "selected_model": null,
+            "selected_model_provider": null,
+            "action_id": null,
+            "action_type": null,
+            "dispatch_success": false,
+            "expected_effect_observed": false,
+            "goal_satisfied": false,
+            "failure_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+            "recovery_attempt": 0,
+            "duration_ms": 1.2516999995568767
+          }
+        ],
+        "cycle_traces": [
+          {
+            "trace_id": "trc_ff36b485",
+            "cycle_number": 0,
+            "timestamp_utc": "2026-09-16 08:59:37.217438+00:00",
+            "observation_id": "obs_8169e2dc",
+            "freshness_validated": true,
+            "foreground_window": "ORBIT - Antigravity IDE - trajectory_memory.py",
+            "visible_windows": [
+              "QA OSD",
+              "ORBIT - Antigravity IDE - trajectory_memory.py",
+              "Startup - Investor - Brave",
+              "Startup - Founder - Brave",
+              "MINGW64:/c/Users/Aaryan shukla/OneDrive/Desktop/ORBIT",
+              "ORBIT - File Explorer",
+              "Settings",
+              "Settings",
+              "Raycast",
+              "RaycastNodeGracefulShutdownWindow",
+              "Raycast",
+              "Windows Input Experience"
+            ],
+            "ocr_summary": "",
+            "ui_elements_count": 3,
+            "screenshot_available": true,
+            "model_id": "UNKNOWN",
+            "model_provider": "UNKNOWN",
+            "local_or_cloud": "LOCAL",
+            "capabilities": [],
+            "vision_capable": false,
+            "screenshot_attached": false,
+            "model_latency_ms": null,
+            "raw_model_response": null,
+            "decision_summary": "MODEL_UNAVAILABLE: No authoritative multimodal model session or client available.",
+            "decision_confidence": 0.0,
+            "goal_progress": "IN_PROGRESS",
+            "next_action_type": "ABORT_TASK",
+            "next_action_params": {
+              "error_code": "MODEL_UNAVAILABLE",
+              "diagnostic": "No active multimodal decision model configured."
+            },
+            "semantic_target_name": null,
+            "semantic_target_role": null,
+            "target_evidence_source": "NONE",
+            "grounding_confidence": 0.0,
+            "grounding_resolved": false,
+            "resolved_coordinates": null,
+            "dispatch_attempted": false,
+            "dispatch_success": false,
+            "dispatch_error": null,
+            "post_observation_id": "",
+            "post_freshness_validated": false,
+            "expected_effect": "",
+            "observed_effect": "",
+            "expected_effect_observed": false,
+            "verification_strategy": "STATE_DELTA",
+            "verification_reason": "",
+            "goal_satisfied": false,
+            "goal_supporting_evidence": [],
+            "goal_verifier_evaluated": true,
+            "meaningful_state_change": false,
+            "repeated_actions_count": 0,
+            "recovery_count": 0,
+            "remaining_action_budget": 50
+          }
+        ],
+        "recovery_records": []
+      },
+      "task_objective": {
+        "objective_id": "obj_2e624add",
+        "raw_prompt": "Open Calculator",
+        "user_goal": "Open Calculator",
+        "end_condition": "calculator_is_open_and_active",
+        "target_entities": [
+          "calculator"
+        ],
+        "constraints": [],
+        "parameters": {
+          "app_name": "calculator",
+          "action_type": "open"
+        },
+        "deliverable": null,
+        "success_criteria": [],
+        "assumptions": [],
+        "subtasks": [],
+        "created_at": "2026-09-16 08:59:37.026854+00:00"
+      }
+    },
+    "history_record": {
+      "execution_id": "exec_fedbd4f00081",
+      "task_id": "task_f9c21953bbb1",
+      "session_id": "live_session_test_c",
+      "goal": "Open Calculator",
+      "status": "FAILED",
+      "started_at": "2026-09-16T08:59:36.662594Z",
+      "completed_at": "2026-09-16T08:59:37.280331Z",
+      "duration_ms": 617.737,
+      "active_model": null,
+      "model_provider": null,
+      "applications_involved": [],
+      "steps": [],
+      "steps_completed": 0,
+      "total_steps": 1,
+      "replanning_count": 0,
+      "replan_history": [],
+      "failure_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+      "failure_code": "GOAL_UNACHIEVABLE",
+      "cancellation_reason": null,
+      "evidence": null,
+      "diagnostics": {}
+    }
+  }
+}

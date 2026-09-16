@@ -1,0 +1,14 @@
+{
+  "task_id": "task_001",
+  "title": "Launch Notepad Application",
+  "split": "DEVELOPMENT",
+  "category": "APPLICATION_LAUNCH",
+  "natural_language_goal": "Open Notepad",
+  "expectations": {
+    "expected_window_title": "Notepad",
+    "expected_process_name": "notepad.exe",
+    "require_app_open": true
+  },
+  "timeout_sec": 30.0,
+  "max_steps": 5
+}

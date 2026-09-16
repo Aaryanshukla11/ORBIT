@@ -1,0 +1,16 @@
+{
+  "task_id": "task_042",
+  "title": "Handle Save Overwrite Dialog",
+  "split": "UNSEEN",
+  "category": "DIALOG_HANDLING",
+  "natural_language_goal": "Open Notepad, save as 'existing.txt', type more text, save as 'existing.txt' again and confirm Yes on overwrite",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "existing.txt",
+      "format": "text",
+      "min_size_bytes": 5
+    }
+  },
+  "timeout_sec": 75.0,
+  "max_steps": 14
+}

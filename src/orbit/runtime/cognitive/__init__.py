@@ -41,8 +41,30 @@ from orbit.runtime.cognitive.state_machine import (
 )
 from orbit.runtime.cognitive.primitive_execution_controller import PrimitiveExecutionController
 from orbit.runtime.cognitive.trace import CycleExecutionTrace, format_cycle_trace_block
+from orbit.runtime.cognitive.context_checkpoint import CheckpointManager, ContextCheckpoint
+from orbit.runtime.cognitive.context_compactor import CompactedContext, ContextCompactor
+from orbit.runtime.cognitive.trajectory_memory import FailedPattern, SuccessfulPattern, TrajectoryMemory
+from orbit.runtime.cognitive.dialog_handler import (
+    DetectedDialog,
+    DialogIntent,
+    DialogResolutionStrategy,
+    DialogTrapHandler,
+    ModalDialogDetector,
+)
 
 __all__ = [
+    "CheckpointManager",
+    "ContextCheckpoint",
+    "CompactedContext",
+    "ContextCompactor",
+    "DetectedDialog",
+    "DialogIntent",
+    "DialogResolutionStrategy",
+    "DialogTrapHandler",
+    "ModalDialogDetector",
+    "FailedPattern",
+    "SuccessfulPattern",
+    "TrajectoryMemory",
     "PrimitiveExecutionController",
     "AbstractAction",
     "AbstractActionType",

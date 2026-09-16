@@ -51,11 +51,23 @@ class ModelRegistry:
                     return v
 
             # 3. Match stripping provider prefix or matching provider_model_name
-            clean_id = model_id.split(":", 1)[-1].lower()
+            def strip_provider(m_id: str) -> str:
+                m = m_id.lower()
+                for pfx in (
+                    "cloud:openai:", "cloud:anthropic:", "cloud:gemini:", "cloud:google:",
+                    "cloud:deepseek:", "cloud:custom:", "cloud:",
+                    "openai:", "anthropic:", "gemini:", "google:", "deepseek:",
+                    "ollama:", "lm_studio:", "mock:",
+                ):
+                    if m.startswith(pfx):
+                        return m[len(pfx):]
+                return m
+
+            clean_id = strip_provider(model_id)
             for k, v in self._models.items():
-                k_clean = k.split(":", 1)[-1].lower()
+                k_clean = strip_provider(k)
                 v_pname = (v.provider_model_name or "").lower()
-                if k_clean == clean_id or v_pname == clean_id or v_pname == mid_lower:
+                if k_clean == clean_id or v_pname == clean_id or v_pname == mid_lower or k.lower() == mid_lower:
                     return v
 
             # 4. Check if this is a known curated Cloud Model
@@ -85,7 +97,8 @@ class ModelRegistry:
                     matched_item = None
                     for item in catalog:
                         i_id = item["id"].lower()
-                        if i_id == clean_id or i_id == last_part or i_id in mid_lower:
+                        i_name = item.get("name", "").lower()
+                        if i_id == clean_id or i_name == clean_id or i_id in mid_lower:
                             matched_item = item
                             break
 

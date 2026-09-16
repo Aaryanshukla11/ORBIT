@@ -40,6 +40,9 @@ class RecoveryStrategy(str, Enum):
     REFOCUS_WINDOW = "REFOCUS_WINDOW"
     RETRY_GROUNDING_ALTERNATE = "RETRY_GROUNDING_ALTERNATE"
     DISMISS_IDENTIFIED_MODAL = "DISMISS_IDENTIFIED_MODAL"
+    RESOLVE_DIALOG_TRAP = "RESOLVE_DIALOG_TRAP"
+    OVERWRITE_FILE_COLLISION = "OVERWRITE_FILE_COLLISION"
+    DISCARD_UNSAVED_CHANGES = "DISCARD_UNSAVED_CHANGES"
     REQUERY_MODEL = "REQUERY_MODEL"
 
 
@@ -64,13 +67,16 @@ class AgentRecoveryManager:
     Enforces:
     1. Zero raw adapter access: Does not accept pointer, keyboard, or workspace.
     2. RecoveryStrategy != Primitive: Synthesizes strictly canonical AbstractAction instances.
-    3. No blind Return keypresses: Only synthesizes Escape when modal evidence is verified.
+    3. No blind Return keypresses: Only synthesizes Escape/Dialog resolution when modal evidence is verified.
     """
 
     def __init__(self, max_recoveries_per_transition: int = 2) -> None:
         self._max_recoveries_per_transition = max_recoveries_per_transition
         self._recovery_history: List[RecoveryRecord] = []
         self._current_transition_recoveries = 0
+        from orbit.runtime.cognitive.dialog_handler import DialogTrapHandler, ModalDialogDetector
+        self._dialog_detector = ModalDialogDetector()
+        self._dialog_handler = DialogTrapHandler(detector=self._dialog_detector)
 
     @property
     def max_recoveries(self) -> int:
@@ -102,7 +108,19 @@ class AgentRecoveryManager:
         act_type = action.action_type
         params = action.parameters
 
-        # 1. Target application / window exists but lost focus
+        # 1. Check for active modal dialog traps with full intent classification (Phase 2G.2)
+        from orbit.runtime.cognitive.dialog_handler import DialogIntent
+        detected_dlg = self._dialog_detector.detect_dialog(post_obs)
+        if detected_dlg:
+            if detected_dlg.intent == DialogIntent.FILE_COLLISION:
+                return RecoveryStrategy.OVERWRITE_FILE_COLLISION, f"File collision overwrite dialog detected: '{detected_dlg.title}'"
+            elif detected_dlg.intent == DialogIntent.CONFIRM_DISCARD:
+                return RecoveryStrategy.DISCARD_UNSAVED_CHANGES, f"Unsaved changes confirmation dialog detected: '{detected_dlg.title}'"
+            elif detected_dlg.intent == DialogIntent.ERROR_ALERT:
+                return RecoveryStrategy.DISMISS_IDENTIFIED_MODAL, f"Error alert dialog detected: '{detected_dlg.title}'"
+            return RecoveryStrategy.RESOLVE_DIALOG_TRAP, f"Modal dialog trap detected: '{detected_dlg.title}' ({detected_dlg.intent.value})"
+
+        # 2. Target application / window exists but lost focus
         target_app = str(params.get("application_name", params.get("app_name", action.target.name if action.target else "")))
         if target_app:
             app_lower = target_app.lower()
@@ -111,13 +129,6 @@ class AgentRecoveryManager:
                 class_lower = win.get("class_name", "").lower()
                 if (app_lower in title_lower or app_lower in class_lower) and win.get("hwnd") != post_obs.active_window_hwnd:
                     return RecoveryStrategy.REFOCUS_WINDOW, f"Target window '{win.get('title')}' is visible but not focused (active HWND={post_obs.active_window_hwnd})."
-
-        # 2. Check for unexpected blocking modal dialogs
-        if post_obs.visible_windows:
-            for win in post_obs.visible_windows:
-                title = win.get("title", "")
-                if any(kw in title.lower() for kw in ("save changes", "confirm", "warning", "error", "dialog", "alert", "unsaved")):
-                    return RecoveryStrategy.DISMISS_IDENTIFIED_MODAL, f"Unexpected modal dialog detected: '{title}'"
 
         # 3. If action was LAUNCH_APPLICATION and target app not yet visible, UI settlement may be delayed
         if act_type == AbstractActionType.LAUNCH_APPLICATION:
@@ -148,11 +159,30 @@ class AgentRecoveryManager:
         """Synthesize a canonical primitive action to execute the diagnosed recovery strategy.
 
         Enforces:
-        - Output is STRICTLY an existing canonical AbstractAction (FOCUS_WINDOW, SEND_HOTKEY, WAIT).
-        - No blind Return keypresses: KEYBOARD_FALLBACK is eliminated.
-        - Escape is synthesized ONLY when modal dialog evidence is present in visible windows.
+        - Output is STRICTLY an existing canonical AbstractAction (FOCUS_WINDOW, SEND_HOTKEY, WAIT, CLICK).
+        - Modal resolution is driven by verified dialog evidence via DialogTrapHandler.
         """
-        if strategy == RecoveryStrategy.REFOCUS_WINDOW:
+        from orbit.runtime.cognitive.dialog_handler import DialogResolutionStrategy
+
+        if strategy in (
+            RecoveryStrategy.RESOLVE_DIALOG_TRAP,
+            RecoveryStrategy.OVERWRITE_FILE_COLLISION,
+            RecoveryStrategy.DISCARD_UNSAVED_CHANGES,
+            RecoveryStrategy.DISMISS_IDENTIFIED_MODAL,
+        ):
+            detected_dlg = self._dialog_detector.detect_dialog(observation)
+            if detected_dlg:
+                if strategy == RecoveryStrategy.OVERWRITE_FILE_COLLISION:
+                    return self._dialog_handler.resolve_dialog(detected_dlg, preferred_strategy=DialogResolutionStrategy.CONFIRM_REPLACE)
+                elif strategy == RecoveryStrategy.DISCARD_UNSAVED_CHANGES:
+                    return self._dialog_handler.resolve_dialog(detected_dlg, preferred_strategy=DialogResolutionStrategy.DISCARD_AND_CLOSE)
+                elif strategy == RecoveryStrategy.DISMISS_IDENTIFIED_MODAL:
+                    return self._dialog_handler.resolve_dialog(detected_dlg, preferred_strategy=DialogResolutionStrategy.CANCEL_DIALOG)
+                return self._dialog_handler.resolve_dialog(detected_dlg)
+            logger.info("[AgentRecoveryManager] Modal dialog resolution skipped: no active modal dialog evidence confirmed.")
+            return None
+
+        elif strategy == RecoveryStrategy.REFOCUS_WINDOW:
             target_app = str(action.parameters.get("application_name", action.parameters.get("app_name", action.target.name if action.target else "")))
             target_hwnd = action.parameters.get("hwnd")
             if not target_hwnd and target_app:
@@ -168,25 +198,6 @@ class AgentRecoveryManager:
                     parameters={"hwnd": target_hwnd, "application_name": target_app},
                     expected_effect=f"Window {target_hwnd} brought to active foreground",
                 )
-            return None
-
-        elif strategy == RecoveryStrategy.DISMISS_IDENTIFIED_MODAL:
-            # Enforce evidence requirement: only synthesize Escape if a dismissible modal was detected
-            has_modal_evidence = False
-            for win in observation.visible_windows:
-                title = str(win.get("title", "")).lower()
-                if any(kw in title for kw in ("save changes", "confirm", "warning", "error", "dialog", "alert", "unsaved")):
-                    has_modal_evidence = True
-                    break
-
-            if has_modal_evidence:
-                return AbstractAction(
-                    action_type=AbstractActionType.SEND_HOTKEY,
-                    parameters={"hotkey": "Escape"},
-                    expected_effect="Modal dialog dismissed via Escape key",
-                )
-            # No confirmed modal evidence -> do NOT blindly send keystrokes; return None to replan
-            logger.info("[AgentRecoveryManager] Modal dismissal skipped: no active modal dialog evidence confirmed.")
             return None
 
         elif strategy == RecoveryStrategy.WAIT_FOR_SETTLEMENT:

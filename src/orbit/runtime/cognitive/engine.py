@@ -639,16 +639,15 @@ class OrbitDecisionEngine:
                 elif hasattr(self._model_client, "generate_response"):
                     res = self._model_client.generate_response(prompt_payload)
                     raw_response_text = await res if hasattr(res, "__await__") else res
-            elif active_ctx is not None:
+            elif self._model_session_manager is not None:
                 gen_req = ModelGenerateRequest(
                     prompt=prompt_payload.get("user_prompt", ""),
                     system_prompt=prompt_payload.get("system_prompt", ""),
                     temperature=0.1,
                     max_tokens=1024,
                 )
-                res = active_ctx.generate_response(gen_req)
-                resp_obj = await res if hasattr(res, "__await__") else res
-                raw_response_text = getattr(resp_obj, "text", str(resp_obj))
+                resp_obj = await self._model_session_manager.generate(gen_req)
+                raw_response_text = getattr(resp_obj, "content", getattr(resp_obj, "text", str(resp_obj)))
         except Exception as model_err:
             logger.error("[OrbitDecisionEngine] Model generation call failed: %s", model_err)
             return CognitiveDecision(

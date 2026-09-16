@@ -1,0 +1,13 @@
+{
+  "task_id": "task_012",
+  "title": "Select Color Red and Draw Circle in Paint",
+  "split": "DEVELOPMENT",
+  "category": "PAINT_CANVAS",
+  "natural_language_goal": "Open Paint, select the Red color from the palette, and draw a circle",
+  "expectations": {
+    "expected_window_title": "Paint",
+    "require_app_open": true
+  },
+  "timeout_sec": 50.0,
+  "max_steps": 10
+}

@@ -1,0 +1,17 @@
+{
+  "task_id": "task_008",
+  "title": "Create Test Text File on Filesystem",
+  "split": "DEVELOPMENT",
+  "category": "FILESYSTEM",
+  "natural_language_goal": "Create a file named 'fs_test.txt' containing 'Filesystem verification test' in scratchpad",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "fs_test.txt",
+      "format": "text",
+      "min_size_bytes": 10,
+      "expected_content_substr": "Filesystem verification test"
+    }
+  },
+  "timeout_sec": 30.0,
+  "max_steps": 6
+}

@@ -1,0 +1,13 @@
+{
+  "task_id": "task_030",
+  "title": "Toggle Status Bar in Notepad",
+  "split": "UNSEEN",
+  "category": "UI_INTERACTION",
+  "natural_language_goal": "Open Notepad, open View menu, and toggle Status Bar",
+  "expectations": {
+    "expected_window_title": "Notepad",
+    "require_app_open": true
+  },
+  "timeout_sec": 45.0,
+  "max_steps": 8
+}

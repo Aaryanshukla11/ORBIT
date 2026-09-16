@@ -1,0 +1,14 @@
+{
+  "task_id": "task_029",
+  "title": "Type Indented Python Snippet",
+  "split": "UNSEEN",
+  "category": "TEXT_ENTRY",
+  "natural_language_goal": "Open Notepad and enter: def test(): return True",
+  "expectations": {
+    "expected_window_title": "Notepad",
+    "expected_process_name": "notepad.exe",
+    "require_app_open": true
+  },
+  "timeout_sec": 45.0,
+  "max_steps": 8
+}

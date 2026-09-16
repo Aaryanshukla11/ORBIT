@@ -1,0 +1,18 @@
+{
+  "task_id": "task_046",
+  "title": "15-Step Multi-Window Data Consolidation",
+  "split": "UNSEEN",
+  "category": "LONG_HORIZON",
+  "natural_language_goal": "Open Calculator, open Notepad, type 'Metrics collected', save as 'consolidated_metrics.txt', and close both windows",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "consolidated_metrics.txt",
+      "format": "text",
+      "min_size_bytes": 10
+    },
+    "expected_process_name": "notepad.exe",
+    "require_app_closed": true
+  },
+  "timeout_sec": 100.0,
+  "max_steps": 16
+}

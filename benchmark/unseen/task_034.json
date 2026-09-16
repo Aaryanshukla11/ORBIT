@@ -1,0 +1,17 @@
+{
+  "task_id": "task_034",
+  "title": "Export Notepad Content as Log File",
+  "split": "UNSEEN",
+  "category": "SAVE_EXPORT",
+  "natural_language_goal": "Open Notepad, write 'SYSTEM_BOOT_SUCCESS', and save as 'system.log'",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "system.log",
+      "format": "text",
+      "min_size_bytes": 10,
+      "expected_content_substr": "SYSTEM_BOOT_SUCCESS"
+    }
+  },
+  "timeout_sec": 60.0,
+  "max_steps": 10
+}

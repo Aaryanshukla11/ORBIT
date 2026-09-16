@@ -1,0 +1,17 @@
+{
+  "task_id": "task_009",
+  "title": "Save Notepad Note to File",
+  "split": "DEVELOPMENT",
+  "category": "SAVE_EXPORT",
+  "natural_language_goal": "Open Notepad, type 'Autonomous Save Verification', and save the file as 'saved_note.txt'",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "saved_note.txt",
+      "format": "text",
+      "min_size_bytes": 5,
+      "expected_content_substr": "Autonomous Save Verification"
+    }
+  },
+  "timeout_sec": 60.0,
+  "max_steps": 10
+}

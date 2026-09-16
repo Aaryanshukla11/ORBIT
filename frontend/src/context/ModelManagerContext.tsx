@@ -266,6 +266,7 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
         if (payload?.models && Array.isArray(payload.models)) {
           const actId = payload.active_model_id || activeModelId;
           const incoming: ModelItem[] = payload.models.map((m: any) => {
+            const mId = m.model_id || m.id || '';
             const provUpper = String(m.provider || '').toUpperCase();
             const rkUpper = String(m.runtime_kind || '').toUpperCase();
             const isLocal = rkUpper.startsWith('LOCAL') || provUpper.includes('OLLAMA') || provUpper.includes('LM_STUDIO') || (m.type === 'local');
@@ -318,8 +319,19 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
       }
     });
 
-    // Auto-discover, list, and query active model on connect
+    // Auto-discover, configure stored provider keys, and query active model on connect
     if (connectionState === 'CONNECTED') {
+      const stored = loadStoredSettings();
+      if (stored.providerKeys) {
+        Object.entries(stored.providerKeys).forEach(([pid, key]) => {
+          if (key && key.trim()) {
+            orbitWS.sendCommand('MODEL_CONFIGURE_PROVIDER', {
+              provider_id: pid,
+              api_key: key.trim(),
+            });
+          }
+        });
+      }
       orbitWS.sendCommand('MODEL_DISCOVER', { include_runtimes: true, include_cloud: true, include_files: true });
       orbitWS.sendCommand('MODEL_LIST', { include_all: true });
       orbitWS.sendCommand('MODEL_ACTIVE', {});

@@ -1,0 +1,17 @@
+{
+  "task_id": "task_016",
+  "title": "Create, Append, and Save Document",
+  "split": "DEVELOPMENT",
+  "category": "MULTI_STEP_EDITING",
+  "natural_language_goal": "Open Notepad, type 'Header line', add a second line 'Appended content', and save as 'multistep.txt'",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "multistep.txt",
+      "format": "text",
+      "min_size_bytes": 15,
+      "expected_content_substr": "Appended content"
+    }
+  },
+  "timeout_sec": 60.0,
+  "max_steps": 12
+}

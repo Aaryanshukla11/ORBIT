@@ -1,0 +1,42 @@
+{
+  "task_id": "task_034",
+  "split": "UNSEEN",
+  "category": "SAVE_EXPORT",
+  "natural_language_goal": "Open Notepad, write 'SYSTEM_BOOT_SUCCESS', and save as 'system.log'",
+  "started_at": "2026-09-16T04:52:35.796532Z",
+  "completed_at": "2026-09-16T04:52:36.113451Z",
+  "duration_sec": 0.32,
+  "is_success": false,
+  "goal_verified": true,
+  "artifact_verified": false,
+  "total_steps": 1,
+  "actions_attempted": 1,
+  "actions_completed": 1,
+  "recovery_attempts": 0,
+  "model_calls": 1,
+  "failure_category": "SAVE_PERSISTENCE_ERROR",
+  "failure_reason": "Expected deliverable file was not written to disk: Artifact verification failed: File not found in any candidate location: ['C:\\\\Users\\\\Aaryan shukla\\\\OneDrive\\\\Desktop\\\\ORBIT\\\\scratch\\\\benchmark_scratchpad\\\\system.log', 'C:\\\\Users\\\\Aaryan shukla\\\\OneDrive\\\\Desktop\\\\ORBIT\\\\system.log', 'C:\\\\Users\\\\Aaryan shukla\\\\Desktop\\\\system.log', 'C:\\\\Users\\\\Aaryan shukla\\\\OneDrive\\\\Desktop\\\\ORBIT\\\\system.log']",
+  "step_traces": [
+    {
+      "step_index": 0,
+      "timestamp_utc": "2026-09-16T04:52:36.113451Z",
+      "action_type": "ABORT_TASK",
+      "target_name": null,
+      "target_role": null,
+      "parameters": {
+        "error_code": "MODEL_UNAVAILABLE",
+        "diagnostic": "No active multimodal decision model configured."
+      },
+      "grounded_coordinates": null,
+      "grounding_pass": null,
+      "grounding_confidence": 0.0,
+      "dispatch_success": false,
+      "verification_passed": false,
+      "verification_reason": "Authoritative model is unavailable and silent heuristic fallback is prohibited.",
+      "latency_ms": 0.0,
+      "screenshot_path": null
+    }
+  ],
+  "final_world_state_summary": null,
+  "human_interventions": 0
+}

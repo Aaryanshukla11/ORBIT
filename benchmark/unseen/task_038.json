@@ -1,0 +1,13 @@
+{
+  "task_id": "task_038",
+  "title": "Focus Address Bar in Browser",
+  "split": "UNSEEN",
+  "category": "BROWSER_INSPECTION",
+  "natural_language_goal": "Open Edge, click the URL input bar, and type 'localhost:8000'",
+  "expectations": {
+    "expected_process_name": "msedge.exe",
+    "require_app_open": true
+  },
+  "timeout_sec": 50.0,
+  "max_steps": 8
+}

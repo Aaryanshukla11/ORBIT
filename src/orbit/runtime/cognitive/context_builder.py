@@ -206,19 +206,19 @@ class AgentReasoningContextBuilder:
             else:
                 lines.append(f"STATUS: Target application '{target_app_identified}' is not detected among visible windows. You may use LAUNCH_APPLICATION.")
 
-        # 4. Action History
+        # 4. Action History (Compacted via ContextCompactor)
+        from orbit.runtime.cognitive.context_compactor import ContextCompactor
+        compactor = ContextCompactor(max_detailed_steps=4, max_characters=3000)
+        compacted = compactor.compact_history(
+            step_history=history,
+            current_step=step_index,
+            active_subgoals_summary=task_context.get("subgoals_summary") if task_context else None,
+            key_facts=task_context.get("key_facts") if task_context else None,
+        )
         lines.append(f"\n=== EXECUTION HISTORY (Step {step_index}) ===")
-        if history:
-            for s in history:
-                act = s.action_dispatched
-                act_str = f"{act.action_type.value}('{act.target.name if act.target else ''}')" if act else "NO_ACTION"
-                v_str = "EFFECT_VERIFIED" if s.outcome_verified else "UNVERIFIED"
-                err_str = f" [Error: {s.execution_result.error_message}]" if (s.execution_result and s.execution_result.error_message) else ""
-                lines.append(f"  Step {s.step_index}: {act_str} -> {v_str}{err_str}")
-        else:
-            lines.append("  Initial step: No actions dispatched yet.")
+        lines.append(compacted.summary_text)
 
-        # 5. Diagnostic Feedback & Redundancy Warnings
+        # 5. Diagnostic Feedback & Redundancy / Loop Warnings
         if task_context and "feedback" in task_context and task_context["feedback"]:
             lines.append("\n=== CRITICAL GUIDANCE ===")
             lines.append(str(task_context["feedback"]))

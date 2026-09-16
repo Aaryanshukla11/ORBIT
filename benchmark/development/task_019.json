@@ -1,0 +1,13 @@
+{
+  "task_id": "task_019",
+  "title": "Click Paint Brush Selector Tool",
+  "split": "DEVELOPMENT",
+  "category": "VISUAL_GROUNDING",
+  "natural_language_goal": "Open Paint and click on the Brushes tool icon on the ribbon",
+  "expectations": {
+    "expected_window_title": "Paint",
+    "require_app_open": true
+  },
+  "timeout_sec": 45.0,
+  "max_steps": 8
+}

@@ -1,0 +1,13 @@
+{
+  "task_id": "task_043",
+  "title": "Dismiss Open File Dialog without Opening",
+  "split": "UNSEEN",
+  "category": "DIALOG_HANDLING",
+  "natural_language_goal": "Open Paint, click File -> Open, press Escape to cancel dialog, and keep Paint open",
+  "expectations": {
+    "expected_window_title": "Paint",
+    "require_app_open": true
+  },
+  "timeout_sec": 45.0,
+  "max_steps": 8
+}

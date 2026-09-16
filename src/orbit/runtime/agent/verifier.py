@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 import logging
 import sys
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from orbit.adapters.observation.snapshot import ObservationSnapshot
 from orbit.runtime.agent.contracts import (
@@ -55,7 +55,7 @@ class AgentStateTransitionVerifier:
         dispatch_success: bool,
         pre_state: DesktopStateSnapshot,
         post_state: DesktopStateSnapshot,
-        post_observation: Optional[ObservationSnapshot] = None,
+        post_observation: Optional[Union[ObservationSnapshot, Any]] = None,
         timeout_seconds: Optional[float] = None,
     ) -> ActionExecutionOutcome:
         """Verify whether the action caused its expected observable state transition."""
@@ -182,10 +182,8 @@ class AgentStateTransitionVerifier:
                     reason = f"Application '{app_name}' window was not detected after launch"
 
         elif act_type == AbstractActionType.FOCUS_WINDOW:
-            target_name = (
-                action.parameters.get("window_title")
-                or (action.target.name if action.target else "")
-            ).lower().strip()
+            raw_target = action.parameters.get("window_title") or (action.target.name if action.target else "") or ""
+            target_name = str(raw_target).lower().strip()
             active_title = (post_state.active_window_title or "").lower()
             if target_name and target_name in active_title:
                 verified = True
@@ -454,7 +452,7 @@ class AgentStateTransitionVerifier:
         if best_state not in (TextMatchState.EXACT_MATCH, TextMatchState.NORMALIZED_MATCH):
             ocr_tokens: List[str] = []
             if hasattr(post_state, "ocr_tokens") and post_state.ocr_tokens:
-                ocr_tokens = [str(t) for t in post_state.ocr_tokens]
+                ocr_tokens = list(post_state.ocr_tokens)
             elif post_observation and getattr(post_observation, "ocr_tokens", None):
                 ocr_tokens = [t.text if hasattr(t, "text") else str(t) for t in post_observation.ocr_tokens]
 

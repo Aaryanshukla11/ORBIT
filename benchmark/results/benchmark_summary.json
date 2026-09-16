@@ -1,0 +1,39 @@
+{
+  "total_tasks": 50,
+  "dev_tasks_count": 25,
+  "unseen_tasks_count": 25,
+  "total_passed": 0,
+  "dev_passed": 0,
+  "unseen_passed": 0,
+  "task_success_rate": 0.0,
+  "dev_success_rate": 0.0,
+  "unseen_success_rate": 0.0,
+  "goal_verification_accuracy": 0.32,
+  "artifact_correctness_rate": 0.6,
+  "grounding_accuracy": 1.0,
+  "recovery_success_rate": 0.0,
+  "avg_actions_per_task": 1.0,
+  "avg_duration_sec": 0.31,
+  "avg_model_calls_per_task": 1.0,
+  "failure_category_distribution": {
+    "INTENT_ERROR": 30,
+    "SAVE_PERSISTENCE_ERROR": 20
+  },
+  "category_success_rates": {
+    "APPLICATION_LAUNCH": 0.0,
+    "TEXT_ENTRY": 0.0,
+    "UI_INTERACTION": 0.0,
+    "FILESYSTEM": 0.0,
+    "SAVE_EXPORT": 0.0,
+    "PAINT_CANVAS": 0.0,
+    "BROWSER_INSPECTION": 0.0,
+    "MULTI_APP_WORKFLOW": 0.0,
+    "MULTI_STEP_EDITING": 0.0,
+    "DIALOG_HANDLING": 0.0,
+    "VISUAL_GROUNDING": 0.0,
+    "STATE_RECOVERY": 0.0,
+    "LONG_HORIZON": 0.0,
+    "ARTIFACT_VALIDATION": 0.0,
+    "MIXED_WORKFLOW": 0.0
+  }
+}

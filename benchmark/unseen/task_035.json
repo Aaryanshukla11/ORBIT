@@ -1,0 +1,17 @@
+{
+  "task_id": "task_035",
+  "title": "Save Paint Bitmap Image",
+  "split": "UNSEEN",
+  "category": "SAVE_EXPORT",
+  "natural_language_goal": "Open Paint, draw a line, and save the image as 'render.bmp'",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "render.bmp",
+      "format": "bmp",
+      "min_size_bytes": 100,
+      "magic_bytes_hex": "424d"
+    }
+  },
+  "timeout_sec": 60.0,
+  "max_steps": 10
+}

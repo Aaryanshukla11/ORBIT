@@ -1,0 +1,13 @@
+{
+  "task_id": "task_027",
+  "title": "Bring Up Microsoft Edge Browser",
+  "split": "UNSEEN",
+  "category": "APPLICATION_LAUNCH",
+  "natural_language_goal": "Launch Microsoft Edge",
+  "expectations": {
+    "expected_process_name": "msedge.exe",
+    "require_app_open": true
+  },
+  "timeout_sec": 30.0,
+  "max_steps": 5
+}

@@ -87,6 +87,8 @@ from orbit.runtime.cognitive import (
     CurrentStateObservation,
     PrimitiveExecutionController,
 )
+CognitiveExecutionResult = AgentExecutionResult
+ExecutionPolicy = Any
 from orbit.runtime.agent.contracts import (
     AbstractAction,
     AbstractActionType,
@@ -297,7 +299,7 @@ class OrbitOrchestrator:
         return self._registry
 
     @property
-    def target_locator(self) -> TargetLocator:
+    def target_locator(self) -> Any:
         return self._target_locator
 
     @property
@@ -467,15 +469,31 @@ class OrbitOrchestrator:
         )
         logger.info("OrbitOrchestrator initialized and state is IDLE (Capabilities: %s)", cap_summary)
 
-        # Auto-discover local models and register descriptors in ModelSessionManager
+        # Auto-discover local and cloud models and register descriptors in ModelSessionManager
         try:
-            inv_report = await self._model_manager.refresh_inventory()
+            import os
+            for env_var, pid in [("OPENAI_API_KEY", "openai"), ("ANTHROPIC_API_KEY", "anthropic"), ("GEMINI_API_KEY", "gemini")]:
+                k_val = os.environ.get(env_var, "").strip()
+                if k_val:
+                    await self._model_manager.configure_cloud_provider(provider_id=pid, api_key=k_val)
+                    for cp in self._model_manager.inventory.cloud_providers:
+                        if cp.cloud_kind.value.lower() == pid:
+                            self._model_session_manager._factory.register_provider(cp)
+                            break
+
+            inv_report = await self._model_manager.refresh_inventory(include_cloud=True)
             for desc in inv_report.models:
                 await self._model_session_manager.register_descriptor(desc)
             if self._auto_activate_models and not self._model_session_manager.is_model_active() and inv_report.models:
-                # Prefer Ollama local models first
+                openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+                cloud_gpt4o = [m for m in inv_report.models if "gpt-4o" in m.model_id.lower() and "mini" not in m.model_id.lower()]
                 local_candidates = [m for m in inv_report.models if m.provider == ModelProviderKind.OLLAMA]
-                chosen = local_candidates[0] if local_candidates else inv_report.models[0]
+                if openai_key and cloud_gpt4o:
+                    chosen = cloud_gpt4o[0]
+                elif local_candidates:
+                    chosen = local_candidates[0]
+                else:
+                    chosen = inv_report.models[0]
                 await self._model_session_manager.activate_model(chosen.model_id)
                 logger.info("Auto-activated default model runtime: %s", chosen.model_id)
         except Exception as ex:
@@ -1324,7 +1342,12 @@ class OrbitOrchestrator:
                         dock_fn = getattr(wsp_cap, "register_appbar", None)
                     if dock_fn is not None:
                         _params = {k: v for k, v in action.parameters.items() if k != "action_type"}
-                        result = dock_fn(**_params)
+                        try:
+                            sig = inspect.signature(dock_fn)
+                            valid_params = {k: v for k, v in _params.items() if k in sig.parameters}
+                        except Exception:
+                            valid_params = _params
+                        result = dock_fn(**valid_params)
                         if inspect.isawaitable(result):
                             await result
                 elif action.action_type == "workspace_undock":
@@ -1346,7 +1369,12 @@ class OrbitOrchestrator:
                     )
                     if reserve_fn is not None:
                         _params = {k: v for k, v in action.parameters.items() if k != "action_type"}
-                        result = reserve_fn(**_params)
+                        try:
+                            sig = inspect.signature(reserve_fn)
+                            valid_params = {k: v for k, v in _params.items() if k in sig.parameters}
+                        except Exception:
+                            valid_params = _params
+                        result = reserve_fn(**valid_params)
                         if inspect.isawaitable(result):
                             await result
             except Exception as _wsp_err:
@@ -1548,10 +1576,19 @@ class OrbitOrchestrator:
             except Exception:
                 post_snapshot = None
 
+        exp_outcome: Optional[ExpectedOutcome] = None
+        if isinstance(expected_outcome, ExpectedOutcome):
+            exp_outcome = expected_outcome
+        elif isinstance(expected_outcome, dict):
+            try:
+                exp_outcome = ExpectedOutcome.model_validate(expected_outcome)
+            except Exception:
+                exp_outcome = None
+
         verif_res: ActionVerificationResult = self._action_verifier.verify(
             pre_snapshot=pre_snapshot,
             post_snapshot=post_snapshot,
-            expected_outcome=expected_outcome,
+            expected_outcome=exp_outcome,
         )
 
         status_map = {

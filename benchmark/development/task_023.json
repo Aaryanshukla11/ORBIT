@@ -1,0 +1,19 @@
+{
+  "task_id": "task_023",
+  "title": "Paint Diagram and Notepad Summary Sync",
+  "split": "DEVELOPMENT",
+  "category": "MIXED_WORKFLOW",
+  "natural_language_goal": "Open Paint, draw a shape, save as 'diagram.png', then open Notepad and write 'Diagram created at diagram.png'",
+  "expectations": {
+    "expected_deliverable": {
+      "file_path": "diagram.png",
+      "format": "png",
+      "min_size_bytes": 100,
+      "magic_bytes_hex": "89504e47"
+    },
+    "expected_window_title": "Notepad",
+    "require_app_open": true
+  },
+  "timeout_sec": 90.0,
+  "max_steps": 15
+}
