@@ -13,6 +13,24 @@ from orbit.contracts.capabilities import AdapterMode, CapabilityType
 HUMAN_TAKEOVER_ENABLED: bool = False
 
 
+def _load_env_file() -> None:
+    env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        clean_v = v.strip().strip("'\"")
+                        if k.strip() not in os.environ:
+                            os.environ[k.strip()] = clean_v
+        except Exception:
+            pass
+
+_load_env_file()
+
+
 def is_human_takeover_enabled() -> bool:
     """Check whether human takeover safety preemption is enabled.
     

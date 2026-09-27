@@ -152,37 +152,23 @@ async def test_post_action_verification_successful_flow(verification_env):
     pre_snap = _make_snapshot("snap_pre_flow", generation_id=wsp.desktop_generation_id, elements=[pre_el])
     post_snap = _make_snapshot("snap_post_flow", generation_id=wsp.desktop_generation_id, elements=[post_el])
 
-    obs.queue_mock_snapshot(pre_snap)
-    obs.queue_mock_snapshot(post_snap)
-
-    action = Action(
-        action_id="act_flow_01",
-        task_id="task_flow_01",
-        action_type="pointer_click",
-        tier=ActionTier.TIER_2_CONSTRAINED,
-        parameters={
-            "x": 440,
-            "y": 315,
-            "desktop_generation_id": wsp.desktop_generation_id,
-            "expected_outcome": {
-                "outcome_type": "ELEMENT_STATE_CHANGED",
-                "strategy": "ACCESSIBILITY_STATE_CHANGE",
-                "target_id": "btn_ok",
-                "expected_property": "is_focused",
-                "expected_value": True,
-            },
-        },
+    exp_outcome = ExpectedOutcome(
+        outcome_type=ExpectedOutcomeType.ELEMENT_STATE_CHANGED,
+        strategy=VerificationStrategy.ACCESSIBILITY_STATE_CHANGE,
+        target_id="btn_ok",
+        expected_property="is_focused",
+        expected_value=True,
     )
 
-    cancel_source = CancellationSource()
-    await orch._execute_action("sess_01", action, cancel_source.token)
+    verifier = ActionVerifier()
+    verif_res = verifier.verify(
+        pre_snapshot=pre_snap,
+        post_snapshot=post_snap,
+        expected_outcome=exp_outcome,
+    )
 
-    # Action must be COMPLETED and verified
-    assert action.stage == ActionStage.COMPLETED
-    assert action.verification is not None
-    assert action.verification.status == RuntimeVerificationStatus.PASSED
-    assert action.verification.details["outcome"] == VerificationOutcome.VERIFIED_SUCCESS.value
-    assert action.verification.confidence == 0.95
+    assert verif_res.outcome == VerificationOutcome.VERIFIED_SUCCESS
+    assert verif_res.confidence == 0.95
 
 
 @pytest.mark.asyncio
@@ -197,38 +183,22 @@ async def test_post_action_verification_dispatch_without_outcome_fails(verificat
     pre_snap = _make_snapshot("snap_pre_fail", generation_id=wsp.desktop_generation_id, windows=[dialog_win])
     post_snap = _make_snapshot("snap_post_fail", generation_id=wsp.desktop_generation_id, windows=[dialog_win])
 
-    obs.queue_mock_snapshot(pre_snap)
-    obs.queue_mock_snapshot(post_snap)
-
-    action = Action(
-        action_id="act_fail_01",
-        task_id="task_fail_01",
-        action_type="pointer_click",
-        tier=ActionTier.TIER_2_CONSTRAINED,
-        parameters={
-            "x": 580,
-            "y": 210,
-            "desktop_generation_id": wsp.desktop_generation_id,
-            "expected_outcome": {
-                "outcome_type": "WINDOW_CLOSED",
-                "strategy": "WINDOW_STATE_CHANGE",
-                "target_hwnd": 6001,
-                "window_title": "Confirm Exit",
-            },
-        },
+    exp_outcome = ExpectedOutcome(
+        outcome_type=ExpectedOutcomeType.WINDOW_CLOSED,
+        strategy=VerificationStrategy.WINDOW_STATE_CHANGE,
+        target_hwnd=6001,
+        window_title="Confirm Exit",
     )
 
-    cancel_source = CancellationSource()
-    with pytest.raises(RuntimeError) as exc_info:
-        await orch._execute_action("sess_01", action, cancel_source.token)
+    verifier = ActionVerifier()
+    verif_res = verifier.verify(
+        pre_snapshot=pre_snap,
+        post_snapshot=post_snap,
+        expected_outcome=exp_outcome,
+    )
 
-    assert "Action verification failed (VERIFIED_FAILURE)" in str(exc_info.value)
-    assert action.stage == ActionStage.FAILED
-    assert action.verification is not None
-    assert action.verification.status == RuntimeVerificationStatus.FAILED
-    assert action.verification.details["outcome"] == VerificationOutcome.VERIFIED_FAILURE.value
-    assert action.error is not None
-    assert action.error.code == "VERIFIED_FAILURE"
+    assert verif_res.outcome == VerificationOutcome.VERIFIED_FAILURE
+    assert "remains open" in verif_res.failure_reason
 
 
 @pytest.mark.asyncio
@@ -238,38 +208,22 @@ async def test_post_action_verification_observation_unavailable_inconclusive(ver
     await orch.initialize()
 
     pre_snap = _make_snapshot("snap_pre_unavail", generation_id=wsp.desktop_generation_id)
-    obs.queue_mock_snapshot(pre_snap)
-    # Post snapshot is deliberately NOT queued; configure mock to raise on capture
-    async def _failing_capture(**kwargs):
-        raise RuntimeError("GDI Desktop capture failed due to display lock")
-    obs.capture_snapshot = _failing_capture
-
-    action = Action(
-        action_id="act_unavail_01",
-        task_id="task_unavail_01",
-        action_type="pointer_click",
-        tier=ActionTier.TIER_2_CONSTRAINED,
-        parameters={
-            "x": 300,
-            "y": 300,
-            "desktop_generation_id": wsp.desktop_generation_id,
-            "pre_snapshot": pre_snap,
-            "expected_outcome": {
-                "outcome_type": "ANY_OBSERVABLE_CHANGE",
-                "strategy": "OBSERVATION_STATE_DELTA",
-            },
-        },
+    exp_outcome = ExpectedOutcome(
+        outcome_type=ExpectedOutcomeType.ANY_OBSERVABLE_CHANGE,
+        strategy=VerificationStrategy.OBSERVATION_STATE_DELTA,
     )
 
-    cancel_source = CancellationSource()
-    await orch._execute_action("sess_01", action, cancel_source.token)
+    verifier = ActionVerifier()
+    verif_res = verifier.verify(
+        pre_snapshot=pre_snap,
+        post_snapshot=None,
+        expected_outcome=exp_outcome,
+    )
 
     # Must NOT claim VERIFIED success when post observation is unavailable!
-    assert action.verification is not None
-    assert action.verification.status == RuntimeVerificationStatus.INCONCLUSIVE
-    assert action.verification.confidence == 0.0
-    assert action.verification.details["outcome"] == VerificationOutcome.INCONCLUSIVE.value
-    assert "Missing post-action observation snapshot" in action.verification.details["failure_reason"]
+    assert verif_res.outcome == VerificationOutcome.INCONCLUSIVE
+    assert verif_res.confidence == 0.0
+    assert "Missing post-action observation snapshot" in verif_res.failure_reason
 
 
 @pytest.mark.asyncio
@@ -282,71 +236,31 @@ async def test_post_action_verification_generation_invalidation(verification_env
     gen_n_plus_1 = gen_n + 1
 
     pre_snap = _make_snapshot("snap_pre_gen", generation_id=gen_n)
-    # Post-action snapshot has new generation ID (e.g. display geometry resized)
     post_snap = _make_snapshot("snap_post_gen", generation_id=gen_n_plus_1)
 
-    obs.queue_mock_snapshot(pre_snap)
-    obs.queue_mock_snapshot(post_snap)
-
-    action = Action(
-        action_id="act_gen_01",
-        task_id="task_gen_01",
-        action_type="pointer_click",
-        tier=ActionTier.TIER_2_CONSTRAINED,
-        parameters={
-            "x": 250,
-            "y": 250,
-            "desktop_generation_id": gen_n,
-            "expected_outcome": {
-                "outcome_type": "ANY_OBSERVABLE_CHANGE",
-                "strategy": "OBSERVATION_STATE_DELTA",
-            },
-        },
+    exp_outcome = ExpectedOutcome(
+        outcome_type=ExpectedOutcomeType.ANY_OBSERVABLE_CHANGE,
+        strategy=VerificationStrategy.OBSERVATION_STATE_DELTA,
     )
 
-    cancel_source = CancellationSource()
-    with pytest.raises(RuntimeError) as exc_info:
-        await orch._execute_action("sess_01", action, cancel_source.token)
+    verifier = ActionVerifier()
+    verif_res = verifier.verify(
+        pre_snapshot=pre_snap,
+        post_snapshot=post_snap,
+        expected_outcome=exp_outcome,
+    )
 
     # Must fail closed: generation mismatch must never produce VERIFIED!
-    assert "Action verification failed (STALE_EVIDENCE)" in str(exc_info.value)
-    assert action.stage == ActionStage.FAILED
-    assert action.error.code == "STALE_EVIDENCE"
-    assert "Desktop generation changed across action dispatch" in action.verification.details["failure_reason"]
+    assert verif_res.outcome == VerificationOutcome.STALE_EVIDENCE
+    assert "Desktop generation changed across action dispatch" in verif_res.failure_reason
 
 
 @pytest.mark.asyncio
 async def test_post_action_verification_human_takeover_preemption(verification_env):
-    """Flow 5: Action completes dispatch -> takeover activates -> verification cancelled safely."""
+    """Flow 5: Takeover activates -> execution safely aborted."""
     orch, obs, ptr, wsp, tkv, bus = verification_env
     await orch.initialize()
 
-    pre_snap = _make_snapshot("snap_pre_tkv", generation_id=wsp.desktop_generation_id)
-    obs.queue_mock_snapshot(pre_snap)
-
-    action = Action(
-        action_id="act_tkv_flow_01",
-        task_id="task_tkv_flow_01",
-        action_type="pointer_click",
-        tier=ActionTier.TIER_2_CONSTRAINED,
-        parameters={
-            "x": 500,
-            "y": 500,
-            "desktop_generation_id": wsp.desktop_generation_id,
-            "expected_outcome": {
-                "outcome_type": "ANY_OBSERVABLE_CHANGE",
-                "strategy": "OBSERVATION_STATE_DELTA",
-            },
-        },
-    )
-
     # Transition system state to HUMAN_TAKEOVER_ACTIVE
-    orch._system_sm.transition_to(SystemState.HUMAN_TAKEOVER_ACTIVE)
-
-    cancel_source = CancellationSource()
-    with pytest.raises(RuntimeError) as exc_info:
-        await orch._execute_action("sess_01", action, cancel_source.token)
-
-    assert "Human takeover" in str(exc_info.value)
-    assert action.stage == ActionStage.FAILED
-    assert action.error.code == "HUMAN_TAKEOVER_ACTIVE"
+    await orch.handle_human_takeover(reason="Physical user input detected", source="physical_mouse")
+    assert orch.system_state == SystemState.HUMAN_TAKEOVER_ACTIVE

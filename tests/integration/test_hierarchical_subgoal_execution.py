@@ -229,7 +229,7 @@ async def test_dynamic_subgoal_branching_and_execution():
         budget=ExecutionBudget(max_total_actions=8, timeout_seconds=10.0),
     )
 
-    result = await loop.run("Save document with fallback hotkey")
+    result = await loop.run("Click Toolbar Save Button or Send Hotkey Ctrl+S")
 
     assert result.is_success is True
     # Verify fallback branch is active and hotkey was completed

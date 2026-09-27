@@ -1,10 +1,15 @@
-"""Hardened Shell Environment Provider enforcing Zero Physical OS Bypass.
+"""
+Provenance & Architectural Attribution:
+======================================
+Windows-Use Source:   windows_use/agent/tools/service.py (shell_tool)
+ORBIT Destination:    src/orbit/runtime/environment/shell_provider.py
+Integration Paradigm: Transduced Non-Physical Environment Interface (Brain-Body Separation)
 
-INVARIANT:
-Shell execution is strictly a non-physical environment interface (e.g. for CLI inspection,
-data transformation, headless tool execution). Under NO circumstances may shell commands be
-used as a backdoor to spawn GUI applications, dispatch keystrokes/mouse events, or manipulate
-desktop windows. All physical execution is the exclusive authority of PrimitiveExecutionController.
+Adaptations Applied:
+- Implemented non-interactive PowerShell pipeline execution with timeouts and output capture.
+- Retained strict zero-physical-bypass policy and forbidden keyword/GUI app filters.
+- Enforced strict invariant: Shell execution is a non-physical transducer with NO agent or planner authority.
+======================================
 """
 
 from __future__ import annotations
@@ -244,12 +249,23 @@ class ShellExecutionProvider(EnvironmentProvider):
         logger.info("[RESTRICTED SHELL] Executing verified non-physical command: %s", cmd)
 
         try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                creationflags=creationflags,
-            )
+            if sys.platform == "win32":
+                proc = await asyncio.create_subprocess_exec(
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    creationflags=creationflags,
+                )
+            else:
+                proc = await asyncio.create_subprocess_shell(
+                    cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
 
             try:
                 stdout_data, stderr_data = await asyncio.wait_for(
@@ -294,3 +310,14 @@ class ShellExecutionProvider(EnvironmentProvider):
                 error=f"SHELL_EXECUTION_ERROR: {str(exc)}",
                 metadata={"command": cmd},
             )
+
+
+# Compatibility alias
+HardenedShellProvider = ShellExecutionProvider
+
+__all__ = [
+    "RestrictedShellPolicy",
+    "ShellExecutionProvider",
+    "HardenedShellProvider",
+    "ShellSecurityViolation",
+]

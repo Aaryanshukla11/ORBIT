@@ -97,7 +97,12 @@ from orbit.runtime.cognitive.primitive_validator import PrimitiveValidator
 from orbit.runtime.cognitive.primitive_execution_controller import PrimitiveExecutionController
 from orbit.runtime.task_completion.multi_evidence_verifier import MultiEvidenceActionVerifier
 from orbit.runtime.agent.grounding_validator import GroundingValidator
-from orbit.runtime.cognitive.failure_analyst import CognitiveFailureAnalyst, FailureReport, FailureCategory
+from orbit.runtime.cognitive.failure_analyst import (
+    CognitiveFailureAnalyst,
+    FailureCategory,
+    FailureReport,
+    LoopGuardDiagnosticEngine,
+)
 from orbit.runtime.cognitive.runtime_feasibility import RuntimeFeasibilityEvaluator, RuntimeFeasibilityResult
 from orbit.runtime.cognitive.semantic_feasibility import SemanticFeasibilityEvaluator
 from orbit.runtime.cognitive.agent_planner import AgentPlanner
@@ -111,6 +116,12 @@ from orbit.runtime.agent.progress_graph import ProgressGraph, SubgoalStatus
 from orbit.runtime.cognitive.context_checkpoint import CheckpointManager, ContextCheckpoint
 from orbit.runtime.cognitive.context_compactor import ContextCompactor
 from orbit.runtime.cognitive.trajectory_memory import TrajectoryMemory
+from orbit.runtime.telemetry import (
+    LiveTelemetryBroadcaster,
+    StructuredTelemetryEvent,
+    TelemetryEventType,
+    UniversalStepProgressEmitter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +139,7 @@ class AgentExecutionLoop:
         interpreter: Optional[LLMIntentInterpreter] = None,
         observer: Optional[CurrentStateObserver] = None,
         decision_engine: Optional[Union[OrbitDecisionEngine, CognitiveDecisionEngine]] = None,
-        target_locator: Optional[TargetLocator] = None,
+        target_locator: Optional[Union[TargetLocator, EvidenceBasedTargetLocator, Any]] = None,
         workspace: Optional[WorkspaceCapability] = None,
         pointer: Optional[PointerCapability] = None,
         keyboard: Optional[KeyboardCapability] = None,
@@ -147,6 +158,7 @@ class AgentExecutionLoop:
         multi_evidence_verifier: Optional[MultiEvidenceActionVerifier] = None,
         environment_registry: Optional[EnvironmentProviderRegistry] = None,
         event_bus: Optional[Any] = None,
+        telemetry_broadcaster: Optional[LiveTelemetryBroadcaster] = None,
     ) -> None:
         self._session_manager = model_session_manager
         if router is not None:
@@ -225,12 +237,29 @@ class AgentExecutionLoop:
 
         # Phase 4: Failure Diagnosis & Replanning
         self._failure_analyst = CognitiveFailureAnalyst()
+        self._loop_guard = LoopGuardDiagnosticEngine()
         self._progress_graph: Optional[Any] = None
+
+        # Phase 5: Universal Step Progress & Live Event Telemetry
+        self._telemetry_broadcaster = telemetry_broadcaster or LiveTelemetryBroadcaster()
+        self._progress_emitter = UniversalStepProgressEmitter(broadcaster=self._telemetry_broadcaster)
 
         # Phase 2G.1: Long-Horizon Context, Checkpointing & Trajectory Memory
         self._checkpoint_manager = CheckpointManager()
         self._context_compactor = ContextCompactor()
         self._trajectory_memory = TrajectoryMemory()
+
+    @property
+    def telemetry_broadcaster(self) -> LiveTelemetryBroadcaster:
+        return self._telemetry_broadcaster
+
+    @property
+    def progress_emitter(self) -> UniversalStepProgressEmitter:
+        return self._progress_emitter
+
+    @property
+    def loop_guard(self) -> LoopGuardDiagnosticEngine:
+        return self._loop_guard
 
     @property
     def checkpoint_manager(self) -> CheckpointManager:
@@ -926,10 +955,14 @@ class AgentExecutionLoop:
                                     if not action.expected_effect and _composed.expected_effect:
                                         action.expected_effect = _composed.expected_effect
                                 else:
-                                    # Decision engine selected a different valid primitive; validate it directly
-                                    val_res = self._primitive_validator.validate_action(action)
-                                    if val_res.is_valid and val_res.validated_action:
-                                        action = val_res.validated_action
+                                    # Divergence detected: competing decision attempted an action not authorized by PlanDirective
+                                    logger.warning(
+                                        "[PLAN DIRECTIVE DIVERGENCE] Competing decision '%s' diverged from authoritative PlanDirective '%s' (authorized: %s). Rejecting competing action and enforcing authoritative directive action.",
+                                        action.action_type.value,
+                                        _active_directive.directive_id,
+                                        [a.action_type.value for a in composed_seq.actions],
+                                    )
+                                    action = composed_seq.actions[0]
                         else:
                             # No directive available: run through PrimitiveValidator directly to enforce contract
                             val_res = self._primitive_validator.validate_action(action)
@@ -994,17 +1027,12 @@ class AgentExecutionLoop:
                         for s in step_history
                     )
 
-                    if already_open_hwnd or launch_already_succeeded:
-                        is_redundant = True
-                        redundancy_reason = (
-                            f"Application '{app_target_name}' is ALREADY RUNNING and usable on desktop "
-                            f"(HWND: {already_open_hwnd}, Window: '{already_open_title}'). Re-launching is blocked."
-                        )
-                        # Application is already running; re-launching is blocked
-
                 # 3. General semantic check: Identical action and target already successfully executed
                 if not is_redundant and step_history and action.action_type not in (
                     AbstractActionType.WAIT,
+                    AbstractActionType.WAIT_SETTLE,
+                    AbstractActionType.LAUNCH_APPLICATION,
+                    AbstractActionType.FOCUS_WINDOW,
                     AbstractActionType.COMPLETE_GOAL,
                     AbstractActionType.ABORT_TASK,
                 ):
@@ -1420,156 +1448,102 @@ class AgentExecutionLoop:
                         outcome.observed_delta.get("text_verification", {}).get("primary_source", "NONE"),
                         outcome.expected_effect_observed,
                         outcome.goal_satisfied,
-                    )
-
+                    )                # -------------------------------------------------------------
+                # PHASE 9: LOOPGUARD & RECOVERY EVALUATION (BRAIN-BODY SEPARATION)
                 # -------------------------------------------------------------
-                # PHASE 9: RECOVERY OR PROGRESS EVALUATION
-                # -------------------------------------------------------------
-                # TRIPARTITE REALITY DISTINCTION:
-                # dispatch_success == True DOES NOT imply expected_effect_observed == True!
-                if not exec_result.expected_effect_observed:
-                    logger.warning("Action %s dispatched but expected effect was NOT observed; evaluating recovery", action.action_id)
+                # 1. LoopGuard consumes fresh post-action observation (Guardrail 9)
+                loop_failure_rep = self._loop_guard.record_and_diagnose(
+                    action=action,
+                    post_obs=post_obs,
+                    exec_outcome=outcome,
+                )
 
-                    # PHASE C1-C2: Diagnostic Root-Cause Analysis (Guardrail 9)
-                    failure_rep = self._failure_analyst.analyze_failure(
+                if loop_failure_rep is not None or not exec_result.expected_effect_observed:
+                    # 2. Extract or analyze FailureReport (purely diagnostic)
+                    failure_rep = loop_failure_rep or self._failure_analyst.analyze_failure(
                         action=action,
                         pre_obs=current_obs,
                         post_obs=post_obs,
                         exec_outcome=outcome,
                         world_model=self._world_model,
                     )
-                    logger.info(
-                        "[FAILURE ANALYST] Diagnosis for action %s: %s [%s] -> Remediation: %s",
+                    logger.warning(
+                        "[FAILURE/LOOP DIAGNOSIS] Category: %s | Action: %s | Diagnosis: %s | Guidance: %s",
+                        failure_rep.category.value,
                         action.action_id,
                         failure_rep.diagnosis,
-                        failure_rep.category.value,
                         failure_rep.suggested_remediation_direction,
                     )
 
-                    # PHASE C4: Classify failure — strategic failures trigger Planner replan
-                    # Strategic = non-transient or categories that cannot be fixed by tactical recovery
-                    _strategic_categories = {
-                        FailureCategory.TARGET_NOT_FOUND,
-                        FailureCategory.APPLICATION_CRASHED,
-                        FailureCategory.ENVIRONMENT_BLOCKED,
-                        FailureCategory.PERMISSION_DENIED,
-                    }
-                    _is_strategic_failure = (
-                        not failure_rep.is_transient
-                        or failure_rep.category in _strategic_categories
+                    # 3. Record diagnostic audit record (audit only, zero action execution)
+                    self._recovery_manager.record_recovery(
+                        cycle_number=step_idx,
+                        strategy=RecoveryStrategy.REQUERY_MODEL,
+                        action=action,
+                        diagnosis=failure_rep.diagnosis,
+                        recovery_success=False,
+                        details={"category": failure_rep.category.value, "loop_detected": loop_failure_rep is not None},
+                        duration_ms=0.0,
                     )
 
+                    # 4. Trigger AgentPlanner.replan() for authoritative NEW PlanDirective
+                    # Invariant: LoopGuard / FailureAnalyst / RecoveryManager NEVER execute recovery actions directly.
                     if self._recovery_manager.can_attempt_recovery():
-                        if _is_strategic_failure and self._progress_graph is not None:
-                            # PHASE C4: Strategic failure → AgentPlanner.replan() for new PlanDirective
-                            _active_sg_for_replan = self._progress_graph.get_active_subgoal()
-                            if _active_sg_for_replan is not None:
-                                logger.info(
-                                    "[STRATEGIC REPLAN] Failure category '%s' for subgoal '%s' triggers Planner replan",
-                                    failure_rep.category.value,
-                                    _active_sg_for_replan.sub_id,
+                        _active_sg_for_replan = self._progress_graph.get_active_subgoal() if self._progress_graph else None
+                        if _active_sg_for_replan is not None:
+                            logger.info(
+                                "[AUTHORITATIVE REPLAN] Subgoal '%s' failure [%s] triggers AgentPlanner.replan()",
+                                _active_sg_for_replan.sub_id,
+                                failure_rep.category.value,
+                            )
+                            _updated_known = dict(self._world_model.known_information)
+                            _updated_known["last_failure_diagnosis"] = failure_rep.diagnosis
+                            _updated_known["last_failure_category"] = failure_rep.category.value
+                            self._world_model = self._world_model.model_copy(update={
+                                "known_information": _updated_known,
+                            })
+                            try:
+                                sub_obj = SubObjective(
+                                    sub_id=_active_sg_for_replan.sub_id,
+                                    title=_active_sg_for_replan.title,
+                                    description=_active_sg_for_replan.description,
+                                    dependencies=_active_sg_for_replan.dependencies,
                                 )
-                                # Inject failure diagnosis into world model so planner has context
-                                _updated_known = dict(self._world_model.known_information)
-                                _updated_known["last_failure_diagnosis"] = failure_rep.diagnosis
-                                _updated_known["last_failure_category"] = failure_rep.category.value
-                                self._world_model = self._world_model.model_copy(update={
-                                    "known_information": _updated_known,
-                                })
-                                try:
-                                    sub_obj = SubObjective(
-                                        sub_id=_active_sg_for_replan.sub_id,
-                                        title=_active_sg_for_replan.title,
-                                        description=_active_sg_for_replan.description,
-                                        dependencies=_active_sg_for_replan.dependencies,
+                                failed_dir = subgoal_directives.get(_active_sg_for_replan.sub_id)
+                                new_directive, new_sem_report = self._planner.replan(
+                                    objective=objective,
+                                    subgoal=sub_obj,
+                                    world_model=self._world_model,
+                                    failure_report=failure_rep,
+                                    failed_directive=failed_dir,
+                                    observation=post_obs,
+                                )
+                                if new_sem_report.is_feasible and new_directive is not None:
+                                    # New PlanDirective supersedes failed directive and enters Composer next cycle
+                                    subgoal_directives[_active_sg_for_replan.sub_id] = new_directive
+                                    logger.info(
+                                        "[AUTHORITATIVE REPLAN] Emitted NEW PlanDirective '%s' (Strategy: %s, Primitives: %s)",
+                                        new_directive.directive_id,
+                                        new_directive.intent_strategy,
+                                        [p.value for p in new_directive.preferred_primitives],
                                     )
-                                    new_directive, new_sem_report = self._planner.plan_subgoal(
-                                        objective=objective,
-                                        subgoal=sub_obj,
-                                        world_model=self._world_model,
-                                        observation=post_obs,
+                                else:
+                                    logger.warning(
+                                        "[AUTHORITATIVE REPLAN] Replanning for subgoal '%s' infeasible: %s",
+                                        _active_sg_for_replan.sub_id,
+                                        getattr(new_sem_report, "rejection_reasons", ""),
                                     )
-                                    if new_sem_report.is_feasible and new_directive is not None:
-                                        # PHASE C5: New PlanDirective enters Composer→Validator→Controller next cycle
-                                        subgoal_directives[_active_sg_for_replan.sub_id] = new_directive
-                                        logger.info(
-                                            "[STRATEGIC REPLAN] New PlanDirective '%s' stored for subgoal '%s'",
-                                            new_directive.directive_id,
-                                            _active_sg_for_replan.sub_id,
-                                        )
-                                    else:
-                                        logger.warning(
-                                            "[STRATEGIC REPLAN] Replanning for subgoal '%s' infeasible: %s",
-                                            _active_sg_for_replan.sub_id,
-                                            getattr(new_sem_report, 'rejection_reasons', ''),
-                                        )
-                                except Exception as _replan_err:
-                                    logger.warning("[STRATEGIC REPLAN] Planner replan raised: %s", _replan_err)
+                            except Exception as _replan_err:
+                                logger.warning("[AUTHORITATIVE REPLAN] Planner replan raised: %s", _replan_err)
 
-                        strategy, diag = self._recovery_manager.diagnose_failure(action, current_obs, post_obs, exec_result)
                         sm.transition_to(
                             AgentLoopState.RECOVERING,
                             cycle_number=step_idx,
                             observation_id=post_obs.observation_id,
                             action_id=action.action_id,
-                            failure_reason=diag,
+                            failure_reason=failure_rep.diagnosis,
                             recovery_attempt=self._recovery_manager.current_transition_recoveries + 1,
                         )
-                        t_rec_start = time.perf_counter()
-                        recovery_action = None
-                        if hasattr(self._recovery_manager, "synthesize_recovery_primitive"):
-                            raw_action = self._recovery_manager.synthesize_recovery_primitive(strategy, action, post_obs)
-                            if isinstance(raw_action, AbstractAction):
-                                recovery_action = raw_action
-
-                        if hasattr(self._recovery_manager, "execute_recovery"):
-                            try:
-                                legacy_res = self._recovery_manager.execute_recovery(
-                                    strategy, action, post_obs, cycle_number=step_idx
-                                )
-                                if inspect.isawaitable(legacy_res):
-                                    await legacy_res
-                            except Exception as l_ex:
-                                logger.debug("execute_recovery invocation notice: %s", l_ex)
-
-                        rec_success = False
-                        rec_err = None
-
-                        if recovery_action is not None:
-                            logger.info(
-                                "[AGENT RECOVERY] Dispatching synthesized recovery primitive %s (%s) through PrimitiveExecutionController",
-                                recovery_action.action_type.value,
-                                recovery_action.action_id,
-                            )
-                            rec_ctrl_res = await self._primitive_execution_controller.execute_primitive(
-                                action=recovery_action,
-                                pre_observation=post_obs,
-                                grounding_fn=self._resolve_target_coordinates,
-                                safety_gate_fn=self._evaluate_safety_gate,
-                                observe_fn=self._observer.observe,
-                                objective=objective,
-                                cancel_token=cancel_token,
-                            )
-                            rec_outcome = rec_ctrl_res.execution_outcome
-                            post_obs = rec_ctrl_res.post_observation
-                            rec_success = rec_outcome.dispatch_success and rec_outcome.expected_effect_observed
-                            rec_err = rec_outcome.error_message
-                        else:
-                            logger.info("[AGENT RECOVERY] Strategy %s requires no physical action; refreshing observation for replanning", strategy.value)
-                            post_obs = await self._observer.observe(objective)
-                            rec_success = True
-
-                        rec_dur = (time.perf_counter() - t_rec_start) * 1000.0
-                        rec_record = self._recovery_manager.record_recovery(
-                            cycle_number=step_idx,
-                            strategy=strategy,
-                            action=action,
-                            diagnosis=diag,
-                            recovery_success=rec_success,
-                            details={"error": rec_err, "recovery_action": recovery_action.action_id if recovery_action else None},
-                            duration_ms=rec_dur,
-                        )
-                        cycle_trace.recovery_count = rec_record.attempt_number
                         cycle_trace.post_observation_id = post_obs.observation_id
                     else:
                         # PHASE A3: Recovery budget exhausted — mark active subgoal FAILED in ProgressGraph

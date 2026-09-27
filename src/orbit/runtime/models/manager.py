@@ -227,21 +227,28 @@ class ModelManager:
 
     async def configure_cloud_provider(self, provider_id: str, api_key: str, endpoint: Optional[str] = None) -> bool:
         """Update credentials for a cloud provider and re-discover models."""
+        from orbit.runtime.models.models import CloudProviderKind
         p_lower = provider_id.lower()
+        if p_lower in ("google", "gemini"):
+            p_kind_enum = CloudProviderKind.GEMINI
+        elif p_lower in ("anthropic", "claude"):
+            p_kind_enum = CloudProviderKind.ANTHROPIC
+        elif p_lower in ("openai", "gpt"):
+            p_kind_enum = CloudProviderKind.OPENAI
+        else:
+            try:
+                p_kind_enum = CloudProviderKind[provider_id.upper()]
+            except KeyError:
+                p_kind_enum = CloudProviderKind.CUSTOM_OPENAI_COMPATIBLE
+
         matched_cp = None
         for cp in self._inventory.cloud_providers:
-            if cp.cloud_kind.value.lower() == p_lower or cp.cloud_kind.name.lower() == p_lower or provider_id.lower() in cp.cloud_kind.value.lower():
+            if cp.cloud_kind == p_kind_enum or cp.cloud_kind.value.lower() == p_lower or provider_id.lower() in cp.cloud_kind.value.lower():
                 matched_cp = cp
                 break
 
         if matched_cp is None:
-            try:
-                from orbit.runtime.models.models import CloudProviderKind
-                kind = CloudProviderKind[provider_id.upper()]
-            except KeyError:
-                from orbit.runtime.models.models import CloudProviderKind
-                kind = CloudProviderKind.CUSTOM_OPENAI_COMPATIBLE
-            matched_cp = CloudModelProvider(cloud_kind=kind, api_key=api_key, endpoint=endpoint)
+            matched_cp = CloudModelProvider(cloud_kind=p_kind_enum, api_key=api_key, endpoint=endpoint)
             self.register_cloud_provider(matched_cp)
         else:
             matched_cp.update_credentials(api_key, endpoint)

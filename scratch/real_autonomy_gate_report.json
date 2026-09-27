@@ -1,0 +1,170 @@
+{
+  "GATE_1": {
+    "status": "PASS",
+    "provider": "Ollama (Local)",
+    "model_name": "ollama:qwen2.5:3b",
+    "latency_ms": 1260.79,
+    "response_sample": "Text editor is a software for editing text files."
+  },
+  "GATE_5": {
+    "status": "PASS",
+    "initial_directive_id": "dir_95b3fda3",
+    "replanned_directive_id": "dir_26e75f39",
+    "failure_diagnosis": "Click on 'Save Button' produced no observable UI state change.",
+    "distinct_id_verified": true,
+    "distinct_strategy_verified": true
+  },
+  "GATE_6": {
+    "status": "PASS",
+    "dispatch_success": true,
+    "expected_effect_observed": false,
+    "goal_satisfied": false,
+    "task_completed_emitted": false
+  },
+  "GATE_7": {
+    "status": "PASS",
+    "model_claim": "completed",
+    "actual_environment": "goal not satisfied",
+    "goal_verifier_rejected": true,
+    "task_completed_emitted": false
+  },
+  "GATE_8": {
+    "status": "PASS",
+    "observation_id": "obs_stale_001",
+    "observation_age_sec": 1790538475.14,
+    "is_fresh": false,
+    "stale_rejected": true
+  },
+  "GATE_9": {
+    "status": "FAIL",
+    "trace_stages": [
+      "User Goal",
+      "AgentPlanner",
+      "PlanDirective",
+      "PrimitiveComposer",
+      "PrimitiveValidator",
+      "PrimitiveExecutionController",
+      "Capability Adapter",
+      "Windows",
+      "Fresh Observation",
+      "Verification",
+      "GoalVerifier"
+    ],
+    "directive_id": "dir_2546e612",
+    "actions_in_sequence": 1,
+    "validator_passed": true,
+    "alternate_architectures_detected": false
+  },
+  "GATE_10": {
+    "status": "PASS",
+    "empty_evidence_rejected": true,
+    "valid_evidence_accepted": true,
+    "barrier_enforced": true
+  },
+  "GATE_2": {
+    "status": "FAIL",
+    "task_id": "agt_6c32579f",
+    "goal": "Open Notepad and type: ORBIT REAL AUTONOMY TEST",
+    "is_success": false,
+    "goal_verification": {
+      "status": "FAILED",
+      "is_completed": false,
+      "failure_reason": "No progress observed within budget timeout",
+      "failure_code": "NO_PROGRESS_TIMEOUT",
+      "evidence": {
+        "final_generation_id": 0,
+        "observation_id": null,
+        "application_name": null,
+        "application_hwnd": null,
+        "application_is_open": false,
+        "application_in_foreground": false,
+        "verified_text": null,
+        "ocr_matched_text": null,
+        "ocr_confidence": null,
+        "ocr_regions_count": 0,
+        "visual_changes_detected": [],
+        "accessibility_matched_elements": [],
+        "canvas_pixel_difference_ratio": null,
+        "clipboard_verified_content": null,
+        "completed_step_ids": [],
+        "total_steps": 0,
+        "replan_count": 0,
+        "verification_timestamp_utc": "2026-09-27 20:05:11.262595+00:00",
+        "diagnostics": {}
+      },
+      "diagnostics": {}
+    },
+    "event_count": 1
+  },
+  "GATE_3": {
+    "status": "FAIL",
+    "task_id": "agt_462b8ed2",
+    "goal": "Open Paint and draw a square.",
+    "is_success": false,
+    "goal_verification": {
+      "status": "FAILED",
+      "is_completed": false,
+      "failure_reason": "No progress observed within budget timeout",
+      "failure_code": "NO_PROGRESS_TIMEOUT",
+      "evidence": {
+        "final_generation_id": 0,
+        "observation_id": null,
+        "application_name": null,
+        "application_hwnd": null,
+        "application_is_open": false,
+        "application_in_foreground": false,
+        "verified_text": null,
+        "ocr_matched_text": null,
+        "ocr_confidence": null,
+        "ocr_regions_count": 0,
+        "visual_changes_detected": [],
+        "accessibility_matched_elements": [],
+        "canvas_pixel_difference_ratio": null,
+        "clipboard_verified_content": null,
+        "completed_step_ids": [],
+        "total_steps": 0,
+        "replan_count": 0,
+        "verification_timestamp_utc": "2026-09-27 20:06:31.312556+00:00",
+        "diagnostics": {}
+      },
+      "diagnostics": {}
+    },
+    "event_count": 3
+  },
+  "GATE_4": {
+    "status": "FAIL",
+    "task_id": "agt_458cc5d2",
+    "goal": "Open Notepad, type 'ORBIT multi-step autonomy verification.', save it as 'C:\\Users\\Aaryan shukla\\Desktop\\orbit_autonomy_test.txt', then verify that the file exists and contains the exact sentence.",
+    "is_success": false,
+    "file_created": false,
+    "file_content_matched": false,
+    "goal_verification": {
+      "status": "FAILED",
+      "is_completed": false,
+      "failure_reason": "No progress observed within budget timeout",
+      "failure_code": "NO_PROGRESS_TIMEOUT",
+      "evidence": {
+        "final_generation_id": 0,
+        "observation_id": null,
+        "application_name": null,
+        "application_hwnd": null,
+        "application_is_open": false,
+        "application_in_foreground": false,
+        "verified_text": null,
+        "ocr_matched_text": null,
+        "ocr_confidence": null,
+        "ocr_regions_count": 0,
+        "visual_changes_detected": [],
+        "accessibility_matched_elements": [],
+        "canvas_pixel_difference_ratio": null,
+        "clipboard_verified_content": null,
+        "completed_step_ids": [],
+        "total_steps": 0,
+        "replan_count": 0,
+        "verification_timestamp_utc": "2026-09-27 20:07:03.818591+00:00",
+        "diagnostics": {}
+      },
+      "diagnostics": {}
+    }
+  }
+}

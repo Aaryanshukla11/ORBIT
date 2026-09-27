@@ -62,12 +62,13 @@ class RecoveryRecord(BaseModel):
 
 
 class AgentRecoveryManager:
-    """Manages diagnosis, selection, and primitive synthesis for recovery.
+    """Manages recovery audit history and modal dialog detection helpers.
 
-    Enforces:
-    1. Zero raw adapter access: Does not accept pointer, keyboard, or workspace.
-    2. RecoveryStrategy != Primitive: Synthesizes strictly canonical AbstractAction instances.
-    3. No blind Return keypresses: Only synthesizes Escape/Dialog resolution when modal evidence is verified.
+    SAFETY INVARIANTS (Phase 4):
+    1. Zero direct physical execution: Never dispatches actions to adapters or environment.
+    2. Zero semantic strategy choice: Authoritative recovery strategies and fallbacks
+       are chosen EXCLUSIVELY by AgentPlanner.replan() via NEW PlanDirective emissions.
+    3. Zero raw adapter access: Does not accept pointer, keyboard, or workspace.
     """
 
     def __init__(self, max_recoveries_per_transition: int = 2) -> None:

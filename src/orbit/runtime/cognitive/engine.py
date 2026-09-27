@@ -572,13 +572,39 @@ class OrbitDecisionEngine:
         obs_id = getattr(observation, "observation_id", f"obs_{step_index}")
 
         # 1. Resolve Goal Text
-        goal_text = user_goal or (getattr(objective, "user_goal", str(objective)) if objective else "Execute user task")
+        goal_text = getattr(objective, "raw_prompt", None) or user_goal or (getattr(objective, "user_goal", str(objective)) if objective else "Execute user task")
 
         # 2. Extract active model context / client
         active_ctx = None
         if self._model_session_manager is not None:
             if hasattr(self._model_session_manager, "get_active_context"):
                 active_ctx = self._model_session_manager.get_active_context()
+
+            # If no active model session, attempt automatic on-demand activation of configured model
+            if active_ctx is None and hasattr(self._model_session_manager, "list_all_descriptors"):
+                try:
+                    descriptors = await self._model_session_manager.list_all_descriptors()
+                    if descriptors:
+                        import os
+                        openai_key = os.environ.get("OPENAI_API_KEY", "").strip()
+                        gemini_key = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+                        chosen_desc = None
+                        if openai_key:
+                            cands = [d for d in descriptors if "gpt-4o" in d.model_id.lower() and "mini" not in d.model_id.lower()]
+                            if cands:
+                                chosen_desc = cands[0]
+                        if not chosen_desc and gemini_key:
+                            cands = [d for d in descriptors if "gemini" in d.model_id.lower()]
+                            if cands:
+                                chosen_desc = cands[0]
+                        if not chosen_desc:
+                            chosen_desc = descriptors[0]
+                        act_res = await self._model_session_manager.activate_model(chosen_desc.model_id)
+                        if act_res.is_successful:
+                            active_ctx = self._model_session_manager.get_active_context()
+                            logger.info("[OrbitDecisionEngine] Auto-activated model '%s' on demand.", chosen_desc.model_id)
+                except Exception as auto_act_err:
+                    logger.warning("[OrbitDecisionEngine] On-demand auto-activation fallback: %s", auto_act_err)
 
         if active_ctx is None and self._model_client is None:
             # FAIL-CLOSED: No silent heuristic fallback is permitted
@@ -744,9 +770,10 @@ class OrbitDecisionEngine:
                     world_state=ws,
                     candidate_bounds=proposal.target_selector.bounds,
                 )
-                if ground_res.is_grounded:
+                if ground_res.is_grounded and ground_res.candidate:
                     grounded_candidate = ground_res.candidate
-                    logger.debug("[OrbitDecisionEngine] Grounded target '%s' via %s", tgt_name, ground_res.candidate.source.value)
+                    src_val = ground_res.candidate.source.value if (hasattr(ground_res.candidate, "source") and hasattr(ground_res.candidate.source, "value")) else str(getattr(ground_res.candidate, "source", "unknown"))
+                    logger.debug("[OrbitDecisionEngine] Grounded target '%s' via %s", tgt_name, src_val)
 
         # 8. Assemble Canonical AbstractAction
         canonical_action = self._translate_proposal_to_abstract_action(
@@ -790,20 +817,89 @@ class OrbitDecisionEngine:
             if match:
                 clean_text = match.group(1).strip()
 
-        try:
-            data = json.loads(clean_text)
-            if isinstance(data, dict):
-                return ModelActionProposal.model_validate(data)
-        except Exception as e:
-            # Fallback: scan for first JSON object
+        def _normalize_and_validate(d: Any) -> Optional[ModelActionProposal]:
+            if not isinstance(d, dict):
+                return None
+            data = dict(d)
+            # If nested under 'next_action', unwrap
+            if "next_action" in data and isinstance(data["next_action"], dict):
+                nested = dict(data["next_action"])
+                if "action_type" in nested:
+                    for k in ("diagnostic_reasoning", "reason_summary", "decision_summary"):
+                        if k in data and "diagnostic_reasoning" not in nested:
+                            nested["diagnostic_reasoning"] = data[k]
+                    data = nested
+
+            # Normalize action_type synonyms
+            act_raw = str(data.get("action_type", "")).upper().strip()
+            synonym_map = {
+                "TYPE_TEXT": "TYPE",
+                "TYPETEXT": "TYPE",
+                "LAUNCH_APPLICATION": "LAUNCH",
+                "LAUNCHAPPLICATION": "LAUNCH",
+                "OPEN_APPLICATION": "LAUNCH",
+                "OPEN": "LAUNCH",
+                "SEND_HOTKEY": "HOTKEY",
+                "SENDHOTKEY": "HOTKEY",
+                "KEY_COMBO": "HOTKEY",
+                "WAIT_SETTLE": "WAIT",
+                "WAITSETTLE": "WAIT",
+                "SLEEP": "WAIT",
+                "DRAW_STROKES": "DRAW",
+                "DRAWSTROKES": "DRAW",
+                "COMPLETE_GOAL": "COMPLETE",
+                "COMPLETEGOAL": "COMPLETE",
+                "FINISHED": "COMPLETE",
+                "ABORT_TASK": "FAIL",
+                "ABORTTASK": "FAIL",
+                "ABORT": "FAIL",
+                "CLICK_ELEMENT": "CLICK",
+            }
+            if act_raw in synonym_map:
+                data["action_type"] = synonym_map[act_raw]
+
+            # Normalize expected_outcome
+            if "expected_outcome" not in data or not data["expected_outcome"]:
+                data["expected_outcome"] = (
+                    data.get("expected_state_transition")
+                    or data.get("expected_effect")
+                    or data.get("reason_summary")
+                    or data.get("decision_summary")
+                    or f"Executed {data.get('action_type', 'action')}"
+                )
+
+            # Normalize parameters if null or missing
+            if data.get("parameters") is None:
+                data["parameters"] = {}
+
+            # Normalize target_selector if target dict is present
+            if "target" in data and isinstance(data["target"], dict) and not data.get("target_selector"):
+                data["target_selector"] = data["target"]
+
             try:
-                brace_match = re.search(r"\{.*\}", clean_text, re.DOTALL)
-                if brace_match:
-                    data = json.loads(brace_match.group(0))
-                    return ModelActionProposal.model_validate(data)
-            except Exception:
-                pass
-            logger.debug("[OrbitDecisionEngine] JSON parse error: %s", e)
+                return ModelActionProposal.model_validate(data)
+            except Exception as v_err:
+                logger.debug("[OrbitDecisionEngine] ModelActionProposal validation error: %s", v_err)
+                return None
+
+        try:
+            parsed = json.loads(clean_text)
+            validated = _normalize_and_validate(parsed)
+            if validated:
+                return validated
+        except Exception as e:
+            pass
+
+        # Fallback: scan for first JSON object
+        try:
+            brace_match = re.search(r"\{.*\}", clean_text, re.DOTALL)
+            if brace_match:
+                parsed = json.loads(brace_match.group(0))
+                validated = _normalize_and_validate(parsed)
+                if validated:
+                    return validated
+        except Exception:
+            pass
 
         return None
 

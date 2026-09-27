@@ -1,8 +1,15 @@
-"""Local File Environment Provider for ORBIT.
+"""
+Provenance & Architectural Attribution:
+======================================
+Windows-Use Source:   windows_use/agent/tools/service.py (file_tool, memory_tool)
+ORBIT Destination:    src/orbit/runtime/environment/file_providers.py
+Integration Paradigm: Transduced Non-Physical Environment Interface (Brain-Body Separation)
 
-Provides verified, non-physical filesystem interfaces for FILE_READ and FILE_WRITE.
-INVARIANT:
-Pure filesystem I/O only. Zero capability to interact with desktop windows or dispatch input.
+Adaptations Applied:
+- Added atomic filesystem operations (read, write, copy, move, delete, list_directory).
+- Retained strict path sandboxing, size limits (10MB), and traversal safeguards.
+- Enforced strict invariant: Filesystem provider is a non-physical transducer with NO agent or planner authority.
+======================================
 """
 
 from __future__ import annotations
@@ -11,7 +18,8 @@ import base64
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+import shutil
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from orbit.runtime.agent.contracts import AbstractAction, AbstractActionType
 from orbit.runtime.environment.registry import EnvironmentProvider, ProviderExecutionResult
@@ -20,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 class LocalFileProvider(EnvironmentProvider):
-    """Environment provider for safe, non-physical local file read and write operations."""
+    """Environment provider for safe, non-physical local file operations."""
 
     def __init__(
         self,
@@ -38,7 +46,7 @@ class LocalFileProvider(EnvironmentProvider):
 
     @property
     def supported_features(self) -> List[str]:
-        return ["file_read", "file_write", "text", "binary_base64", "directory_creation"]
+        return ["file_read", "file_write", "file_copy", "file_move", "file_delete", "file_list", "directory_creation"]
 
     async def is_available(self) -> bool:
         """Local file system is always accessible."""
@@ -72,9 +80,10 @@ class LocalFileProvider(EnvironmentProvider):
         return is_allowed
 
     async def execute(self, action: AbstractAction) -> ProviderExecutionResult:
-        """Execute FILE_READ or FILE_WRITE non-physically."""
+        """Execute file operations non-physically."""
         act_type = action.action_type
         params = action.parameters or {}
+        mode = str(params.get("mode", "")).lower()
         raw_path = params.get("path") or params.get("file_path") or params.get("filepath")
 
         if not raw_path:
@@ -92,14 +101,22 @@ class LocalFileProvider(EnvironmentProvider):
             )
 
         try:
-            if act_type == AbstractActionType.FILE_READ:
+            if mode == "copy" or str(act_type).upper().endswith("COPY"):
+                return await self._execute_copy(target_path, params)
+            elif mode == "move" or str(act_type).upper().endswith("MOVE"):
+                return await self._execute_move(target_path, params)
+            elif mode == "delete" or str(act_type).upper().endswith("DELETE"):
+                return await self._execute_delete(target_path, params)
+            elif mode in ("list", "list_dir", "view") or str(act_type).upper().endswith("LIST"):
+                return await self._execute_list(target_path, params)
+            elif act_type == AbstractActionType.FILE_READ or mode == "read":
                 return await self._execute_read(target_path, params)
-            elif act_type == AbstractActionType.FILE_WRITE:
+            elif act_type == AbstractActionType.FILE_WRITE or mode == "write":
                 return await self._execute_write(target_path, params)
             else:
                 return ProviderExecutionResult(
                     success=False,
-                    error=f"Unsupported file action type: {act_type}",
+                    error=f"Unsupported file action type/mode: {act_type} (mode={mode})",
                 )
         except Exception as exc:
             logger.error("[FILE PROVIDER] Failed executing %s on %s: %s", act_type, target_path, exc)
@@ -211,3 +228,88 @@ class LocalFileProvider(EnvironmentProvider):
             },
             metadata={"provider": self.provider_id},
         )
+
+    async def _execute_copy(self, src_path: Path, params: Dict[str, Any]) -> ProviderExecutionResult:
+        """Atomic copy file or directory."""
+        dest_raw = params.get("dest") or params.get("destination") or params.get("dest_path")
+        if not dest_raw:
+            return ProviderExecutionResult(success=False, error="Missing required parameter 'dest' for copy")
+        is_allowed, dest_path, err = self._resolve_and_check_path(str(dest_raw))
+        if not is_allowed:
+            return ProviderExecutionResult(success=False, error=f"COPY_PERMISSION_DENIED: {err}")
+        if not src_path.exists():
+            return ProviderExecutionResult(success=False, error=f"SOURCE_NOT_FOUND: {src_path}")
+
+        if src_path.is_dir():
+            shutil.copytree(src_path, dest_path, dirs_exist_ok=True)
+        else:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_path, dest_path)
+
+        return ProviderExecutionResult(
+            success=True,
+            output={"src": str(src_path), "dest": str(dest_path), "copied": True},
+            metadata={"provider": self.provider_id},
+        )
+
+    async def _execute_move(self, src_path: Path, params: Dict[str, Any]) -> ProviderExecutionResult:
+        """Atomic move/rename file or directory."""
+        dest_raw = params.get("dest") or params.get("destination") or params.get("dest_path")
+        if not dest_raw:
+            return ProviderExecutionResult(success=False, error="Missing required parameter 'dest' for move")
+        is_allowed, dest_path, err = self._resolve_and_check_path(str(dest_raw))
+        if not is_allowed:
+            return ProviderExecutionResult(success=False, error=f"MOVE_PERMISSION_DENIED: {err}")
+        if not src_path.exists():
+            return ProviderExecutionResult(success=False, error=f"SOURCE_NOT_FOUND: {src_path}")
+
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src_path), str(dest_path))
+
+        return ProviderExecutionResult(
+            success=True,
+            output={"src": str(src_path), "dest": str(dest_path), "moved": True},
+            metadata={"provider": self.provider_id},
+        )
+
+    async def _execute_delete(self, path: Path, params: Dict[str, Any]) -> ProviderExecutionResult:
+        """Safely delete a file or directory."""
+        if not path.exists():
+            return ProviderExecutionResult(success=True, output={"path": str(path), "deleted": False, "note": "did not exist"})
+
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
+        return ProviderExecutionResult(
+            success=True,
+            output={"path": str(path), "deleted": True},
+            metadata={"provider": self.provider_id},
+        )
+
+    async def _execute_list(self, path: Path, params: Dict[str, Any]) -> ProviderExecutionResult:
+        """List directory contents with size and metadata."""
+        if not path.exists():
+            return ProviderExecutionResult(success=False, error=f"PATH_NOT_FOUND: {path}")
+        if not path.is_dir():
+            return ProviderExecutionResult(success=False, error=f"NOT_A_DIRECTORY: {path}")
+
+        items = []
+        for p in path.iterdir():
+            try:
+                st = p.stat()
+                items.append({
+                    "name": p.name,
+                    "is_dir": p.is_dir(),
+                    "size_bytes": st.st_size if p.is_file() else 0,
+                })
+            except Exception:
+                continue
+
+        return ProviderExecutionResult(
+            success=True,
+            output={"path": str(path), "item_count": len(items), "items": items},
+            metadata={"provider": self.provider_id},
+        )
+

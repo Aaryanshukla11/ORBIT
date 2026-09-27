@@ -1,12 +1,27 @@
-"""Character-by-character Unicode Text Typing Engine for ORBIT Keyboard."""
+"""
+Provenance & Architectural Attribution:
+======================================
+Windows-Use Source:   windows_use/agent/desktop/service.py (type, shortcut, multi_edit) & utils.py
+ORBIT Destination:    src/orbit/adapters/keyboard/text.py
+Integration Paradigm: Transduced Body Adapter (Brain-Body Separation)
+
+Adaptations Applied:
+- Added Caret Positioning (start = Home, end = End, idle = unchanged).
+- Added Auto-Clear before typing (Ctrl+A -> Backspace).
+- Added Multi-Field Batch Editing with focus transitions.
+- Bound execution strictly to NativeKeyboardDispatchGateway.
+- Retained Unicode character stream serialization and thread input desktop safety.
+======================================
+"""
 
 from __future__ import annotations
 
 import ctypes
+from enum import Enum
 import logging
 import sys
 import time
-from typing import List, Optional
+from typing import Dict, List, Literal, Optional, Tuple
 
 from orbit.adapters.keyboard.dispatch import NativeKeyboardDispatchGateway
 from orbit.adapters.keyboard.focus import TargetFocusValidator
@@ -14,8 +29,13 @@ from orbit.adapters.keyboard.state import KeyboardStateManager, KeyOwner
 from orbit.adapters.keyboard.unicode import UnicodeEngine
 from orbit.runtime.cancellation import CancellationToken
 
-
 logger = logging.getLogger(__name__)
+
+
+class CaretPosition(str, Enum):
+    START = "start"
+    END = "end"
+    IDLE = "idle"
 
 
 class TextTypingExecutor:
@@ -35,17 +55,47 @@ class TextTypingExecutor:
         delay_ms: float = 2.0,
         target_hwnd: Optional[int] = None,
         session_id: str = "default",
+        caret_position: str | CaretPosition = CaretPosition.IDLE,
+        clear_before_type: bool = False,
         cancellation_token: Optional[CancellationToken] = None,
     ) -> bool:
-        """Types Unicode text character-by-character via KEYEVENTF_UNICODE packets."""
-        if not text:
-            return True
-
+        """Types Unicode text character-by-character via KEYEVENTF_UNICODE packets with optional caret navigation and auto-clear."""
         if cancellation_token and cancellation_token.is_cancelled:
             return False
 
         if self.state_manager.is_locked:
             raise RuntimeError(f"Cannot type text: Keyboard is UNRESOLVED_LOCKED ({self.state_manager.lockout_reason})")
+
+        # 1. Apply Caret Positioning if requested
+        if str(caret_position).lower() in ("start", "caretposition.start"):
+            # VK_HOME = 0x24
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x24, is_extended=True, is_unicode=False, is_down=True)
+            time.sleep(0.01)
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x24, is_extended=True, is_unicode=False, is_down=False)
+            time.sleep(0.02)
+        elif str(caret_position).lower() in ("end", "caretposition.end"):
+            # VK_END = 0x23
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x23, is_extended=True, is_unicode=False, is_down=True)
+            time.sleep(0.01)
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x23, is_extended=True, is_unicode=False, is_down=False)
+            time.sleep(0.02)
+
+        # 2. Apply Auto-Clear (Ctrl+A -> Backspace) if requested
+        if clear_before_type:
+            # Ctrl down (0x11), 'A' down (0x41), 'A' up, Ctrl up, Backspace (0x08)
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x11, is_extended=False, is_unicode=False, is_down=True)
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x41, is_extended=False, is_unicode=False, is_down=True)
+            time.sleep(0.01)
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x41, is_extended=False, is_unicode=False, is_down=False)
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x11, is_extended=False, is_unicode=False, is_down=False)
+            time.sleep(0.02)
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x08, is_extended=False, is_unicode=False, is_down=True)
+            time.sleep(0.01)
+            NativeKeyboardDispatchGateway.dispatch_key_packet(0x08, is_extended=False, is_unicode=False, is_down=False)
+            time.sleep(0.03)
+
+        if not text:
+            return True
 
         expected_hwnd = target_hwnd or 0
         attached_thread = False

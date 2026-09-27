@@ -13,6 +13,7 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 import os
+import re
 from typing import Any, Dict, List, Optional, Set
 import httpx
 
@@ -145,6 +146,13 @@ CURATED_CLOUD_CATALOGS: Dict[CloudProviderKind, List[Dict[str, Any]]] = {
     ],
     CloudProviderKind.GEMINI: [
         {
+            "id": "gemini-flash-latest",
+            "name": "Gemini Flash Latest",
+            "capabilities": {ModelCapability.TEXT_GENERATION, ModelCapability.CHAT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.CODE},
+            "context_window": 1048576,
+            "family": "gemini",
+        },
+        {
             "id": "gemini-2.0-flash",
             "name": "Gemini 2.0 Flash",
             "capabilities": {ModelCapability.TEXT_GENERATION, ModelCapability.CHAT, ModelCapability.VISION, ModelCapability.TOOL_CALLING, ModelCapability.CODE},
@@ -200,8 +208,10 @@ class CloudModelProvider(ModelProvider):
     ) -> None:
         self._cloud_kind = cloud_kind
         self._env_var_name = env_var_name or self._default_env_var(cloud_kind)
-        # Store api_key securely in private attribute without logging or exposing in repr
-        self._api_key = api_key or os.environ.get(self._env_var_name)
+        raw_key = api_key or os.environ.get(self._env_var_name)
+        if not raw_key and cloud_kind == CloudProviderKind.GEMINI:
+            raw_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        self._api_key = re.sub(r"\s+", "", raw_key) if raw_key else None
         self._endpoint = (endpoint or self._default_endpoint(cloud_kind)).rstrip("/")
         self._connect_timeout = connect_timeout
         self._request_timeout = request_timeout
@@ -276,7 +286,7 @@ class CloudModelProvider(ModelProvider):
 
     def update_credentials(self, api_key: str, endpoint: Optional[str] = None) -> None:
         """Update provider credentials securely in memory."""
-        self._api_key = api_key.strip()
+        self._api_key = re.sub(r"\s+", "", api_key) if api_key else None
         if endpoint:
             self._endpoint = endpoint.rstrip("/")
         if not self._api_key:
@@ -306,6 +316,8 @@ class CloudModelProvider(ModelProvider):
             headers["x-api-key"] = self._api_key or ""
             headers["anthropic-version"] = "2023-06-01"
             probe_url = self._endpoint
+        elif self._cloud_kind == CloudProviderKind.GEMINI:
+            probe_url = f"{self._endpoint}/models?key={self._api_key}"
         else:
             probe_url = self._endpoint
 

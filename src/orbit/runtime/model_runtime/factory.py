@@ -67,8 +67,14 @@ class ModelRuntimeFactory:
             p = self._providers.get(provider_kind) or self._providers.get(ModelProviderKind.CLOUD)
             if not p:
                 for cand in self._providers.values():
-                    if isinstance(cand, CloudModelProvider):
-                        if cand.provider_kind == provider_kind or (getattr(cand, "cloud_kind", None) and cand.cloud_kind.value.lower() in descriptor.model_id.lower()):
+                        from orbit.runtime.models.models import CloudProviderKind
+                        ck = getattr(cand, "cloud_kind", None)
+                        is_match = (
+                            cand.provider_kind == provider_kind
+                            or (ck and ck.value.lower() in descriptor.model_id.lower())
+                            or (ck == CloudProviderKind.GEMINI and ("google" in descriptor.model_id.lower() or "gemini" in descriptor.model_id.lower()))
+                        )
+                        if is_match:
                             p = cand
                             break
             cloud_p = p if isinstance(p, CloudModelProvider) else None

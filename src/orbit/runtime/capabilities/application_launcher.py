@@ -1,7 +1,16 @@
-"""Deterministic, secure application launcher boundary for ORBIT.
+"""
+Provenance & Architectural Attribution:
+======================================
+Windows-Use Source:   windows_use/agent/desktop/service.py (app, launch_app, switch_window, resize_window)
+ORBIT Destination:    src/orbit/runtime/capabilities/application_launcher.py
+Integration Paradigm: Transduced App/Window Capability (Brain-Body Separation)
 
-Treats application identifiers strictly as data, resolves names through an
-approved application registry, and executes without shell string interpolation.
+Adaptations Applied:
+- Retained Start Menu resolution and Win32 process spawning without shell string interpolation.
+- Added exact window switching (SetForegroundWindow, ShowWindow(SW_RESTORE)).
+- Added exact window resizing and quadrant placement (MoveWindow / SetWindowPos).
+- Preserved ORBIT application safety registry and forbidden character filter.
+======================================
 """
 
 from dataclasses import dataclass
@@ -10,25 +19,48 @@ import os
 import re
 import subprocess
 import sys
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 # Standard application alias dictionary mapping user-facing names to verified executable identifiers
 APPROVED_APPLICATION_REGISTRY: Dict[str, str] = {
     "notepad": "notepad.exe",
+    "notepad.exe": "notepad.exe",
     "paint": "mspaint.exe",
     "mspaint": "mspaint.exe",
+    "mspaint.exe": "mspaint.exe",
     "calculator": "calc.exe",
     "calc": "calc.exe",
+    "calc.exe": "calc.exe",
+    "powershell": "powershell.exe",
+    "powershell.exe": "powershell.exe",
+    "pwsh": "pwsh.exe",
+    "pwsh.exe": "pwsh.exe",
+    "task manager": "taskmgr.exe",
+    "taskmanager": "taskmgr.exe",
+    "taskmgr": "taskmgr.exe",
+    "taskmgr.exe": "taskmgr.exe",
     "terminal": "wt.exe",
+    "windows terminal": "wt.exe",
+    "wt": "wt.exe",
+    "wt.exe": "wt.exe",
     "cmd": "cmd.exe",
+    "cmd.exe": "cmd.exe",
+    "command prompt": "cmd.exe",
     "explorer": "explorer.exe",
+    "explorer.exe": "explorer.exe",
+    "file explorer": "explorer.exe",
+    "control panel": "control.exe",
+    "control": "control.exe",
+    "settings": "ms-settings:",
     "edge": "msedge.exe",
     "msedge": "msedge.exe",
+    "msedge.exe": "msedge.exe",
     "microsoft edge": "msedge.exe",
     "browser": "msedge.exe",
     "chrome": "chrome.exe",
+    "chrome.exe": "chrome.exe",
     "google chrome": "chrome.exe",
     "wordpad": "write.exe",
     "write": "write.exe",
@@ -204,3 +236,81 @@ class ApplicationLauncher:
                 error_code="PROCESS_SPAWN_FAILED",
                 error_message=str(ex),
             )
+
+    def switch_window(self, window_title: str) -> bool:
+        """Brings an open window matching the given title to the foreground."""
+        if not window_title or sys.platform != "win32":
+            return False
+
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+
+            found_hwnd = 0
+            search_title = window_title.lower().strip()
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+            def enum_proc(hwnd: int, lparam: int) -> bool:
+                nonlocal found_hwnd
+                if not user32.IsWindowVisible(hwnd):
+                    return True
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buff, length + 1)
+                    if search_title in buff.value.lower():
+                        found_hwnd = hwnd
+                        return False
+                return True
+
+            user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
+
+            if found_hwnd:
+                # SW_RESTORE = 9, SW_SHOW = 5
+                user32.ShowWindow(found_hwnd, 9)
+                user32.SetForegroundWindow(found_hwnd)
+                logger.info("[APPLICATION LAUNCHER] Successfully switched to window '%s' (HWND: %d)", window_title, found_hwnd)
+                return True
+
+            logger.warning("[APPLICATION LAUNCHER] Window matching '%s' not found for switch", window_title)
+            return False
+
+        except Exception as sw_err:
+            logger.warning("[APPLICATION LAUNCHER] switch_window error: %s", sw_err)
+            return False
+
+    def resize_window(
+        self,
+        loc: Optional[List[int]] = None,
+        size: Optional[List[int]] = None,
+        hwnd: Optional[int] = None,
+    ) -> bool:
+        """Moves and resizes the specified window (or foreground window) to loc=[x, y] and size=[w, h]."""
+        if sys.platform != "win32":
+            return False
+
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+
+            target_hwnd = hwnd or user32.GetForegroundWindow()
+            if not target_hwnd or not user32.IsWindow(target_hwnd):
+                logger.warning("[APPLICATION LAUNCHER] No valid HWND to resize")
+                return False
+
+            x = loc[0] if (loc and len(loc) >= 2) else 0
+            y = loc[1] if (loc and len(loc) >= 2) else 0
+            w = size[0] if (size and len(size) >= 2) else 1280
+            h = size[1] if (size and len(size) >= 2) else 720
+
+            # MoveWindow(HWND, X, Y, nWidth, nHeight, bRepaint)
+            res = user32.MoveWindow(target_hwnd, x, y, w, h, True)
+            logger.info("[APPLICATION LAUNCHER] MoveWindow result for HWND %d to (%d, %d, %d, %d): %s", target_hwnd, x, y, w, h, bool(res))
+            return bool(res)
+
+        except Exception as r_err:
+            logger.warning("[APPLICATION LAUNCHER] resize_window error: %s", r_err)
+            return False
+

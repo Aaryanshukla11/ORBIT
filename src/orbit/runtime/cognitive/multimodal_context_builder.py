@@ -42,7 +42,7 @@ Output your next action STRICTLY as a JSON object matching this schema:
     "name": "Target name or Set-of-Marks tag, e.g. 'Save Button [4]' or 'File name:'",
     "role": "button" | "edit" | "window" | "menu_item" | "tab" | "canvas" | null,
     "mark_id": 4,
-    "box_2d": [ymin, xmin, ymax, xmax]
+    "box_2d": [ymin, xmin, ymax, xmax] // normalized integers between 0 and 1000
   },
   "parameters": {
     "text": "text to type",
@@ -56,8 +56,10 @@ Output your next action STRICTLY as a JSON object matching this schema:
 
 CRITICAL RULES:
 1. Always reference existing UI elements or Set-of-Marks tags [N]. Never hallucinate coordinate points.
-2. If an action previously failed, consult the failure feedback and choose an alternate strategy or recovery action.
-3. Propose COMPLETE_GOAL ONLY when the objective is fully verified on screen or disk.
+2. APPLICATION LAUNCHING: If the requested application (e.g. Calculator, Notepad, PowerShell, Paint, Excel, Edge) is NOT currently open on screen, you MUST emit LAUNCH_APPLICATION (e.g. {"application_name": "calc"} or {"application_name": "notepad"} or {"application_name": "powershell"}).
+3. NEVER emit FAIL_GOAL or mark a goal unachievable simply because the application or UI elements are not yet visible on screen. Launch them!
+4. If an action previously failed, consult the failure feedback and choose an alternate strategy or recovery action.
+5. Propose COMPLETE_GOAL ONLY when the objective is fully verified on screen or disk.
 """
 
 

@@ -1,4 +1,4 @@
-"""Integration tests for production pointer execution inside OrbitOrchestrator runtime lifecycle."""
+"""Integration tests for production pointer execution inside ORBIT runtime lifecycle."""
 
 import asyncio
 import pytest
@@ -7,16 +7,16 @@ from orbit.adapters.factory import create_capability_registry
 from orbit.adapters.pointer.adapter import ProductionPointerAdapter
 from orbit.config import RuntimeConfig
 from orbit.contracts.capabilities import AdapterMode, CapabilityType
-from orbit.contracts.events import EventType
-from orbit.contracts.runtime import Action, ActionStage, ActionTier
 from orbit.infrastructure.event_bus import EventBus
+from orbit.runtime.agent.contracts import AbstractAction, AbstractActionType, SemanticTarget
 from orbit.runtime.cancellation import CancellationSource
+from orbit.runtime.cognitive.models import CurrentStateObservation, StructuredObjective
 from orbit.runtime.orchestrator import OrbitOrchestrator
 
 
 @pytest.mark.asyncio
 async def test_orchestrator_pointer_movement_action_lifecycle():
-    """Test OrbitOrchestrator executing a pointer_move action with ProductionPointerAdapter."""
+    """Test executing a pointer action through canonical PrimitiveExecutionController with ProductionPointerAdapter."""
     config = RuntimeConfig(
         adapter_mode=AdapterMode.MOCK,
         capability_overrides={
@@ -42,36 +42,43 @@ async def test_orchestrator_pointer_movement_action_lifecycle():
     await orchestrator.initialize()
     assert ptr_adapter.is_ready is True
 
-    emitted_events = []
-    event_bus.subscribe(None, lambda evt: emitted_events.append(evt))
-
-    # Execute a single pointer_move action
-    action = Action(
+    # Execute a single pointer move action via canonical controller
+    primitive_action = AbstractAction(
         action_id="act_move_01",
-        task_id="task_move_test",
-        action_type="pointer_move",
-        tier=ActionTier.TIER_1_SAFE,
-        parameters={"x": 500, "y": 300},
+        action_type=AbstractActionType.CLICK,
+        parameters={"button": "none"},
+        target=SemanticTarget(name="test_target", role="point"),
+        expected_effect="Move pointer to (500, 300)",
     )
-
+    obj = StructuredObjective(
+        raw_prompt="Move pointer",
+        user_goal="Move pointer to (500, 300)",
+        end_condition="pointer_moved",
+    )
+    pre_obs = CurrentStateObservation()
     cancel_source = CancellationSource()
-    await orchestrator._execute_action(
-        session_id="sess_move_01",
-        action=action,
+
+    async def mock_grounding(target, obs):
+        return (500, 300)
+
+    post_obs = CurrentStateObservation(
+        observation_id="obs_post_move_01",
+        perceived_elements_count=1,
+    )
+    async def mock_observe(objective):
+        return post_obs
+
+    res = await orchestrator.primitive_controller.execute_primitive(
+        action=primitive_action,
+        pre_observation=pre_obs,
+        objective=obj,
+        grounding_fn=mock_grounding,
+        observe_fn=mock_observe,
         cancel_token=cancel_source.token,
     )
 
-    assert action.stage == ActionStage.COMPLETED
-    assert action.verification is not None
-    assert action.verification.status.value == "PASSED"
-
-    # Verify action stage events were emitted
-    action_events = [e for e in emitted_events if e.event_type == EventType.ACTION_STAGE_CHANGED]
-    stages = [e.payload["stage"] for e in action_events]
-    assert ActionStage.DISPATCHED.value in stages
-    assert ActionStage.EXECUTING.value in stages
-    assert ActionStage.VERIFYING.value in stages
-    assert ActionStage.COMPLETED.value in stages
+    assert res.execution_outcome.dispatch_success is True
+    assert res.execution_outcome.expected_effect_observed is True
 
     health = await ptr_adapter.get_health()
     assert health.details["action_counter"]["verified_movements"] >= 1

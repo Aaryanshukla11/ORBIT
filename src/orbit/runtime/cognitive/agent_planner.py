@@ -73,11 +73,15 @@ class AgentPlanner:
         candidates: List[CandidatePlan] = []
         text = f"{subgoal.title} {subgoal.description}".lower()
 
-        # 1. File Persistence / Save candidate (Priority when subgoal is save intent)
+        # 1. File Persistence / Save candidate (Priority when subgoal is save file intent with file target)
         save_match = re.search(r'(?:save|save\s+as|save\s+it\s+as|export\s+as|persist\s+as)\s+["\']?([^"\'\s,]+\.[a-zA-Z0-9]+)["\']?', f"{text} {objective.raw_prompt}", re.IGNORECASE)
         filename = objective.parameters.get("filename") or (save_match.group(1).strip() if save_match else None)
-        is_save_subgoal = any(w in subgoal.title.lower() for w in ("save", "save as", "export", "persist")) or objective.parameters.get("action_type") == "save"
-        if is_save_subgoal or ((any(w in text for w in ("save", "save as", "export", "persist")) or bool(filename)) and not any(w in subgoal.title.lower() for w in ("draw", "sketch"))):
+        is_save_subgoal = (
+            (bool(filename) and any(w in subgoal.title.lower() for w in ("save", "export", "persist")))
+            or any(w in subgoal.title.lower() for w in ("save as", "export as", "persist as"))
+            or objective.parameters.get("action_type") == "save"
+        ) and not any(w in text for w in ("button", "toolbar", "menu", "hotkey", "shortcut"))
+        if is_save_subgoal and not any(w in subgoal.title.lower() for w in ("draw", "sketch")):
             target_fname = filename or "artifact"
             target_dir = objective.parameters.get("target_dir", "desktop" if "desktop" in text else "workspace")
             fmt = objective.parameters.get("format", target_fname.rsplit(".", 1)[-1] if "." in target_fname else "")
@@ -109,16 +113,13 @@ class AgentPlanner:
             )
 
         # 2. Canvas / Drawing candidate
-        shape = str(objective.parameters.get("shape", "")).lower()
         if not candidates and (
-            any(w in text for w in ("draw", "sketch", "paint canvas", "strokes", "illustration", "cube", "square", "rectangle", "circle", "shape"))
+            any(w in text for w in ("draw", "sketch", "paint canvas", "strokes", "illustration"))
             or objective.parameters.get("action_type") == "draw"
-            or bool(shape)
+            or bool(objective.parameters.get("strokes"))
         ):
-            # Extract strokes from parameters or creative payload
-            strokes = objective.parameters.get("strokes") or [
-                [(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8), (0.2, 0.2)]
-            ]
+            # Extract strokes from parameters or creative payload supplied by model reasoning
+            strokes = objective.parameters.get("strokes") or []
             app_ctx = str(getattr(subgoal, 'target_entity', None) or objective.parameters.get("app_name") or "canvas")
             candidates.append(
                 CandidatePlan(
@@ -139,7 +140,6 @@ class AgentPlanner:
                     estimated_complexity=3,
                     creative_payload={
                         "strokes": strokes,
-                        "shape": shape,
                         "raw_prompt": objective.raw_prompt,
                     },
                     rationale="Render vector strokes directly onto targeted canvas",
@@ -209,11 +209,17 @@ class AgentPlanner:
         # 5. Generic UI Click / Focus fallback candidate
         else:
             target_name = getattr(subgoal, 'target_entity', None) or "Main Window"
+            proposed = list(getattr(subgoal, 'preferred_primitives', None) or [])
+            if not proposed:
+                if any(w in text for w in ("hotkey", "shortcut", "key", "ctrl", "alt")):
+                    proposed = [AbstractActionType.CLICK, AbstractActionType.SEND_HOTKEY]
+                else:
+                    proposed = [AbstractActionType.CLICK]
             candidates.append(
                 CandidatePlan(
                     subgoal_id=subgoal.sub_id,
                     intent_strategy="GUI_INTERACTIVE",
-                    proposed_primitives=getattr(subgoal, 'preferred_primitives', None) or [AbstractActionType.CLICK],
+                    proposed_primitives=proposed,
                     targets=[SemanticTarget(name=target_name, role="control")],
                     expected_outcome=ActionOutcomeContract(
                         expected_state_transition=f"Interacted with {target_name}",
@@ -283,6 +289,176 @@ class AgentPlanner:
             directive.feasibility_score,
         )
         return directive, report
+
+    def replan(
+        self,
+        objective: StructuredObjective,
+        subgoal: SubObjective,
+        world_model: AgentWorldModel,
+        failure_report: Any,
+        failed_directive: Optional[PlanDirective] = None,
+        observation: Optional[CurrentStateObservation] = None,
+    ) -> Tuple[Optional[PlanDirective], SemanticFeasibilityReport]:
+        """Formulate a NEW alternative PlanDirective following an observed failure or loop detection.
+
+        Invariants:
+        1. Sole Cognitive Authority: AgentPlanner alone decides the alternative strategy.
+        2. Never silently reuses the failed PlanDirective.
+        3. Generates candidates with distinct primitives/modalities (e.g. UIA -> physical click -> shortcut).
+        """
+        failed_primitives = list(failed_directive.preferred_primitives) if failed_directive else []
+        failed_strategy = failed_directive.intent_strategy if failed_directive else ""
+        category = getattr(failure_report, "category", None)
+        cat_val = category.value if hasattr(category, "value") else str(category)
+
+        candidates: List[CandidatePlan] = []
+        target_name = (
+            failed_directive.semantic_targets[0].name
+            if failed_directive and failed_directive.semantic_targets
+            else getattr(subgoal, "target_entity", "target") or "target"
+        )
+
+        # 1. Fallback for click unresponsiveness / stalled loop / repetitive click: Switch to Keyboard Shortcut or Physical pointer
+        if AbstractActionType.CLICK in failed_primitives or any(k in cat_val for k in ("CLICK", "UNRESPONSIVE", "STALLED", "CYCLE", "REPETITIVE", "FAILED_ACTION")):
+            # Candidate A: Keyboard Shortcut / Navigation
+            hotkey = "enter"
+            target_str = str(target_name).lower()
+            if any(w in target_str for w in ("save", "file")):
+                hotkey = "ctrl+s"
+            elif any(w in target_str for w in ("close", "exit")):
+                hotkey = "alt+f4"
+            elif any(w in target_str for w in ("copy", "duplicate")):
+                hotkey = "ctrl+c"
+            elif any(w in target_str for w in ("paste", "insert")):
+                hotkey = "ctrl+v"
+
+            candidates.append(
+                CandidatePlan(
+                    subgoal_id=subgoal.sub_id,
+                    intent_strategy="KEYBOARD_SHORTCUT",
+                    proposed_primitives=[AbstractActionType.SEND_HOTKEY],
+                    targets=[SemanticTarget(name=target_name, role="shortcut", text_hint=hotkey)],
+                    expected_outcome=ActionOutcomeContract(
+                        expected_state_transition=f"Executed hotkey fallback '{hotkey}' for {target_name}",
+                        verification_strategy=VerificationStrategy.AUTO_ROUTED,
+                    ),
+                    estimated_complexity=2,
+                    creative_payload={"hotkey": hotkey, "fallback_mode": "KEYBOARD_SHORTCUT"},
+                    rationale=f"Fallback from failed click to keyboard shortcut '{hotkey}'",
+                )
+            )
+
+            # Candidate B: Physical coordinate click with settle pause
+            candidates.append(
+                CandidatePlan(
+                    subgoal_id=subgoal.sub_id,
+                    intent_strategy="PHYSICAL_POINTER_ACTUATION",
+                    proposed_primitives=[AbstractActionType.CLICK],
+                    targets=[SemanticTarget(name=target_name, role="physical_control", context="grounded_screen")],
+                    expected_outcome=ActionOutcomeContract(
+                        expected_state_transition=f"Physical click dispatched on {target_name}",
+                        verification_strategy=VerificationStrategy.AUTO_ROUTED,
+                    ),
+                    estimated_complexity=2,
+                    creative_payload={"interaction_modality": "PHYSICAL_POINTER", "fallback_mode": "PHYSICAL_CLICK"},
+                    rationale=f"Fallback from UIA to physical pointer click on '{target_name}'",
+                )
+            )
+
+        # 2. Fallback for Dead Window / Lost Focus / Process Crash
+        elif any(k in cat_val for k in ("DEAD_WINDOW", "WINDOW_NOT_FOCUSED", "APPLICATION_CRASHED")):
+            candidates.append(
+                CandidatePlan(
+                    subgoal_id=subgoal.sub_id,
+                    intent_strategy="WINDOW_MANAGEMENT",
+                    proposed_primitives=[AbstractActionType.FOCUS_WINDOW, AbstractActionType.CLICK],
+                    targets=[SemanticTarget(name=target_name, role="window")],
+                    expected_outcome=ActionOutcomeContract(
+                        expected_state_transition=f"Re-focused window '{target_name}'",
+                        verification_strategy=VerificationStrategy.WINDOW_FOCUS,
+                    ),
+                    estimated_complexity=2,
+                    creative_payload={"fallback_mode": "REFOCUS_WINDOW"},
+                    rationale=f"Refocus active window before interacting with '{target_name}'",
+                )
+            )
+
+        # 3. Fallback for Text Entry Mismatch
+        elif "TEXT" in cat_val:
+            text_to_type = objective.parameters.get("text") or "Hello ORBIT"
+            candidates.append(
+                CandidatePlan(
+                    subgoal_id=subgoal.sub_id,
+                    intent_strategy="CLIPBOARD_INJECTION",
+                    proposed_primitives=[AbstractActionType.FOCUS_WINDOW, AbstractActionType.TYPE_TEXT],
+                    targets=[SemanticTarget(name=target_name, role="edit", context="foreground_window")],
+                    expected_outcome=ActionOutcomeContract(
+                        expected_state_transition="Text injected via focused edit control",
+                        verification_strategy=VerificationStrategy.OCR_TEXT,
+                    ),
+                    estimated_complexity=2,
+                    creative_payload={"text": text_to_type, "clear_before_type": True, "fallback_mode": "FOCUS_AND_TYPE"},
+                    rationale="Focus and clear edit control before typing text",
+                )
+            )
+
+        # 4. Generic fallback if no specific rule matched
+        if not candidates:
+            std_candidates = self.generate_candidate_plans(objective, subgoal, world_model, observation)
+            for cand in std_candidates:
+                if cand.proposed_primitives != failed_primitives or cand.intent_strategy != failed_strategy:
+                    candidates.append(cand)
+            if not candidates:
+                candidates.append(
+                    CandidatePlan(
+                        subgoal_id=subgoal.sub_id,
+                        intent_strategy="ALTERNATIVE_KEYBOARD_PATHWAY",
+                        proposed_primitives=[AbstractActionType.SEND_HOTKEY],
+                        targets=[SemanticTarget(name=target_name, role="control")],
+                        expected_outcome=ActionOutcomeContract(
+                            expected_state_transition="Dispatched alternative navigation key",
+                            verification_strategy=VerificationStrategy.AUTO_ROUTED,
+                        ),
+                        estimated_complexity=2,
+                        creative_payload={"hotkey": "enter", "fallback_mode": "ALTERNATIVE_NAVIGATION"},
+                        rationale="Dispatched alternative navigation key after failed prior directive",
+                    )
+                )
+
+        # Evaluate candidate plans through SemanticFeasibilityEvaluator
+        best_candidate, report = self._feasibility.select_feasible_plan(
+            candidates=candidates,
+            world_model=world_model,
+        )
+
+        if not best_candidate or not report.is_feasible:
+            logger.warning("Replanning for subgoal '%s' produced no feasible candidates", subgoal.sub_id)
+            return None, report
+
+        # Construct NEW PlanDirective
+        new_directive = PlanDirective(
+            directive_id=f"dir_replan_{uuid4().hex[:8]}",
+            objective_id=objective.objective_id,
+            subgoal_id=subgoal.sub_id,
+            subgoal_title=subgoal.title,
+            intent_strategy=best_candidate.intent_strategy,
+            candidate_plan_id=best_candidate.candidate_id,
+            semantic_targets=best_candidate.targets,
+            constraints=getattr(subgoal, "constraints", []),
+            preferred_primitives=best_candidate.proposed_primitives,
+            expected_outcome=best_candidate.expected_outcome,
+            feasibility_score=report.best_score,
+            creative_payload=best_candidate.creative_payload,
+        )
+
+        logger.info(
+            "[AgentPlanner.replan] Emitted NEW PlanDirective '%s' (strategy: %s, primitives: %s) for subgoal '%s'",
+            new_directive.directive_id,
+            new_directive.intent_strategy,
+            [p.value for p in new_directive.preferred_primitives],
+            subgoal.sub_id,
+        )
+        return new_directive, report
 
 
 __all__ = [

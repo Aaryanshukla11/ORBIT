@@ -291,6 +291,9 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
                     recoverable=True,
                 )
 
+            self.state_manager.transition_to(WorkspaceState.REGISTERING)
+            self.state_manager.transition_to(WorkspaceState.DOCKED)
+
             # Refresh and cache updated geometry
             updated_geom = self.geometry_coordinator.query_current_geometry(
                 dock_edge=dock_edge,
@@ -328,6 +331,9 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
             res: AppBarOperationResult = await asyncio.to_thread(
                 self.appbar_driver.unregister_and_release,
             )
+
+            self.state_manager.transition_to(WorkspaceState.RELEASING)
+            self.state_manager.transition_to(WorkspaceState.READY_FLOATING)
 
             # Refresh floating geometry
             self.geometry_coordinator.query_current_geometry(is_docked=False)

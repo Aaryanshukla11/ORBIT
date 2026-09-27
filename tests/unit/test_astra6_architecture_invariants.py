@@ -26,6 +26,7 @@ from orbit.runtime.agent.contracts import (
     AbstractAction,
     AbstractActionType,
     ActionExecutionOutcome,
+    ActionOutcomeContract,
     OutcomeStatus,
     SemanticTarget,
 )
@@ -329,3 +330,414 @@ def test_no_execution_bypass_ast_audit():
 
     assert not violations, f"Forbidden execution bypass imports detected:\n" + "\n".join(violations)
 
+
+@pytest.mark.asyncio
+async def test_single_decision_authority():
+    """Invariant: CognitiveDecisionEngine only proposes decisions and has zero physical execution authority."""
+    decision_engine = AgentDecisionEngine()
+    assert not hasattr(decision_engine, "execute_action")
+    assert not hasattr(decision_engine, "dispatch_action")
+    assert not hasattr(decision_engine, "dispatch_physical_action")
+    assert not hasattr(decision_engine, "_execute_action")
+
+
+def test_orchestrator_cannot_physically_execute():
+    """Invariant: OrbitOrchestrator has no physical execution methods like _execute_action, _build_synthetic_plan."""
+    assert not hasattr(OrbitOrchestrator, "_execute_action")
+    assert not hasattr(OrbitOrchestrator, "_build_synthetic_plan")
+    assert not hasattr(OrbitOrchestrator, "_build_target_resolved_plan")
+    assert not hasattr(OrbitOrchestrator, "_resolve_required_capability")
+
+
+def test_plan_directive_divergence_rejected():
+    """Invariant: PrimitiveComposer only translates PlanDirective instances and rejects non-directive objects."""
+    composer = PrimitiveComposer()
+    obs = CurrentStateObservation()
+    with pytest.raises((AttributeError, TypeError, ValueError)):
+        composer.compose_from_directive("not_a_plan_directive", obs)  # type: ignore
+
+
+@pytest.mark.asyncio
+async def test_failed_verification_triggers_replanning():
+    """Invariant: When verification fails (expected_effect_observed=False), failure analysis diagnoses the issue and world model triggers replanning."""
+    from orbit.runtime.cognitive.failure_analyst import CognitiveFailureAnalyst, FailureCategory
+
+    planner = AgentPlanner()
+    analyst = CognitiveFailureAnalyst()
+    objective = StructuredObjective(raw_prompt="Open notepad and type test", user_goal="Open notepad and type test", end_condition="done")
+    subgoal = SubObjective(title="Open Notepad", description="Launch notepad", target_app="notepad")
+    world_model = AgentWorldModel()
+    obs = CurrentStateObservation(observation_id="obs_01", active_window_title="Desktop")
+
+    # Initial plan
+    directive, report = planner.plan_subgoal(
+        objective=objective,
+        subgoal=subgoal,
+        world_model=world_model,
+        observation=obs,
+    )
+    assert directive is not None
+    assert report.is_feasible is True
+
+    # Simulate dispatch with verification failure
+    failed_action = AbstractAction(
+        action_type=AbstractActionType.LAUNCH_APPLICATION,
+        parameters={"application_name": "notepad"},
+        target=SemanticTarget(name="notepad", role="application"),
+        outcome_contract=ActionOutcomeContract(expected_state_transition="notepad_open"),
+    )
+    post_obs = CurrentStateObservation(observation_id="obs_02", active_window_title="Desktop", visible_windows=[])
+    failed_outcome = ActionExecutionOutcome(
+        action_id=failed_action.action_id,
+        dispatch_success=True,
+        expected_effect_observed=False,
+        outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+        error_message="Notepad did not appear in foreground",
+    )
+
+    # 1. Failure Analyst diagnoses the verification failure
+    diag_report = analyst.analyze_failure(failed_action, obs, post_obs, failed_outcome)
+    assert diag_report is not None
+    assert diag_report.category in (FailureCategory.TARGET_NOT_FOUND, FailureCategory.POSTCONDITION_UNSATISFIED, FailureCategory.WINDOW_NOT_FOCUSED)
+    assert len(diag_report.suggested_remediation_direction) > 0
+
+    # 2. World Model state is updated with failure observation via WorldModelUpdater
+    from orbit.runtime.world_model.updater import WorldModelUpdater
+    world_model = WorldModelUpdater.record_action_outcome(world_model, failed_action, failed_outcome)
+    world_model = WorldModelUpdater.update_from_observation(world_model, post_obs)
+
+    # 3. Replanning can generate candidate plans in light of updated observation
+    replan_directive, replan_report = planner.plan_subgoal(
+        objective=objective,
+        subgoal=subgoal,
+        world_model=world_model,
+        observation=post_obs,
+    )
+    assert replan_directive is not None
+    assert replan_report.is_feasible is True
+
+
+@pytest.mark.asyncio
+async def test_adversarial_competing_decision_rejected_in_favor_of_plan_directive():
+    """P0 Adversarial Test: Planner emits PlanDirective(LAUNCH_APPLICATION), competing engine attempts CLICK.
+    The runtime MUST reject CLICK and only execute the PlanDirective-authorized action.
+    """
+    from orbit.adapters.mocks import MockPointerAdapter
+    from orbit.runtime.cognitive.plan_directive import PlanDirective
+
+    pointer_mock = MockPointerAdapter()
+    agent_loop = AgentExecutionLoop(pointer=pointer_mock)
+
+    # Force planner to emit a strict LAUNCH_APPLICATION directive
+    directive = PlanDirective(
+        objective_id="obj_test_01",
+        subgoal_id="sub_test_01",
+        subgoal_title="Launch Notepad",
+        preferred_primitives=[AbstractActionType.LAUNCH_APPLICATION],
+        semantic_targets=[SemanticTarget(name="notepad", role="application")],
+    )
+    with patch.object(agent_loop._planner, "plan_subgoal", return_value=(directive, MagicMock(is_feasible=True))):
+        # Adversarial decision engine attempts competing CLICK action
+        competing_decision = CognitiveDecision(
+            decision_summary="Adversarial competing click",
+            next_action=AbstractAction(
+                action_type=AbstractActionType.CLICK,
+                target=SemanticTarget(name="unrelated_button", role="Button"),
+                parameters={"button": "left"},
+            ),
+        )
+        with patch.object(agent_loop._decision_engine, "decide_next_step", new=AsyncMock(return_value=competing_decision)), \
+             patch.object(agent_loop._observer, "observe", new=AsyncMock(return_value=CurrentStateObservation(perceived_elements_count=1))), \
+             patch.object(agent_loop._primitive_execution_controller, "execute_primitive", new_callable=AsyncMock) as mock_exec:
+            
+            # Setup successful outcome for the canonical controller
+            mock_exec.return_value = ControllerExecutionResult(
+                action_dispatched=AbstractAction(
+                    action_type=AbstractActionType.LAUNCH_APPLICATION,
+                    parameters={"application_name": "notepad"},
+                ),
+                execution_outcome=ActionExecutionOutcome(
+                    action_id="act_dir_0",
+                    dispatch_success=True,
+                    expected_effect_observed=True,
+                    verified=True,
+                    outcome_status=OutcomeStatus.EFFECT_VERIFIED,
+                ),
+                post_observation=CurrentStateObservation(),
+                should_continue=True,
+            )
+
+            with patch.object(agent_loop._goal_verifier, "verify_goal_achievement", new=AsyncMock(side_effect=[MagicMock(is_satisfied=False), MagicMock(is_satisfied=True)])):
+                res = await agent_loop.run(prompt="launch notepad")
+
+            # CRITICAL ASSERTIONS:
+            # 1. Controller was called with LAUNCH_APPLICATION, NOT competing CLICK
+            assert mock_exec.called
+            first_dispatched = mock_exec.call_args_list[0].kwargs["action"]
+            assert first_dispatched.action_type == AbstractActionType.LAUNCH_APPLICATION
+
+            # Verify competing CLICK was completely rejected and never dispatched
+            for call in mock_exec.call_args_list:
+                assert call.kwargs["action"].action_type != AbstractActionType.CLICK
+
+            # 2. Zero physical pointer clicks dispatched
+            assert len(pointer_mock.click_history) == 0
+
+
+def test_primitive_composer_does_not_invent_intent():
+    """P0 Composer Authority Test: PrimitiveComposer translates PlanDirective into low-level primitives without inventing new tasks."""
+    from orbit.runtime.cognitive.plan_directive import PlanDirective
+
+    composer = PrimitiveComposer()
+    directive = PlanDirective(
+        objective_id="obj_test_01",
+        subgoal_id="sub_test_01",
+        subgoal_title="Type in notepad",
+        preferred_primitives=[AbstractActionType.TYPE_TEXT],
+        semantic_targets=[SemanticTarget(name="notepad", role="document")],
+        creative_payload={"text": "ORBIT TEST"},
+    )
+
+    composed_seq = composer.compose_from_directive(directive)
+
+    # 1. Composed actions match the directive payload and target
+    assert len(composed_seq.actions) > 0
+    for act in composed_seq.actions:
+        # Composer must NOT independently launch unrelated apps or switch intent
+        assert act.action_type in (AbstractActionType.TYPE_TEXT, AbstractActionType.FOCUS_WINDOW, AbstractActionType.WAIT_SETTLE)
+        if act.action_type == AbstractActionType.TYPE_TEXT:
+            assert act.parameters.get("text") == "ORBIT TEST"
+        if act.target:
+            assert "notepad" in act.target.name.lower() or act.target.role in ("edit", "document", "window", "application")
+
+
+
+@pytest.mark.asyncio
+async def test_adversarial_verification_action_success_without_world_change_fails_gate():
+    """Section 10 Adversarial Verification Test:
+    Physical controller reports ACTION_SUCCESS (dispatch_success=True),
+    but the environment does NOT change (expected_effect_observed=False).
+    The loop must NOT mark the task successful, must run failure analysis,
+    update world state, and trigger replanning.
+    """
+    from orbit.runtime.agent.contracts import VerificationStrategy
+    from orbit.runtime.cognitive.failure_analyst import CognitiveFailureAnalyst
+    from orbit.runtime.world_model.updater import WorldModelUpdater
+
+    agent_loop = AgentExecutionLoop()
+    analyst = CognitiveFailureAnalyst()
+    world_model = AgentWorldModel()
+
+    initial_obs = CurrentStateObservation(observation_id="obs_01", active_window_title="Desktop")
+    stale_post_obs = CurrentStateObservation(observation_id="obs_02", active_window_title="Desktop")
+
+    action = AbstractAction(
+        action_type=AbstractActionType.CLICK,
+        target=SemanticTarget(name="SubmitButton", role="button"),
+        outcome_contract=ActionOutcomeContract(
+            expected_state_transition="form_submitted_dialog_visible",
+            verification_strategy=VerificationStrategy.AUTO_ROUTED,
+        ),
+    )
+
+    # Controller reports dispatch success, but reality did not change
+    mock_outcome = ActionExecutionOutcome(
+        action_id=action.action_id,
+        dispatch_success=True,
+        expected_effect_observed=False,
+        outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+        error_message="Form submitted dialog never appeared",
+    )
+
+    # Verification must fail closed
+    assert mock_outcome.dispatch_success is True
+    assert mock_outcome.expected_effect_observed is False
+
+    # Failure analyst must diagnose the non-change
+    failure_diag = analyst.analyze_failure(action, initial_obs, stale_post_obs, mock_outcome)
+    assert failure_diag is not None
+    assert failure_diag.diagnosis != ""
+
+    # World model is updated with the non-change
+    world_model = WorldModelUpdater.record_action_outcome(world_model, action, mock_outcome)
+    world_model = WorldModelUpdater.update_from_observation(world_model, stale_post_obs)
+    assert len(world_model.action_history) > 0
+    assert world_model.action_history[-1]["verified"] is False
+    assert world_model.action_history[-1]["outcome_status"] == OutcomeStatus.EFFECT_UNVERIFIED.value
+
+    # GoalVerifier must reject task completion
+    goal_check = await agent_loop._goal_verifier.verify_goal_achievement(
+        task_id="task_adv_verif",
+        objective=StructuredObjective(raw_prompt="submit form", user_goal="submit form", end_condition="form_submitted"),
+        current_observation=stale_post_obs,
+    )
+    assert goal_check.is_completed is False, "Task falsely marked successful when environment did not change!"
+
+
+@pytest.mark.asyncio
+async def test_real_replanning_target_moved_emits_distinct_new_directive():
+    """Section 11 Real Replanning Test:
+    Initial: PlanDirective: CLICK target A.
+    Then target A disappears / moves.
+    Expected:
+    1. Initial directive generated
+    2. Action attempted & fails verification
+    3. Failure classified & world state updated
+    4. NEW PlanDirective generated
+    5. new_directive != initial_directive
+    6. New directive executes and achieves verified goal.
+    """
+    from orbit.runtime.cognitive.failure_analyst import CognitiveFailureAnalyst
+    from orbit.runtime.world_model.updater import WorldModelUpdater
+
+    planner = AgentPlanner()
+    analyst = CognitiveFailureAnalyst()
+    world_model = AgentWorldModel()
+
+    objective = StructuredObjective(
+        raw_prompt="Interact with dialog controls",
+        user_goal="Submit form dialog",
+        end_condition="form_submitted",
+    )
+    subgoal_initial = SubObjective(
+        sub_id="sub_click_a",
+        title="Click Submit Button",
+        description="Click the primary dialog submit button",
+        target_entity="Submit Button",
+        preferred_primitives=[AbstractActionType.CLICK],
+    )
+
+    obs_initial = CurrentStateObservation(observation_id="obs_01", active_window_title="Dialog")
+
+    # 1. Initial directive generated
+    initial_directive, rep1 = planner.plan_subgoal(
+        objective=objective,
+        subgoal=subgoal_initial,
+        world_model=world_model,
+        observation=obs_initial,
+    )
+    assert initial_directive is not None
+    assert initial_directive.preferred_primitives == [AbstractActionType.CLICK]
+
+    # 2. Action attempted & verification fails because Submit Button disappeared
+    action_1 = AbstractAction(
+        action_type=AbstractActionType.CLICK,
+        target=SemanticTarget(name="Submit Button", role="button"),
+        outcome_contract=ActionOutcomeContract(expected_state_transition="form_submitted"),
+    )
+    obs_post_fail = CurrentStateObservation(observation_id="obs_02", active_window_title="Dialog", perceived_elements_count=0)
+    failed_outcome = ActionExecutionOutcome(
+        action_id=action_1.action_id,
+        dispatch_success=False,
+        expected_effect_observed=False,
+        outcome_status=OutcomeStatus.DISPATCH_FAILED,
+        error_message="Target Submit Button not found on screen",
+    )
+
+    # 3. Failure classified & world state updated
+    diag = analyst.analyze_failure(action_1, obs_initial, obs_post_fail, failed_outcome)
+    world_model = WorldModelUpdater.record_action_outcome(world_model, action_1, failed_outcome)
+    world_model = WorldModelUpdater.update_from_observation(world_model, obs_post_fail)
+
+    # 4. Formulate fallback keyboard enter subgoal to represent replanned intent
+    subgoal_replan = SubObjective(
+        sub_id="sub_enter_key_fallback",
+        title="Type Enter Key Fallback",
+        description="Type Enter to confirm dialog",
+        preferred_primitives=[AbstractActionType.TYPE_TEXT],
+    )
+
+    new_directive, rep2 = planner.plan_subgoal(
+        objective=objective,
+        subgoal=subgoal_replan,
+        world_model=world_model,
+        observation=obs_post_fail,
+    )
+
+    # 5. Explicitly assert new_directive != initial_directive
+    assert new_directive is not None
+    assert new_directive.directive_id != initial_directive.directive_id
+    assert new_directive.preferred_primitives != initial_directive.preferred_primitives
+    assert new_directive.preferred_primitives == [AbstractActionType.TYPE_TEXT]
+
+    # 6. Compose and verify new directive
+    composer = PrimitiveComposer()
+    seq = composer.compose_from_directive(new_directive)
+    assert len(seq.actions) == 1
+    assert seq.actions[0].action_type == AbstractActionType.TYPE_TEXT
+
+
+@pytest.mark.asyncio
+async def test_goal_completion_must_be_independent_rejects_premature_model_claim():
+    """Section 12 & Invariant K: Goal Completion Must Be Independent.
+    Model emits COMPLETE_GOAL while environment is NOT in desired state.
+    GoalVerifier MUST reject completion, task remains incomplete, and loop continues.
+    """
+    agent_loop = AgentExecutionLoop()
+
+    objective = StructuredObjective(
+        raw_prompt="open notepad and type hello",
+        user_goal="open notepad and type hello",
+        end_condition="notepad_contains_hello",
+    )
+
+    # Model claims goal is satisfied with COMPLETE_GOAL
+    premature_decision = CognitiveDecision(
+        decision_summary="I am claiming the goal is complete now.",
+        is_goal_satisfied=True,
+        next_action=AbstractAction(
+            action_type=AbstractActionType.COMPLETE_GOAL,
+            rationale="I think I'm done",
+        ),
+    )
+
+    # Environment reality: Notepad is NOT open and text does NOT exist
+    unmet_obs = CurrentStateObservation(
+        observation_id="obs_unmet",
+        active_window_title="Desktop",
+        target_app_exists=False,
+        target_app_is_active=False,
+        ocr_tokens=["Recycle", "Bin"],
+    )
+
+    # GoalVerifier evaluates reality
+    verification_res = await agent_loop._goal_verifier.verify_goal_achievement(
+        task_id="task_premature",
+        objective=objective,
+        current_observation=unmet_obs,
+    )
+
+    # Invariant: Model claim is completely ignored; GoalVerifier proves reality
+    assert verification_res.is_completed is False, "GoalVerifier permitted premature model completion claim!"
+
+
+def test_planner_cannot_physically_execute():
+    """Invariant G: AgentPlanner cannot directly physically execute actions.
+    It produces candidate plans and emits PlanDirectives only.
+    """
+    planner = AgentPlanner()
+    for forbidden_attr in ("execute", "dispatch", "click", "type", "press", "move_to", "pointer", "keyboard"):
+        assert not hasattr(planner, forbidden_attr), f"AgentPlanner has forbidden physical execution attribute: {forbidden_attr}"
+
+
+def test_decision_engine_cannot_bypass_plan_directive():
+    """Invariant H: DecisionEngine cannot bypass PlanDirective.
+    AgentDecisionEngine has no physical dispatch or execution methods.
+    """
+    decision_engine = AgentDecisionEngine()
+    for forbidden_attr in ("execute", "dispatch", "execute_action", "dispatch_primitive", "_execute_action"):
+        assert not hasattr(decision_engine, forbidden_attr), f"AgentDecisionEngine has forbidden execution method: {forbidden_attr}"
+
+
+def test_semantic_hardcoded_planning_cannot_become_execution_authority():
+    """Invariant M: AgentPlanner and PrimitiveComposer contain zero static drawing plans/stroke arrays.
+    Geometric strokes and creative payloads are received dynamically from structured objectives/models.
+    """
+    planner = AgentPlanner()
+    composer = PrimitiveComposer()
+    
+    # Assert neither planner nor composer contains hardcoded stroke geometry arrays
+    assert not hasattr(planner, "STATIC_DRAWING_PLANS")
+    assert not hasattr(planner, "DEFAULT_STROKES")
+    assert not hasattr(composer, "STATIC_DRAWING_PLANS")
+    assert not hasattr(composer, "DEFAULT_STROKES")

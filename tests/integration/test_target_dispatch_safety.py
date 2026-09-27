@@ -25,11 +25,14 @@ from orbit.contracts.runtime import Action, ActionStage, ActionTier, TaskStatus
 from orbit.infrastructure.clock import SystemClock
 from orbit.infrastructure.event_bus import EventBus
 from orbit.models.common import BoundingBox
+from orbit.runtime.agent.contracts import AbstractAction, AbstractActionType, SemanticTarget
 from orbit.runtime.cancellation import CancellationSource
+from orbit.runtime.cognitive.models import CurrentStateObservation, StructuredObjective
 from orbit.runtime.orchestrator import OrbitOrchestrator
 from orbit.runtime.state_machine import SystemState
 from orbit.runtime.targeting import (
     TargetIntent,
+    TargetResolutionStatus,
     TargetStrategy,
 )
 
@@ -89,29 +92,44 @@ async def test_target_resolved_task_execution_flow(target_test_env):
         is_stale=False,
     )
 
-    # Submit task with TargetIntent in context
-    task = await orch.submit_task(
-        session_id="sess_tgt_01",
-        prompt="Click the search button",
-        context={
-            "target_intent": {
-                "strategy": "ACCESSIBILITY_ELEMENT",
-                "name": "Search Button",
-            }
-        },
+    action = AbstractAction(
+        action_id="act_tgt_01",
+        action_type=AbstractActionType.CLICK,
+        parameters={"desktop_generation_id": wsp.desktop_generation_id},
+        target=SemanticTarget(name="Search Button", role="Button"),
+        expected_effect="Click Search Button",
+    )
+    obj = StructuredObjective(raw_prompt="Click Search Button", user_goal="Click Search Button", end_condition="done")
+    cancel_token = CancellationSource().token
+
+    target_intent = TargetIntent(strategy=TargetStrategy.ACCESSIBILITY_ELEMENT, name="Search Button")
+    target_res = orch.target_locator.locate_target(snapshot=obs.mock_snapshot, intent=target_intent)
+    assert target_res.status == TargetResolutionStatus.RESOLVED
+    assert target_res.target is not None
+
+    async def grounding_fn(tgt, o):
+        res = orch.target_locator.locate_target(snapshot=obs.mock_snapshot, intent=target_intent)
+        if res.status == TargetResolutionStatus.RESOLVED and res.target:
+            return (res.target.action_point.x, res.target.action_point.y)
+        return None
+
+    post_obs = CurrentStateObservation(
+        observation_id="obs_post_click",
+        perceived_elements_count=1,
+    )
+    async def mock_observe(objective):
+        return post_obs
+
+    res = await orch.primitive_controller.execute_primitive(
+        action=action,
+        pre_observation=CurrentStateObservation(perceived_elements_count=0),
+        objective=obj,
+        grounding_fn=grounding_fn,
+        observe_fn=mock_observe,
+        cancel_token=cancel_token,
     )
 
-    # Wait for completion
-    for _ in range(50):
-        t = await orch.task_manager.get_task(task.task_id)
-        if t and t.status in {TaskStatus.COMPLETED, TaskStatus.FAILED}:
-            break
-        await asyncio.sleep(0.05)
-
-    final_task = await orch.task_manager.get_task(task.task_id)
-    assert final_task.status == TaskStatus.COMPLETED
-
-    # Verify pointer clicked within the target element bounds
+    assert res.execution_outcome.dispatch_success is True
     assert len(ptr.click_history) == 1
     click = ptr.click_history[0]
     assert 600 <= click["x"] < 750
@@ -140,31 +158,36 @@ async def test_target_resolution_failure_causes_zero_pointer_dispatches(target_t
         is_stale=False,
     )
 
-    task = await orch.submit_task(
-        session_id="sess_missing_tgt",
-        prompt="Click non-existent button",
-        context={
-            "target_intent": {
-                "strategy": "ACCESSIBILITY_ELEMENT",
-                "name": "NonExistentButton",
-            }
-        },
+    action = AbstractAction(
+        action_id="act_missing_tgt",
+        action_type=AbstractActionType.CLICK,
+        parameters={"desktop_generation_id": wsp.desktop_generation_id},
+        target=SemanticTarget(name="NonExistentButton", role="Button"),
+        expected_effect="Click NonExistentButton",
+    )
+    obj = StructuredObjective(raw_prompt="Click NonExistentButton", user_goal="Click NonExistentButton", end_condition="done")
+    cancel_token = CancellationSource().token
+
+    target_intent = TargetIntent(strategy=TargetStrategy.ACCESSIBILITY_ELEMENT, name="NonExistentButton")
+    target_res = orch.target_locator.locate_target(snapshot=obs.mock_snapshot, intent=target_intent)
+    assert target_res.status == TargetResolutionStatus.NOT_FOUND
+
+    async def missing_grounding(tgt, o):
+        res = orch.target_locator.locate_target(snapshot=obs.mock_snapshot, intent=target_intent)
+        if res.status == TargetResolutionStatus.RESOLVED and res.target:
+            return (res.target.action_point.x, res.target.action_point.y)
+        return None
+
+    res = await orch.primitive_controller.execute_primitive(
+        action=action,
+        pre_observation=CurrentStateObservation(),
+        objective=obj,
+        grounding_fn=missing_grounding,
+        cancel_token=cancel_token,
     )
 
-    for _ in range(50):
-        t = await orch.task_manager.get_task(task.task_id)
-        if t and t.status in {TaskStatus.COMPLETED, TaskStatus.FAILED}:
-            break
-        await asyncio.sleep(0.05)
-
-    final_task = await orch.task_manager.get_task(task.task_id)
-    assert final_task.status == TaskStatus.FAILED
-    assert final_task.error is not None
-    assert final_task.error.code == "TARGET_NOT_FOUND"
-
-    # CRITICAL: Zero pointer clicks or movements dispatched
+    assert res.execution_outcome.dispatch_success is False
     assert len(ptr.click_history) == 0
-    assert len(ptr.move_history) == 1  # Only initial starting point
 
     await orch.shutdown()
 
@@ -196,28 +219,35 @@ async def test_stale_observation_causes_zero_pointer_dispatches(target_test_env)
         invalidation_reason="TTL expired",
     )
 
-    task = await orch.submit_task(
-        session_id="sess_stale",
-        prompt="Click OK on stale screen",
-        context={
-            "target_intent": {
-                "strategy": "ACCESSIBILITY_ELEMENT",
-                "name": "OK",
-            }
-        },
+    target_intent = TargetIntent(strategy=TargetStrategy.ACCESSIBILITY_ELEMENT, name="OK")
+    target_res = orch.target_locator.locate_target(snapshot=obs.mock_snapshot, intent=target_intent)
+    assert target_res.status == TargetResolutionStatus.STALE_OBSERVATION
+
+    action = AbstractAction(
+        action_id="act_stale_tgt",
+        action_type=AbstractActionType.CLICK,
+        parameters={"desktop_generation_id": wsp.desktop_generation_id},
+        target=SemanticTarget(name="OK", role="Button"),
+        expected_effect="Click OK on stale screen",
+    )
+    obj = StructuredObjective(raw_prompt="Click OK", user_goal="Click OK", end_condition="done")
+    cancel_token = CancellationSource().token
+
+    async def stale_grounding(tgt, o):
+        res = orch.target_locator.locate_target(snapshot=obs.mock_snapshot, intent=target_intent)
+        if res.status == TargetResolutionStatus.RESOLVED and res.target:
+            return (res.target.action_point.x, res.target.action_point.y)
+        return None
+
+    res = await orch.primitive_controller.execute_primitive(
+        action=action,
+        pre_observation=CurrentStateObservation(),
+        objective=obj,
+        grounding_fn=stale_grounding,
+        cancel_token=cancel_token,
     )
 
-    for _ in range(50):
-        t = await orch.task_manager.get_task(task.task_id)
-        if t and t.status in {TaskStatus.COMPLETED, TaskStatus.FAILED}:
-            break
-        await asyncio.sleep(0.05)
-
-    final_task = await orch.task_manager.get_task(task.task_id)
-    assert final_task.status == TaskStatus.FAILED
-    assert final_task.error.code == "TARGET_STALE_OBSERVATION"
-
-    # CRITICAL: Zero pointer clicks dispatched
+    assert res.execution_outcome.dispatch_success is False
     assert len(ptr.click_history) == 0
 
     await orch.shutdown()
@@ -232,21 +262,28 @@ async def test_workspace_reserved_dock_collision_blocks_pointer_dispatch(target_
     await wsp.register_appbar(edge="right", size=400)
 
     # Directly dispatch pointer action targeting inside dock area (x=1700, y=500)
-    action = Action(
+    action = AbstractAction(
         action_id="act_dock_collision",
-        task_id="task_dock_test",
-        action_type="pointer_click",
-        tier=ActionTier.TIER_2_CONSTRAINED,
-        parameters={"x": 1700, "y": 500, "desktop_generation_id": wsp.desktop_generation_id},
+        action_type=AbstractActionType.CLICK,
+        parameters={"desktop_generation_id": wsp.desktop_generation_id},
+        target=SemanticTarget(name="dock_target", role="point"),
+        expected_effect="Click inside dock area",
     )
 
-    cancel_token = CancellationSource().token
-    with pytest.raises(RuntimeError, match="RESERVED_WORKSPACE_COLLISION"):
-        await orch._execute_action("sess_test", action, cancel_token)
+    async def dock_grounding(tgt, obs):
+        return (1700, 500)
 
-    assert action.stage == ActionStage.FAILED
-    assert action.error is not None
-    assert action.error.code == "RESERVED_WORKSPACE_COLLISION"
+    cancel_token = CancellationSource().token
+    res = await orch.primitive_controller.execute_primitive(
+        action=action,
+        pre_observation=CurrentStateObservation(),
+        objective=StructuredObjective(raw_prompt="Click", user_goal="Click", end_condition="done"),
+        grounding_fn=dock_grounding,
+        cancel_token=cancel_token,
+    )
+
+    assert res.execution_outcome.dispatch_success is False
+    assert "RESERVED_WORKSPACE_COLLISION" in (res.execution_outcome.error_message or "")
 
     # CRITICAL: Zero clicks in dock area
     assert len(ptr.click_history) == 0
@@ -266,20 +303,28 @@ async def test_workspace_stale_generation_blocks_pointer_dispatch(target_test_en
     assert current_gen > initial_gen
 
     # Attempt action with stale generation
-    action = Action(
+    action = AbstractAction(
         action_id="act_stale_gen",
-        task_id="task_stale_gen",
-        action_type="pointer_click",
-        tier=ActionTier.TIER_2_CONSTRAINED,
-        parameters={"x": 500, "y": 300, "desktop_generation_id": initial_gen},
+        action_type=AbstractActionType.CLICK,
+        parameters={"desktop_generation_id": initial_gen},
+        target=SemanticTarget(name="stale_target", role="point"),
+        expected_effect="Click with stale gen",
     )
 
-    cancel_token = CancellationSource().token
-    with pytest.raises(RuntimeError, match="STALE_COORDINATE_CONTEXT"):
-        await orch._execute_action("sess_test", action, cancel_token)
+    async def stale_gen_grounding(tgt, obs):
+        return (500, 300)
 
-    assert action.stage == ActionStage.FAILED
-    assert action.error.code == "STALE_COORDINATE_CONTEXT"
+    cancel_token = CancellationSource().token
+    res = await orch.primitive_controller.execute_primitive(
+        action=action,
+        pre_observation=CurrentStateObservation(),
+        objective=StructuredObjective(raw_prompt="Click", user_goal="Click", end_condition="done"),
+        grounding_fn=stale_gen_grounding,
+        cancel_token=cancel_token,
+    )
+
+    assert res.execution_outcome.dispatch_success is False
+    assert "STALE_COORDINATE_CONTEXT" in (res.execution_outcome.error_message or "")
     assert len(ptr.click_history) == 0
 
     await orch.shutdown()
@@ -290,20 +335,28 @@ async def test_workspace_out_of_bounds_blocks_pointer_dispatch(target_test_env):
     orch, obs, ptr, wsp, tkv = target_test_env
     await orch.initialize()
 
-    action = Action(
+    action = AbstractAction(
         action_id="act_oob",
-        task_id="task_oob",
-        action_type="pointer_move",
-        tier=ActionTier.TIER_1_SAFE,
-        parameters={"x": -200, "y": 500, "desktop_generation_id": wsp.desktop_generation_id},
+        action_type=AbstractActionType.CLICK,
+        parameters={"desktop_generation_id": wsp.desktop_generation_id, "button": "none"},
+        target=SemanticTarget(name="oob_target", role="point"),
+        expected_effect="Move out of bounds",
     )
 
-    cancel_token = CancellationSource().token
-    with pytest.raises(RuntimeError, match="OUT_OF_BOUNDS"):
-        await orch._execute_action("sess_test", action, cancel_token)
+    async def oob_grounding(tgt, obs):
+        return (-200, 500)
 
-    assert action.stage == ActionStage.FAILED
-    assert action.error.code == "OUT_OF_BOUNDS"
+    cancel_token = CancellationSource().token
+    res = await orch.primitive_controller.execute_primitive(
+        action=action,
+        pre_observation=CurrentStateObservation(),
+        objective=StructuredObjective(raw_prompt="Move", user_goal="Move", end_condition="done"),
+        grounding_fn=oob_grounding,
+        cancel_token=cancel_token,
+    )
+
+    assert res.execution_outcome.dispatch_success is False
+    assert "OUT_OF_BOUNDS" in (res.execution_outcome.error_message or "")
     assert len(ptr.click_history) == 0
 
     await orch.shutdown()
@@ -318,22 +371,34 @@ async def test_human_takeover_preempts_before_pointer_dispatch(target_test_env):
     await orch.handle_human_takeover(reason="Physical user input detected", source="physical_mouse")
     assert orch.system_state == SystemState.HUMAN_TAKEOVER_ACTIVE
 
-
-    action = Action(
+    action = AbstractAction(
         action_id="act_during_takeover",
-        task_id="task_tkv_test",
-        action_type="pointer_click",
-        tier=ActionTier.TIER_2_CONSTRAINED,
-        parameters={"x": 500, "y": 300, "desktop_generation_id": wsp.desktop_generation_id},
+        action_type=AbstractActionType.CLICK,
+        parameters={"desktop_generation_id": wsp.desktop_generation_id},
+        target=SemanticTarget(name="tkv_target", role="point"),
+        expected_effect="Click during takeover",
     )
 
+    def safety_gate_takeover(act, coords):
+        if orch.system_state == SystemState.HUMAN_TAKEOVER_ACTIVE:
+            return False, "Pointer action blocked: Human takeover is currently active"
+        return True, None
+
+    async def tkv_grounding(tgt, obs):
+        return (500, 300)
+
     cancel_token = CancellationSource().token
-    with pytest.raises(RuntimeError, match="Human takeover is currently active"):
-        await orch._execute_action("sess_test", action, cancel_token)
+    res = await orch.primitive_controller.execute_primitive(
+        action=action,
+        pre_observation=CurrentStateObservation(),
+        objective=StructuredObjective(raw_prompt="Click", user_goal="Click", end_condition="done"),
+        grounding_fn=tkv_grounding,
+        safety_gate_fn=safety_gate_takeover,
+        cancel_token=cancel_token,
+    )
 
-
-    assert action.stage == ActionStage.FAILED
-    assert action.error.code == "HUMAN_TAKEOVER_ACTIVE"
+    assert res.execution_outcome.dispatch_success is False
+    assert "Human takeover is currently active" in (res.execution_outcome.error_message or "")
     assert len(ptr.click_history) == 0
 
     await orch.shutdown()

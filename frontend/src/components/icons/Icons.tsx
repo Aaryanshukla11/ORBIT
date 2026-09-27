@@ -203,6 +203,12 @@ export const SendArrowIcon: React.FC<IconProps> = ({ size = 16, color = '#ffffff
   </svg>
 );
 
+export const SendNavigationArrowIcon: React.FC<IconProps> = ({ size = 16, color = '#0f172a', ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} {...props}>
+    <path d="M3.4 20.4L20.85 12.92C21.72 12.55 21.72 11.45 20.85 11.08L3.4 3.6C2.63 3.27 1.83 3.96 2.03 4.77L3.71 11.5H13V12.5H3.71L2.03 19.23C1.83 20.04 2.63 20.73 3.4 20.4Z" />
+  </svg>
+);
+
 /* Auto / Robot Bot Icon */
 export const BotAutoIcon: React.FC<IconProps> = ({ size = 15, color = '#475569', strokeWidth = 1.75, ...props }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" {...props}>

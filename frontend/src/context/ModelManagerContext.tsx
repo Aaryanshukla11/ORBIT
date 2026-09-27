@@ -227,10 +227,17 @@ export const ModelManagerProvider: React.FC<{ children: ReactNode }> = ({ childr
       if (event_type === 'MODEL_SWITCH_SUCCEEDED' || event_type === 'MODEL_SWITCHED' || event_type === 'MODEL_ACTIVATED') {
         const targetId = payload?.active_model_id || payload?.target_model_id || payload?.model_id;
         if (targetId) {
-          setActiveModelId(targetId);
+          setActiveModelIdState(targetId);
           setSwitchingModelId(null);
           setSwitchingError(null);
-          setSystemStatus((prev) => ({ ...prev, runtimeState: 'READY' }));
+          setSystemStatus((prev) => ({
+            ...prev,
+            runtimeState: 'READY',
+            activeProvider: targetId.toLowerCase().includes('cloud') || targetId.toLowerCase().includes('gpt') || targetId.toLowerCase().includes('claude') ? 'Cloud API' : 'Local Runtime',
+          }));
+
+          const curr = loadStoredSettings();
+          saveStoredSettings({ ...curr, activeModelId: targetId });
 
           setModels((prev) =>
             prev.map((m) => ({

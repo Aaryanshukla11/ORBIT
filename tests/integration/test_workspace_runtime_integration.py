@@ -40,6 +40,9 @@ from orbit.contracts.runtime import Action, ActionTier, ExecutionPlan, Step, Sys
 from orbit.infrastructure.clock import SystemClock
 from orbit.infrastructure.event_bus import EventBus
 from orbit.models.common import BoundingBox
+from orbit.runtime.agent.contracts import AbstractAction, AbstractActionType
+from orbit.runtime.cancellation import CancellationSource
+from orbit.runtime.cognitive.models import CurrentStateObservation, StructuredObjective
 from orbit.runtime.orchestrator import OrbitOrchestrator
 
 
@@ -64,46 +67,50 @@ class FakeAppBarDriver(NativeAppBarDriver):
     def register_and_dock(
         self,
         edge: DockEdge,
-        requested_size_px: int,
+        target_bounds: Optional[BoundingBox] = None,
+        monitor_bounds: Optional[BoundingBox] = None,
+        requested_size_px: int = 400,
         state_manager: Optional[WorkspaceStateManager] = None,
         custom_target_rect: Optional[BoundingBox] = None,
+        **kwargs: Any,
     ) -> AppBarOperationResult:
         self._fake_edge = edge
-        self._fake_bounds = BoundingBox(left=1440, top=0, width=requested_size_px, height=1080)
+        self._fake_bounds = target_bounds or BoundingBox(left=1440, top=0, width=requested_size_px, height=1080)
         self._is_docked = True
         if state_manager:
             state_manager.transition_to(WorkspaceState.REGISTERING)
             state_manager.transition_to(WorkspaceState.DOCKED)
         return AppBarOperationResult(
-            operation="SETPOS",
+            operation="REGISTER",
             success=True,
-            edge=edge,
             requested_rect=self._fake_bounds,
-            negotiated_rect=self._fake_bounds,
             final_rect=self._fake_bounds,
+            edge=edge,
         )
 
     def unregister_and_release(
         self,
         state_manager: Optional[WorkspaceStateManager] = None,
+        **kwargs: Any,
     ) -> AppBarOperationResult:
-        prev_edge = self._fake_edge
-        prev_bounds = self._fake_bounds
-        self._is_docked = False
+        prev_bounds = self._fake_bounds or BoundingBox(left=1440, top=0, width=400, height=1080)
         self._fake_edge = DockEdge.NONE
         self._fake_bounds = None
-        if state_manager:
-            state_manager.transition_to(WorkspaceState.RELEASING)
-            state_manager.transition_to(WorkspaceState.READY_FLOATING)
-        req_rect = prev_bounds or BoundingBox(left=0, top=0, width=480, height=1080)
+        self._is_docked = False
         return AppBarOperationResult(
             operation="REMOVE",
             success=True,
-            edge=prev_edge,
-            requested_rect=req_rect,
-            negotiated_rect=None,
+            requested_rect=prev_bounds,
             final_rect=None,
+            edge=DockEdge.NONE,
         )
+
+    def undock_and_unregister(
+        self,
+        state_manager: Optional[WorkspaceStateManager] = None,
+        **kwargs: Any,
+    ) -> AppBarOperationResult:
+        return self.unregister_and_release(state_manager=state_manager, **kwargs)
 
 
 def test_factory_creates_production_workspace_adapter():
@@ -248,32 +255,40 @@ async def test_orchestrator_workspace_dock_and_undock_actions(event_bus: EventBu
     await orch.initialize()
 
     gen_init = prod_wsp.get_desktop_generation()
-
-    from orbit.runtime.cancellation import CancellationSource
     cancel_src = CancellationSource()
 
-    # 1. Dock action
-    dock_action = Action(
+    # 1. Dock action via canonical primitive controller
+    dock_action = AbstractAction(
         action_id="act_dock",
-        task_id="task_workspace",
-        action_type="workspace_dock",
-        tier=ActionTier.TIER_1_SAFE,
+        action_type=AbstractActionType.WORKSPACE_DOCK,
         parameters={"edge": "right", "size": 400},
+        expected_effect="Dock workspace to right",
     )
-    await orch._execute_action("sess_01", dock_action, cancel_src.token)
+    res_dock = await orch.primitive_controller.execute_primitive(
+        action=dock_action,
+        pre_observation=CurrentStateObservation(),
+        objective=StructuredObjective(raw_prompt="dock", user_goal="dock", end_condition="docked"),
+        cancel_token=cancel_src.token,
+    )
+    assert res_dock.execution_outcome.dispatch_success is True
     assert prod_wsp.state_manager.is_docked is True
     assert prod_wsp.get_desktop_generation() > gen_init
     gen_docked = prod_wsp.get_desktop_generation()
 
-    # 2. Undock action
-    undock_action = Action(
+    # 2. Undock action via canonical primitive controller
+    undock_action = AbstractAction(
         action_id="act_undock",
-        task_id="task_workspace",
-        action_type="workspace_undock",
-        tier=ActionTier.TIER_1_SAFE,
+        action_type=AbstractActionType.WORKSPACE_UNDOCK,
         parameters={},
+        expected_effect="Undock workspace",
     )
-    await orch._execute_action("sess_01", undock_action, cancel_src.token)
+    res_undock = await orch.primitive_controller.execute_primitive(
+        action=undock_action,
+        pre_observation=CurrentStateObservation(),
+        objective=StructuredObjective(raw_prompt="undock", user_goal="undock", end_condition="undocked"),
+        cancel_token=cancel_src.token,
+    )
+    assert res_undock.execution_outcome.dispatch_success is True
     assert prod_wsp.state_manager.is_docked is False
     assert prod_wsp.get_desktop_generation() > gen_docked
 

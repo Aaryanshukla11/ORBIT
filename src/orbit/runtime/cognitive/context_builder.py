@@ -66,11 +66,12 @@ Output ONLY a single valid JSON object strictly matching this schema:
 }
 
 Rules:
-1. If the goal is fully achieved according to the live observation, set "goal_progress": "COMPLETED", "next_action.action_type": "COMPLETE_GOAL".
-2. If the application is not running or visible, launch it using LAUNCH_APPLICATION.
+1. APPLICATION LAUNCHING: If the requested application (e.g. Calculator, Notepad, PowerShell, Paint, Excel, Browser) is not currently running or visible, launch it using LAUNCH_APPLICATION with parameter "application_name": "calc" / "notepad" / "powershell".
+2. NEVER set goal_progress to UNACHIEVABLE on step 0/1 simply because an application is not yet open. Launch it!
 3. If the application is ALREADY open, DO NOT call LAUNCH_APPLICATION. Focus the existing window using FOCUS_WINDOW, or directly interact with it using CLICK or TYPE_TEXT.
 4. When typing text into an open editor (like Notepad), use TYPE_TEXT with parameter "text": "<requested string>".
-5. Output plain JSON. Do NOT include markdown fences (```json).
+5. If the goal is fully achieved according to the live observation, set "goal_progress": "COMPLETED", "next_action.action_type": "COMPLETE_GOAL".
+6. Output plain JSON. Do NOT include markdown fences (```json).
 """
 
 

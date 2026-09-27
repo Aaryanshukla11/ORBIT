@@ -18,12 +18,13 @@ export const CloudModelsList: React.FC = () => {
 
       <div style={styles.list}>
         {cloudProviders.map((provider) => {
-          const isAuth = provider.status === 'AUTHENTICATED';
-          const isAuthFailed = provider.status === 'AUTH_FAILED';
-          const isAuthenticating = provider.status === 'AUTHENTICATING';
+          const isFullyAuth = provider.status === 'AUTHENTICATED' || provider.authStatus === 'AUTHENTICATED';
+          const isAuthFailed = provider.status === 'AUTH_FAILED' || provider.authStatus === 'AUTH_FAILED';
+          const isAuthenticating = provider.status === 'AUTHENTICATING' || provider.authStatus === 'AUTHENTICATING';
           const isUnreachable = provider.status === 'UNREACHABLE' || provider.status === 'UNAVAILABLE';
           const isUnverified = provider.status === 'CONFIGURED_UNVERIFIED';
-          const isConfigured = Boolean(provider.hasKey || isAuth || isAuthFailed || isUnverified);
+          const isAuth = isFullyAuth || provider.status === 'CONFIGURED' || Boolean(provider.hasKey);
+          const isConfigured = Boolean(provider.hasKey || isFullyAuth || isAuthFailed || isUnverified || provider.status === 'CONFIGURED');
 
           return (
             <div key={provider.id} style={styles.card}>
@@ -40,9 +41,13 @@ export const CloudModelsList: React.FC = () => {
                   <div>
                     <span style={styles.providerName}>{provider.name}</span>
                     <div style={styles.statusLine}>
-                      {isAuth ? (
+                      {isFullyAuth ? (
                         <span style={styles.authenticatedText}>
                           <span style={styles.greenDot} /> Authenticated
+                        </span>
+                      ) : isAuth ? (
+                        <span style={styles.authenticatedText}>
+                          <span style={styles.greenDot} /> Key Configured
                         </span>
                       ) : isAuthFailed ? (
                         <span style={styles.authFailedText}>

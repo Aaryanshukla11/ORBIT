@@ -1408,8 +1408,18 @@ class WebSocketManager:
         msm = getattr(self._orchestrator, "model_session_manager", None)
         if msm and hasattr(msm, "_factory"):
             p_lower = payload.provider_id.lower()
+            from orbit.runtime.models.models import CloudProviderKind
+            if p_lower in ("google", "gemini"):
+                target_kind = CloudProviderKind.GEMINI
+            elif p_lower in ("anthropic", "claude"):
+                target_kind = CloudProviderKind.ANTHROPIC
+            elif p_lower in ("openai", "gpt"):
+                target_kind = CloudProviderKind.OPENAI
+            else:
+                target_kind = CloudProviderKind.CUSTOM_OPENAI_COMPATIBLE
+
             for cp in mm.inventory.cloud_providers:
-                if cp.cloud_kind.value.lower() == p_lower or cp.cloud_kind.name.lower() == p_lower or payload.provider_id.lower() in cp.cloud_kind.value.lower():
+                if cp.cloud_kind == target_kind or cp.cloud_kind.value.lower() == p_lower or payload.provider_id.lower() in cp.cloud_kind.value.lower():
                     msm._factory.register_provider(cp)
                     break
 

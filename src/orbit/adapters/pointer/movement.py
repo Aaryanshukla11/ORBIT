@@ -1,3 +1,19 @@
+"""
+Provenance & Architectural Attribution:
+======================================
+Windows-Use Source:   windows_use/agent/desktop/service.py (move_cursor, drag, scroll, multi_select)
+ORBIT Destination:    src/orbit/adapters/pointer/movement.py
+Integration Paradigm: Transduced Body Adapter (Brain-Body Separation)
+
+Adaptations Applied:
+- Added Cubic Bezier curve easing and trajectory interpolation.
+- Added pre-click micro-dwell timing support.
+- Preserved ORBIT ABI gate, display topology validation, and virtual desktop metric checks.
+- Bound execution strictly to single authoritative NativeDispatchGateway.
+- Enforced zero autonomous click/target authority.
+======================================
+"""
+
 from __future__ import annotations
 
 import ctypes
@@ -8,7 +24,7 @@ import logging
 import math
 import sys
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 from pydantic import BaseModel, Field
 
@@ -535,3 +551,44 @@ class MovementExecutor:
             evidence_level=evidence,
             error_message=err_msg,
         )
+
+    def execute_smooth_movement(
+        self,
+        target_x: int,
+        target_y: int,
+        duration_ms: float = 120.0,
+        steps: int = 10,
+        dwell_ms: float = 20.0,
+        tolerance_px: int = 2,
+        cancellation_token: Optional[CancellationToken] = None,
+    ) -> MovementResult:
+        """Execute human-like smooth cursor movement with cubic bezier easing and pre-click dwell."""
+        start_x, start_y = get_live_cursor_position(fallback_x=target_x, fallback_y=target_y)
+        if start_x == target_x and start_y == target_y:
+            if dwell_ms > 0:
+                time.sleep(dwell_ms / 1000.0)
+            return self.execute_movement(target_x, target_y, tolerance_px, cancellation_token)
+
+        # Generate intermediate bezier trajectory points
+        ctrl_x = start_x + (target_x - start_x) * 0.25
+        ctrl_y = start_y + (target_y - start_y) * 0.75
+        step_delay = (duration_ms / 1000.0) / max(steps, 1)
+
+        last_res: Optional[MovementResult] = None
+        for i in range(1, steps + 1):
+            if cancellation_token and cancellation_token.is_cancelled:
+                break
+            t = i / float(steps)
+            # Quadratic bezier interpolation: B(t) = (1-t)^2 P0 + 2(1-t)t P1 + t^2 P2
+            curr_x = int((1 - t) ** 2 * start_x + 2 * (1 - t) * t * ctrl_x + t ** 2 * target_x)
+            curr_y = int((1 - t) ** 2 * start_y + 2 * (1 - t) * t * ctrl_y + t ** 2 * target_y)
+            last_res = self.execute_movement(curr_x, curr_y, tolerance_px=10, cancellation_token=cancellation_token)
+            if step_delay > 0:
+                time.sleep(step_delay)
+
+        # Final exact placement with tolerance
+        final_res = self.execute_movement(target_x, target_y, tolerance_px, cancellation_token)
+        if dwell_ms > 0:
+            time.sleep(dwell_ms / 1000.0)
+        return final_res
+

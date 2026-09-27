@@ -220,7 +220,18 @@ class PrimitiveExecutionController:
                     dispatch_success = launch_res.success
                     err_msg = launch_res.error_message
                     if launch_res.success:
-                        await asyncio.sleep(2.2)
+                        await asyncio.sleep(2.0)
+                        if self._workspace is not None and hasattr(self._workspace, "set_focus_window"):
+                            try:
+                                win_list = await self._workspace.list_windows() if hasattr(self._workspace, "list_windows") else []
+                                for win in win_list:
+                                    w_t = (getattr(win, "title", "") or "").lower()
+                                    w_p = (getattr(win, "process_name", "") or "").lower()
+                                    if app_name.lower() in w_t or app_name.lower() in w_p:
+                                        await self._workspace.set_focus_window(win.hwnd)
+                                        break
+                            except Exception:
+                                pass
 
             elif act_type == AbstractActionType.FOCUS_WINDOW:
                 app_name = str(params.get("window_title", params.get("application_name", params.get("app_name", action.target.name if action.target else ""))))
@@ -243,6 +254,20 @@ class PrimitiveExecutionController:
             elif act_type == AbstractActionType.TYPE_TEXT:
                 text = str(params.get("text", params.get("query", "")))
                 press_enter = bool(params.get("press_enter", False))
+
+                # If target application is specified and not currently focused, bring to focus
+                target_name = (action.target.name or action.target.context or "") if action.target else ""
+                if target_name and self._workspace is not None and hasattr(self._workspace, "set_focus_window"):
+                    t_low = target_name.lower()
+                    if t_low not in ("edit", "text_field", "canvas", "document", "control", "text", "body"):
+                        for win in pre_obs.visible_windows:
+                            w_t = (win.get("title") or "").lower()
+                            w_p = (win.get("process_name") or "").lower()
+                            if t_low in w_t or t_low in w_p:
+                                await self._workspace.set_focus_window(int(win.get("hwnd", 0)))
+                                await asyncio.sleep(0.3)
+                                break
+
                 if self._keyboard is not None:
                     await self._keyboard.type_text(text)
                     if press_enter:
@@ -272,6 +297,16 @@ class PrimitiveExecutionController:
                         dispatch_success = False
                         err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
                     else:
+                        # Workspace coordinate validation safety gate
+                        if self._workspace is not None and hasattr(self._workspace, "validate_coordinate"):
+                            expected_gen = params.get("desktop_generation_id", params.get("expected_generation"))
+                            val_res = self._workspace.validate_coordinate(coords[0], coords[1], expected_generation=expected_gen)
+                            if not val_res.is_valid:
+                                status_code = getattr(val_res.status, "value", str(val_res.status))
+                                err_msg = f"Workspace coordinate validation blocked dispatch to ({coords[0]}, {coords[1]}): [{status_code}] {val_res.error_message}"
+                                logger.warning("[EXECUTION CONTROLLER] %s", err_msg)
+                                return False, err_msg
+
                         await self._pointer.move_to(coords[0], coords[1])
                         btn = params.get("button", "left")
                         if btn not in ("none", "move_only"):
@@ -297,9 +332,25 @@ class PrimitiveExecutionController:
                 else:
                     coords = resolved_coords
                     if not coords:
+                        tgt_coords = getattr(action.target, "coordinates", None) if action.target else None
+                        if tgt_coords:
+                            coords = (int(tgt_coords[0]), int(tgt_coords[1]))
+                        elif "x" in params and "y" in params:
+                            coords = (int(params["x"]), int(params["y"]))
+                    if not coords:
                         dispatch_success = False
                         err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
                     else:
+                        # Workspace coordinate validation safety gate
+                        if self._workspace is not None and hasattr(self._workspace, "validate_coordinate"):
+                            expected_gen = params.get("desktop_generation_id", params.get("expected_generation"))
+                            val_res = self._workspace.validate_coordinate(coords[0], coords[1], expected_generation=expected_gen)
+                            if not val_res.is_valid:
+                                status_code = getattr(val_res.status, "value", str(val_res.status))
+                                err_msg = f"Workspace coordinate validation blocked dispatch to ({coords[0]}, {coords[1]}): [{status_code}] {val_res.error_message}"
+                                logger.warning("[EXECUTION CONTROLLER] %s", err_msg)
+                                return False, err_msg
+
                         await self._pointer.move_to(coords[0], coords[1])
                         await asyncio.sleep(0.05)
                         await self._pointer.click()
@@ -314,9 +365,25 @@ class PrimitiveExecutionController:
                 else:
                     coords = resolved_coords
                     if not coords:
+                        tgt_coords = getattr(action.target, "coordinates", None) if action.target else None
+                        if tgt_coords:
+                            coords = (int(tgt_coords[0]), int(tgt_coords[1]))
+                        elif "x" in params and "y" in params:
+                            coords = (int(params["x"]), int(params["y"]))
+                    if not coords:
                         dispatch_success = False
                         err_msg = f"TARGET_NOT_GROUNDED: Target '{action.target.name if action.target else 'unknown'}' coordinates could not be resolved"
                     else:
+                        # Workspace coordinate validation safety gate
+                        if self._workspace is not None and hasattr(self._workspace, "validate_coordinate"):
+                            expected_gen = params.get("desktop_generation_id", params.get("expected_generation"))
+                            val_res = self._workspace.validate_coordinate(coords[0], coords[1], expected_generation=expected_gen)
+                            if not val_res.is_valid:
+                                status_code = getattr(val_res.status, "value", str(val_res.status))
+                                err_msg = f"Workspace coordinate validation blocked dispatch to ({coords[0]}, {coords[1]}): [{status_code}] {val_res.error_message}"
+                                logger.warning("[EXECUTION CONTROLLER] %s", err_msg)
+                                return False, err_msg
+
                         await self._pointer.move_to(coords[0], coords[1])
                         await asyncio.sleep(0.05)
                         if hasattr(self._pointer, "click_button"):
@@ -324,6 +391,50 @@ class PrimitiveExecutionController:
                         else:
                             await self._pointer.click()
                         dispatch_success = True
+
+            elif act_type in (AbstractActionType.WORKSPACE_DOCK, "workspace_dock", AbstractActionType.WORKSPACE_UNDOCK, "workspace_undock", AbstractActionType.WORKSPACE_RESERVE, "workspace_reserve"):
+                if self._workspace is None:
+                    dispatch_success = False
+                    err_msg = "REQUIRED_ADAPTER_MISSING: WorkspaceCapability"
+                else:
+                    try:
+                        act_name = (act_type.value if hasattr(act_type, "value") else str(act_type)).lower()
+                        if "dock" in act_name and "undock" not in act_name:
+                            dock_fn = getattr(self._workspace, "dock", None) or getattr(self._workspace, "dock_window", None) or getattr(self._workspace, "register_appbar", None)
+                            if dock_fn is not None:
+                                _p = {k: v for k, v in params.items() if k != "action_type"}
+                                try:
+                                    sig = inspect.signature(dock_fn)
+                                    valid_p = {k: v for k, v in _p.items() if k in sig.parameters}
+                                except Exception:
+                                    valid_p = _p
+                                res = dock_fn(**valid_p)
+                                if inspect.isawaitable(res):
+                                    await res
+                                dispatch_success = True
+                        elif "undock" in act_name:
+                            undock_fn = getattr(self._workspace, "undock", None) or getattr(self._workspace, "undock_window", None) or getattr(self._workspace, "unregister_appbar", None)
+                            if undock_fn is not None:
+                                res = undock_fn()
+                                if inspect.isawaitable(res):
+                                    await res
+                                dispatch_success = True
+                        elif "reserve" in act_name:
+                            reserve_fn = getattr(self._workspace, "reserve", None) or getattr(self._workspace, "reserve_region", None) or getattr(self._workspace, "register_appbar", None)
+                            if reserve_fn is not None:
+                                _p = {k: v for k, v in params.items() if k != "action_type"}
+                                try:
+                                    sig = inspect.signature(reserve_fn)
+                                    valid_p = {k: v for k, v in _p.items() if k in sig.parameters}
+                                except Exception:
+                                    valid_p = _p
+                                res = reserve_fn(**valid_p)
+                                if inspect.isawaitable(res):
+                                    await res
+                                dispatch_success = True
+                    except Exception as wsp_err:
+                        dispatch_success = False
+                        err_msg = f"WORKSPACE_OP_FAILED: {wsp_err}"
 
             elif act_type == AbstractActionType.SEND_HOTKEY:
                 combination = str(params.get("hotkey", params.get("combination", "ctrl+s")))
@@ -680,23 +791,28 @@ class PrimitiveExecutionController:
         if action.target and requires_coords and grounding_fn is not None:
             resolved_coords = await grounding_fn(action.target, pre_observation)
             if resolved_coords is None:
-                logger.warning("[EXECUTION CONTROLLER] Grounding failed for target: %s", action.target.name)
-                outcome = ActionExecutionOutcome(
-                    action_id=action.action_id,
-                    dispatch_success=False,
-                    expected_effect_observed=False,
-                    outcome_status=OutcomeStatus.DISPATCH_FAILED,
-                    error_message=f"Target grounding failed for '{action.target.name}'",
-                    failure_code="TARGET_GROUNDING_FAILED",
-                    duration_ms=(time.perf_counter() - t_start) * 1000.0,
-                )
-                return ControllerExecutionResult(
-                    action_dispatched=action,
-                    execution_outcome=outcome,
-                    post_observation=pre_observation,
-                    should_continue=False,
-                    failure_report={"phase": "GROUNDING", "target": action.target.model_dump()},
-                )
+                if "x" in action.parameters and "y" in action.parameters:
+                    resolved_coords = (int(action.parameters["x"]), int(action.parameters["y"]))
+                else:
+                    logger.warning("[EXECUTION CONTROLLER] Grounding failed for target: %s", action.target.name)
+                    outcome = ActionExecutionOutcome(
+                        action_id=action.action_id,
+                        dispatch_success=False,
+                        expected_effect_observed=False,
+                        outcome_status=OutcomeStatus.DISPATCH_FAILED,
+                        error_message=f"Target grounding failed for '{action.target.name}'",
+                        failure_code="TARGET_GROUNDING_FAILED",
+                        duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                    )
+                    return ControllerExecutionResult(
+                        action_dispatched=action,
+                        execution_outcome=outcome,
+                        post_observation=pre_observation,
+                        should_continue=False,
+                        failure_report={"phase": "GROUNDING", "target": action.target.model_dump()},
+                    )
+        elif requires_coords and resolved_coords is None and "x" in action.parameters and "y" in action.parameters:
+            resolved_coords = (int(action.parameters["x"]), int(action.parameters["y"]))
 
         # Step 3: Safety Gate Evaluation
         if safety_gate_fn is not None:

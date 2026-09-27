@@ -170,6 +170,9 @@ class PrimitiveComposer:
                 params["target_path"] = payload.get("target_path", fname)
                 params["target_dir"] = payload.get("target_dir", "desktop")
                 params["format"] = payload.get("format", fname.rsplit(".", 1)[-1] if "." in fname else "")
+            elif prim_type == AbstractActionType.SEND_HOTKEY:
+                payload = directive.creative_payload or {}
+                params["hotkey"] = payload.get("hotkey") or ("Ctrl+S" if "save" in directive.subgoal_title.lower() or "ctrl" in directive.subgoal_title.lower() else "enter")
 
             action = AbstractAction(
                 action_type=prim_type,

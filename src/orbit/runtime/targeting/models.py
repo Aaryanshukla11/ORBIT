@@ -145,6 +145,11 @@ class ResolvedTarget(BaseModel):
     target_hwnd: Optional[int] = Field(default=None, description="Owning top-level window handle if applicable")
     resolved_at_utc: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
+    @property
+    def action_point(self) -> SafeActionPoint:
+        """Alias for safe_point."""
+        return self.safe_point
+
 
 class TargetResolutionResult(BaseModel):
     """Structured response from target locator containing outcome status and resolved target."""

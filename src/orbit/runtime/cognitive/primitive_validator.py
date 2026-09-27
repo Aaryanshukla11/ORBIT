@@ -359,6 +359,17 @@ class ModelProposalValidator:
                         f"Target bounds coordinates must be numbers, got {bounds}",
                         "Bounding box coordinates must be numeric values."
                     )
+                
+                # Auto-normalize raw pixel coordinates if model emits unnormalized screen dimensions (> 1000)
+                if ymax > 1000 or xmax > 1000:
+                    scale_x = max(1920.0, float(xmax))
+                    scale_y = max(1080.0, float(ymax))
+                    ymin = max(0.0, min(1000.0, (ymin / scale_y) * 1000.0))
+                    ymax = max(0.0, min(1000.0, (ymax / scale_y) * 1000.0))
+                    xmin = max(0.0, min(1000.0, (xmin / scale_x) * 1000.0))
+                    xmax = max(0.0, min(1000.0, (xmax / scale_x) * 1000.0))
+                    target.bounds = [int(ymin), int(xmin), int(ymax), int(xmax)]
+
                 if ymin < 0 or xmin < 0 or ymax > 1000 or xmax > 1000 or ymin > ymax or xmin > xmax:
                     return self._reject(
                         ProposalValidationStage.GROUNDING,

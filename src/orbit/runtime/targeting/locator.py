@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 import time
-from typing import TYPE_CHECKING, List, Optional, Protocol, Tuple, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Protocol, Tuple, Union, runtime_checkable
 from uuid import uuid4
 
 from orbit.adapters.observation.snapshot import (
@@ -106,7 +106,7 @@ class EvidenceBasedTargetLocator:
 
     def locate_target(
         self,
-        arg1: Any,
+        arg1: Any = None,
         arg2: Any = None,
         *,
         snapshot: Optional[Any] = None,
@@ -345,7 +345,7 @@ class EvidenceBasedTargetLocator:
                 proc_match = bool(w_proc and (tq_clean in w_proc or w_proc.startswith(tq_clean) or (tq_clean in ("calculator", "calc") and "calc" in w_proc)))
                 title_exact = bool(w_title and (w_title == tq_clean or w_title.endswith(f" - {tq_clean}") or w_title.startswith(f"{tq_clean} - ") or w_title.startswith(f"{tq_clean} ")))
                 title_words = [word.strip(' -–_()[],.') for word in w_title.split()]
-                word_match = bool(tq_clean in title_words or (tq_clean in ("calculator", "calc") and ("calc" in title_words or "calculator" in title_words)))
+                word_match = tq_clean in title_words or (tq_clean in ("calculator", "calc") and ("calc" in title_words or "calculator" in title_words))
                 title_substr = bool(w_title and (tq_clean in w_title or (len(w_title) >= 4 and w_title in tq_clean)))
 
                 # Exclude IDE/editor tabs matching utility app names unless process matches
@@ -499,12 +499,13 @@ class EvidenceBasedTargetLocator:
             # Check live desktop windows if window just launched
             if sys.platform == "win32":
                 try:
-                    from window_tracker import WindowTracker
+                    from orbit.runtime.perception.windows import Win32WindowObserver
                     from orbit.adapters.observation.mapper import map_rect_to_bounding_box
-                    wt = WindowTracker()
+                    wt = Win32WindowObserver()
+                    _, live_windows = wt.observe_windows()
                     live_candidates: List[Tuple[float, ObservedWindow]] = []
-                    for w_obs in wt.enumerate_visible_windows():
-                        w_title = (w_obs.window_title or "").lower()
+                    for w_obs in live_windows:
+                        w_title = (w_obs.title or "").lower()
                         w_proc = (w_obs.process_name or "").lower()
                         
                         is_ide = any(ide in w_proc for ide in ("antigravity", "code.exe", "devenv.exe", "pycharm", "idea", "studio"))
@@ -712,7 +713,7 @@ class EvidenceBasedTargetLocator:
 
             # Semantic match
             is_match, score = self._match_semantic_target(
-                query=query,
+                query=query or "",
                 name=el.name,
                 automation_id=el.automation_id,
                 role=el.role,
@@ -729,12 +730,9 @@ class EvidenceBasedTargetLocator:
         # If no snapshot elements matched, query genuine UI Automation directly for target window HWND
         if not scored_candidates and sys.platform == "win32" and target_win and target_win.hwnd:
             try:
-                from accessibility_coordinator import AccessibilityCoordinator
-                coord = AccessibilityCoordinator(timeout_ms=1500.0)
-                live_elems, _ = coord.collect_accessibility_observations(hwnd=target_win.hwnd)
-                if not live_elems:
-                    time.sleep(0.3)
-                    live_elems, _ = coord.collect_accessibility_observations(hwnd=target_win.hwnd)
+                from orbit.runtime.perception.uia import UIAElementObserver
+                uia_observer = UIAElementObserver()
+                _, live_elems = uia_observer.observe_elements(target_hwnd=target_win.hwnd)
                 for uia_el in live_elems:
                     b = uia_el.bounds
                     if b.width <= 0 or b.height <= 0:
@@ -753,7 +751,7 @@ class EvidenceBasedTargetLocator:
                             role_boost = 0.05
 
                     is_match, score = self._match_semantic_target(
-                        query=query,
+                        query=query or "",
                         name=uia_el.name,
                         automation_id=uia_el.automation_id,
                         role=uia_el.role,

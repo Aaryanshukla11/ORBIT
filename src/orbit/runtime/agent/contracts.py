@@ -37,6 +37,9 @@ class AbstractActionType(str, Enum):
     DRAW_STROKES = "DRAW_STROKES"
     SAVE_FILE = "SAVE_FILE"
     SELECT_OPTION = "SELECT_OPTION"
+    WORKSPACE_DOCK = "WORKSPACE_DOCK"
+    WORKSPACE_UNDOCK = "WORKSPACE_UNDOCK"
+    WORKSPACE_RESERVE = "WORKSPACE_RESERVE"
     WAIT = "WAIT"
     WAIT_SETTLE = "WAIT_SETTLE"
 
@@ -72,6 +75,9 @@ TIER1_COMPUTER_PRIMITIVES = frozenset({
     AbstractActionType.DRAW_STROKES,
     AbstractActionType.SAVE_FILE,
     AbstractActionType.SELECT_OPTION,
+    AbstractActionType.WORKSPACE_DOCK,
+    AbstractActionType.WORKSPACE_UNDOCK,
+    AbstractActionType.WORKSPACE_RESERVE,
     AbstractActionType.WAIT,
     AbstractActionType.WAIT_SETTLE,
 })

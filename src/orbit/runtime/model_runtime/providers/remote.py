@@ -60,10 +60,13 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
         elif "anthropic" in p_str or "claude" in p_str:
             env_key = os.environ.get("ANTHROPIC_API_KEY")
         elif "gemini" in p_str or "google" in p_str:
-            env_key = os.environ.get("GEMINI_API_KEY")
+            env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
-        self._api_key = api_key or (provider._api_key if provider else None) or env_key
-        self._base_url = (base_url or (provider.endpoint if provider else None) or descriptor.endpoint or "https://api.openai.com/v1").rstrip("/")
+        raw_key = api_key or (provider._api_key if provider else None) or env_key
+        import re
+        self._api_key = re.sub(r"\s+", "", raw_key) if (isinstance(raw_key, str) and raw_key.strip()) else None
+        default_ep = "https://generativelanguage.googleapis.com/v1beta" if ("gemini" in p_str or "google" in p_str) else "https://api.openai.com/v1"
+        self._base_url = (base_url or (provider.endpoint if provider else None) or descriptor.endpoint or default_ep).rstrip("/")
         self._runtime_kind = ModelRuntimeKind.REMOTE
         self._client: Optional[httpx.AsyncClient] = None
 
@@ -97,12 +100,13 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
         start_time = time.perf_counter()
         self._status = ModelRuntimeStatus.INITIALIZING
 
-        # 1. If wrapped by CloudModelProvider or requires key, check auth status
-        has_auth = False
-        if self._provider:
-            has_auth = self._provider.is_configured
-        elif self._api_key and len(self._api_key.strip()) > 0:
-            has_auth = True
+        # 1. Sync and check auth status
+        if self._api_key and self._provider and not self._provider.is_configured:
+            self._provider.update_credentials(self._api_key)
+        if self._provider and self._provider.is_configured and not self._api_key:
+            self._api_key = self._provider._api_key
+
+        has_auth = bool((self._provider and self._provider.is_configured) or (self._api_key and len(self._api_key.strip()) > 0))
 
         if not has_auth:
             self._status = ModelRuntimeStatus.UNAVAILABLE
@@ -173,7 +177,12 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
                 return runtime_health
 
             client = await self._get_client()
-            resp = await client.get("/models")
+            key = self._api_key or (self._provider._api_key if self._provider else None)
+            p_desc = f"{self._descriptor.provider.value if hasattr(self._descriptor.provider, 'value') else self._descriptor.provider}:{self.model_id}".lower()
+            if "gemini" in p_desc or "google" in p_desc:
+                resp = await client.get(f"/models?key={key or ''}")
+            else:
+                resp = await client.get("/models")
             latency_ms = (time.perf_counter() - start) * 1000.0
             is_healthy = resp.status_code in {200, 401, 403}  # Endpoint responds
             if resp.status_code == 200:
@@ -272,7 +281,7 @@ class OpenAICompatibleRuntimeAdapter(BaseModelRuntime):
             messages = []
             for m in request.messages:
                 if m.images and len(m.images) > 0:
-                    content_parts = [{"type": "text", "text": m.content}]
+                    content_parts: list[dict[str, Any]] = [{"type": "text", "text": m.content}]
                     for img in m.images:
                         if img.startswith("data:image"):
                             url = img
