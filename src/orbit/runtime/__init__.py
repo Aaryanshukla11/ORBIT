@@ -16,19 +16,37 @@ from orbit.runtime.task_completion import (
     TaskCompletionStatus,
     TaskExecutionResult,
 )
+from orbit.runtime.tools import (
+    DuplicateToolRegistrationError,
+    InvalidToolNameError,
+    StructuredToolRequest,
+    ToolCategory,
+    ToolRegistry,
+    ToolSchema,
+    ToolService,
+    ToolValidationResult,
+)
 
 __all__ = [
     "ActionStateMachine",
     "CancellationSource",
     "CancellationToken",
     "CompletionEvidenceCollector",
+    "DuplicateToolRegistrationError",
     "GoalVerificationResult",
     "GoalVerifier",
+    "InvalidToolNameError",
     "OrbitOrchestrator",
     "StateTransitionError",
+    "StructuredToolRequest",
     "SystemStateMachine",
     "TaskCompletionEvidence",
     "TaskCompletionStatus",
     "TaskExecutionResult",
     "TaskStateMachine",
+    "ToolCategory",
+    "ToolRegistry",
+    "ToolSchema",
+    "ToolService",
+    "ToolValidationResult",
 ]

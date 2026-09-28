@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from orbit.runtime.agent.contracts import (
+    AbstractAction,
     AbstractActionType,
     ActionOutcomeContract,
     SemanticTarget,
@@ -287,6 +288,65 @@ class AgentPlanner:
             directive.directive_id,
             subgoal.sub_id,
             directive.feasibility_score,
+        )
+        return directive, report
+
+    def plan_from_action(
+        self,
+        action: AbstractAction,
+        objective: StructuredObjective,
+        subgoal: SubObjective,
+        world_model: AgentWorldModel,
+        observation: Optional[CurrentStateObservation] = None,
+    ) -> Tuple[Optional[PlanDirective], SemanticFeasibilityReport]:
+        """Formulate a PlanDirective from a validated structured action (e.g. from ToolService).
+
+        Enforces SemanticFeasibilityEvaluator check prior to PlanDirective formulation,
+        ensuring model-initiated tool actions pass through the authoritative cognitive gate.
+        """
+        targets = [action.target] if action.target else []
+        outcome = action.outcome_contract or ActionOutcomeContract(
+            expected_state_transition=action.expected_effect or f"Executed primitive {action.action_type.value}",
+            verification_strategy=action.verification_strategy,
+            target_name=targets[0].name if targets else None,
+            target_role=targets[0].role if targets else None,
+        )
+        candidate = CandidatePlan(
+            subgoal_id=subgoal.sub_id,
+            intent_strategy="TOOL_CAPABILITY",
+            proposed_primitives=[action.action_type],
+            targets=targets,
+            expected_outcome=outcome,
+            estimated_complexity=1,
+            creative_payload=action.parameters,
+            rationale=action.rationale or f"Action derived from tool call for {action.action_type.value}",
+        )
+
+        best_candidate, report = self._feasibility.select_feasible_plan(
+            candidates=[candidate],
+            world_model=world_model,
+        )
+
+        if not best_candidate or not report.is_feasible:
+            logger.warning(
+                "Tool action '%s' rejected by SemanticFeasibility: %s",
+                action.action_type.value,
+                report.rejection_reasons,
+            )
+            return None, report
+
+        directive = PlanDirective(
+            objective_id=objective.objective_id,
+            subgoal_id=subgoal.sub_id,
+            subgoal_title=subgoal.title,
+            intent_strategy=best_candidate.intent_strategy,
+            candidate_plan_id=best_candidate.candidate_id,
+            semantic_targets=best_candidate.targets,
+            constraints=getattr(subgoal, "constraints", []),
+            preferred_primitives=best_candidate.proposed_primitives,
+            expected_outcome=best_candidate.expected_outcome,
+            feasibility_score=report.best_score,
+            creative_payload=best_candidate.creative_payload,
         )
         return directive, report
 

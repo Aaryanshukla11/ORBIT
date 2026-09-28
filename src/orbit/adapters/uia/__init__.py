@@ -11,6 +11,13 @@ from orbit.adapters.uia.exceptions import (
     UIARetryableError,
     UIAException,
 )
+from orbit.adapters.uia.tree import (
+    CacheRequestFactory,
+    CachedControlHelper,
+    TreeService,
+    create_tree_traversal_cache,
+    traverse_tree,
+)
 from orbit.adapters.uia.tree_extractor import UIAElementTreeExtractor
 
 __all__ = [
@@ -22,4 +29,9 @@ __all__ = [
     "UIARetryableError",
     "UIANotEnabledError",
     "UIAElementTreeExtractor",
+    "TreeService",
+    "CacheRequestFactory",
+    "CachedControlHelper",
+    "create_tree_traversal_cache",
+    "traverse_tree",
 ]

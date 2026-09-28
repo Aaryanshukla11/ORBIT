@@ -148,6 +148,7 @@ async def test_03_click_search_box_routes_to_ui_click():
     assert action.action_type == AbstractActionType.CLICK
     assert action.target is not None
     assert action.target.role in ("button", "control")
+    assert action.target.name is not None
     assert "search box" in action.target.name.lower() or "search" in action.target.name.lower()
 
 

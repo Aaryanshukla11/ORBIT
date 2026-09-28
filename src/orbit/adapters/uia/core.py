@@ -731,7 +731,7 @@ def GetMonitorsRect() -> list[Rect]:
     def MonitorCallback(
         hMonitor: int,
         hdcMonitor: int,
-        lprcMonitor: ctypes.POINTER(ctypes.wintypes.RECT),
+        lprcMonitor: Any,
         dwData: int,
     ):
         rect = Rect(
@@ -1169,7 +1169,7 @@ def IsUserAnAdmin() -> bool:
 
 
 def RunScriptAsAdmin(
-    argv: list[str], workingDirectory: str = None, showFlag: int = SW.ShowNormal
+    argv: list[str], workingDirectory: str | None = None, showFlag: int = SW.ShowNormal
 ) -> bool:
     """
     Run a python script as administrator.
@@ -1271,6 +1271,7 @@ def SendInput(*inputs) -> int:
                 If the function returns zero, the input was already blocked by another thread.
     """
     cbSize = ctypes.c_int(ctypes.sizeof(INPUT))
+    ret = 0
     for ip in inputs:
         ret = ctypes.windll.user32.SendInput(1, ctypes.byref(ip), cbSize)
     return ret
@@ -1674,6 +1675,7 @@ def GetProcesses(detailedInfo: bool = True) -> list[ProcessInfo]:
     You should run python as administrator to call this function.
     Can not get some system processes' info.
     """
+    IsWow64Process = None
     if detailedInfo:
         try:
             IsWow64Process = ctypes.windll.kernel32.IsWow64Process
