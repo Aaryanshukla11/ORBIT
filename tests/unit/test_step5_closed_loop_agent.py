@@ -214,21 +214,8 @@ async def test_fresh_observation_invariant_stale_detection():
     # First returns stale_obs twice, then fresh_obs
     observer.observe = AsyncMock(side_effect=[stale_obs, stale_obs, fresh_obs, fresh_obs])
 
-    dec_0 = CognitiveDecision(
-        step_index=0,
-        decision_summary="Step 0 action",
-        next_action=AbstractAction(action_type=AbstractActionType.WAIT, parameters={"duration_ms": 10}),
-    )
-    dec_1 = CognitiveDecision(
-        step_index=1,
-        decision_summary="Step 1 complete",
-        is_goal_satisfied=True,
-        next_action=AbstractAction(action_type=AbstractActionType.COMPLETE_GOAL),
-    )
-
-    decision_engine = MagicMock()
-    decision_engine.decide_next_step = AsyncMock(side_effect=[dec_0, dec_1])
-
+    from orbit.runtime.cognitive.agent_planner import AgentPlanner, PlanDirective
+    from orbit.runtime.task_completion.models import GoalVerificationResult, TaskCompletionStatus
     goal_verifier = MagicMock()
     goal_verifier.verify_goal_achievement = AsyncMock(
         side_effect=[
@@ -236,10 +223,20 @@ async def test_fresh_observation_invariant_stale_detection():
             GoalVerificationResult(status=TaskCompletionStatus.COMPLETED, is_completed=True),
         ]
     )
+    planner = MagicMock(spec=AgentPlanner)
+    directive_0 = PlanDirective(
+        directive_id="dir_wait",
+        objective_id="obj_test",
+        subgoal_id="sg_1",
+        subgoal_title="Wait briefly",
+        preferred_primitives=[AbstractActionType.WAIT],
+        creative_payload={"duration": 0.01},
+    )
+    planner.plan_subgoal = MagicMock(return_value=(directive_0, MagicMock(is_feasible=True)))
 
     loop = AgentExecutionLoop(
         observer=observer,
-        decision_engine=decision_engine,
+        planner=planner,
         goal_verifier=goal_verifier,
     )
 
@@ -254,63 +251,62 @@ async def test_fresh_observation_invariant_stale_detection():
 
 @pytest.mark.asyncio
 async def test_tripartite_separation_dispatch_success_does_not_mean_goal_satisfied():
-    """Dispatch success with unverified effect triggers recovery, NOT goal completion."""
+    """Dispatch success with unverified effect triggers replanning, NOT goal completion."""
     obs_1 = CurrentStateObservation(observation_id="obs_101", active_window_title="Desktop")
 
     observer = MagicMock()
     observer.observe = AsyncMock(return_value=obs_1)
 
-    dec = CognitiveDecision(
-        step_index=0,
-        decision_summary="Attempt click",
-        next_action=AbstractAction(
-            action_type=AbstractActionType.CLICK,
-            target=SemanticTarget(name="SubmitButton", role="button"),
-            outcome_contract=ActionOutcomeContract(
-                expected_state_transition="SuccessDialog appeared",
-                verification_strategy=VerificationStrategy.WINDOW_FOCUS,
+    from orbit.runtime.cognitive.agent_planner import AgentPlanner, PlanDirective
+    from orbit.runtime.cognitive.primitive_execution_controller import PrimitiveExecutionController
+    from orbit.runtime.agent.contracts import ActionExecutionOutcome
+    planner = MagicMock(spec=AgentPlanner)
+    directive_click = PlanDirective(
+        directive_id="dir_click",
+        objective_id="obj_test",
+        subgoal_id="sg_1",
+        subgoal_title="Click Submit",
+        preferred_primitives=[AbstractActionType.CLICK],
+        semantic_targets=[SemanticTarget(name="SubmitButton", role="button")],
+    )
+    directive_replan = PlanDirective(
+        directive_id="dir_replan",
+        objective_id="obj_test",
+        subgoal_id="sg_1",
+        subgoal_title="Click Submit Alternate",
+        preferred_primitives=[AbstractActionType.SEND_HOTKEY],
+        creative_payload={"hotkey": "enter"},
+    )
+    planner.plan_subgoal = MagicMock(return_value=(directive_click, MagicMock(is_feasible=True)))
+    planner.replan = MagicMock(return_value=(directive_replan, MagicMock(is_feasible=True)))
+
+    controller = MagicMock(spec=PrimitiveExecutionController)
+    controller.execute_primitive = AsyncMock(
+        return_value=MagicMock(
+            execution_outcome=ActionExecutionOutcome(
+                action_id="act_1",
+                action_type=AbstractActionType.CLICK,
+                outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+                expected_effect_observed=False,
+                dispatch_success=True,
+                verification_reason="Target button unresponsive",
             ),
-        ),
-    )
-
-    decision_engine = MagicMock()
-    decision_engine.decide_next_step = AsyncMock(return_value=dec)
-
-    transition_verifier = MagicMock()
-    transition_verifier.verify_action_outcome = AsyncMock(
-        return_value=ActionExecutionResult(
-            dispatch_success=True,  # OS accepted click
-            expected_effect_observed=False,  # But dialog did not appear!
-            goal_satisfied=False,
-            outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
+            post_observation=obs_1,
+            should_continue=False,
         )
     )
-
-    recovery_mgr = MagicMock(spec=AgentRecoveryManager)
-    recovery_mgr.can_attempt_recovery = MagicMock(side_effect=[True, False])
-    recovery_mgr.current_transition_recoveries = 0
-    recovery_mgr.diagnose_failure = MagicMock(return_value=(RecoveryStrategy.WAIT_FOR_SETTLEMENT, "Dialog delayed"))
-    recovery_mgr.execute_recovery = AsyncMock(
-        return_value=RecoveryRecord(
-            cycle_number=0,
-            attempt_number=1,
-            strategy=RecoveryStrategy.WAIT_FOR_SETTLEMENT,
-            recovery_success=True,
-        )
-    )
-    recovery_mgr.get_history = MagicMock(return_value=[])
 
     loop = AgentExecutionLoop(
         observer=observer,
-        decision_engine=decision_engine,
-        transition_verifier=transition_verifier,
-        recovery_manager=recovery_mgr,
-        budget=ExecutionBudget(max_total_actions=2),
+        planner=planner,
+        budget=ExecutionBudget(max_total_actions=2, max_recoveries_per_transition=2),
     )
+    loop._primitive_execution_controller = controller
+    loop._resolve_target_coordinates = AsyncMock(return_value=(100, 100))
 
     res = await loop.run("Click Submit Button")
-    assert recovery_mgr.diagnose_failure.called
-    assert recovery_mgr.execute_recovery.called
+    assert planner.replan.called
+    assert res.step_history[0].execution_result.expected_effect_observed is False
 
 
 @pytest.mark.asyncio

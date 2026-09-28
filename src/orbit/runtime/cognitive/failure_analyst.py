@@ -130,18 +130,21 @@ class LoopGuardDiagnosticEngine:
         )
 
         # 1. Dead window handle detection
+        # 1. Dead window handle detection via live observation
         target_hwnd = action.parameters.get("hwnd") or getattr(post_obs, "active_hwnd", 0)
         if target_hwnd:
             try:
-                import ctypes
-                user32 = ctypes.windll.user32
-                if not user32.IsWindow(int(target_hwnd)):
+                target_hwnd_int = int(target_hwnd)
+                visible_hwnds = {int(w.get("hwnd")) for w in post_obs.visible_windows if isinstance(w, dict) and w.get("hwnd") is not None}
+                if post_obs.active_window_hwnd is not None:
+                    visible_hwnds.add(int(post_obs.active_window_hwnd))
+                if visible_hwnds and target_hwnd_int not in visible_hwnds:
                     return FailureReport(
                         action_id=action.action_id,
                         action_type=action.action_type,
                         category=FailureCategory.DEAD_WINDOW_HANDLE,
-                        diagnosis=f"Target window handle HWND:{target_hwnd} is dead or was destroyed.",
-                        evidence_observed=[f"user32.IsWindow({target_hwnd}) returned False"],
+                        diagnosis=f"Target window handle HWND:{target_hwnd} is dead or not present in live observation.",
+                        evidence_observed=[f"HWND:{target_hwnd} not found in visible windows or active window"],
                         suggested_remediation_direction="Re-launch application or switch to active visible window",
                         is_transient=False,
                     )

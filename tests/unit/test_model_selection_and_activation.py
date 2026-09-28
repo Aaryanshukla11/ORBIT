@@ -265,7 +265,8 @@ async def test_reject_unreachable_runtime(registry: ModelRegistry, event_bus: Ev
 # 5. Reject Cloud Model with Missing Credentials
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_reject_cloud_model_missing_credentials(registry: ModelRegistry, event_bus: EventBus):
+async def test_reject_cloud_model_missing_credentials(registry: ModelRegistry, event_bus: EventBus, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     cloud_p = CloudModelProvider(
         cloud_kind=CloudProviderKind.OPENAI,
         api_key=None,  # Not configured

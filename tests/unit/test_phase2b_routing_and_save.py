@@ -72,14 +72,16 @@ async def test_01_open_edge_routes_to_launch_application():
     assert AbstractActionType.LAUNCH_APPLICATION in plan.proposed_primitives
     assert plan.targets[0].role in ("window", "application")
 
-    # Verify fallback composer produces LAUNCH_APPLICATION
-    composer = PrimitiveComposer(validator=PrimitiveValidator())
-    seq = composer._compose_deterministic_fallback(
-        goal_text="Open Edge",
+    # Verify authoritative PlanDirective + compose_from_directive produces LAUNCH_APPLICATION
+    directive, sem_res = planner.plan_subgoal(
         objective=obj,
-        sub_objective=subgoal,
-        context=MagicMock(),
+        subgoal=subgoal,
+        world_model=MagicMock(),
+        observation=CurrentStateObservation(),
     )
+    assert directive is not None
+    composer = PrimitiveComposer(validator=PrimitiveValidator())
+    seq = composer.compose_from_directive(directive)
     assert len(seq.actions) > 0
     assert seq.actions[0].action_type == AbstractActionType.LAUNCH_APPLICATION
     assert seq.actions[0].parameters.get("application_name") == "edge"
@@ -110,13 +112,15 @@ async def test_02_open_paint_routes_to_launch_application():
     plan = candidates[0]
     assert AbstractActionType.LAUNCH_APPLICATION in plan.proposed_primitives
 
-    composer = PrimitiveComposer(validator=PrimitiveValidator())
-    seq = composer._compose_deterministic_fallback(
-        goal_text="Open Paint",
+    directive, sem_res = planner.plan_subgoal(
         objective=obj,
-        sub_objective=subgoal,
-        context=MagicMock(),
+        subgoal=subgoal,
+        world_model=MagicMock(),
+        observation=CurrentStateObservation(),
     )
+    assert directive is not None
+    composer = PrimitiveComposer(validator=PrimitiveValidator())
+    seq = composer.compose_from_directive(directive)
     assert len(seq.actions) > 0
     assert seq.actions[0].action_type == AbstractActionType.LAUNCH_APPLICATION
     assert seq.actions[0].parameters.get("application_name") in ("paint", "mspaint")
@@ -127,14 +131,18 @@ async def test_02_open_paint_routes_to_launch_application():
 # ============================================================================
 @pytest.mark.asyncio
 async def test_03_click_search_box_routes_to_ui_click():
-    composer = PrimitiveComposer(validator=PrimitiveValidator())
+    planner = AgentPlanner()
     obj = StructuredObjective(raw_prompt="click the search box", user_goal="click the search box", end_condition="clicked")
-    seq = composer._compose_deterministic_fallback(
-        goal_text="click the search box",
+    subgoal = SubObjective(sub_id="sub_click", title="click the search box", target_entity="search box")
+    directive, sem_res = planner.plan_subgoal(
         objective=obj,
-        sub_objective=None,
-        context=MagicMock(),
+        subgoal=subgoal,
+        world_model=MagicMock(),
+        observation=CurrentStateObservation(),
     )
+    assert directive is not None
+    composer = PrimitiveComposer(validator=PrimitiveValidator())
+    seq = composer.compose_from_directive(directive)
     assert len(seq.actions) > 0
     action = seq.actions[0]
     assert action.action_type == AbstractActionType.CLICK
@@ -152,13 +160,17 @@ async def test_04_type_hello_routes_to_type_text():
     assert obj.parameters.get("action_type") == "type"
     assert "hello" in obj.parameters.get("text", "").lower()
 
-    composer = PrimitiveComposer(validator=PrimitiveValidator())
-    seq = composer._compose_deterministic_fallback(
-        goal_text="type hello",
+    planner = AgentPlanner()
+    subgoal = SubObjective(sub_id="sub_type", title="Type hello")
+    directive, sem_res = planner.plan_subgoal(
         objective=obj,
-        sub_objective=None,
-        context=MagicMock(),
+        subgoal=subgoal,
+        world_model=MagicMock(),
+        observation=CurrentStateObservation(),
     )
+    assert directive is not None
+    composer = PrimitiveComposer(validator=PrimitiveValidator())
+    seq = composer.compose_from_directive(directive)
     assert len(seq.actions) > 0
     action = seq.actions[0]
     assert action.action_type == AbstractActionType.TYPE_TEXT
@@ -449,13 +461,17 @@ async def test_11_semantic_launch_variations(phrase, expected_app):
     matched_app = str(obj.parameters.get("app_name", "")).lower()
     assert expected_app in matched_app or matched_app in expected_app or any(expected_app in e.lower() for e in obj.target_entities)
 
-    composer = PrimitiveComposer(validator=PrimitiveValidator())
-    seq = composer._compose_deterministic_fallback(
-        goal_text=phrase,
+    planner = AgentPlanner()
+    subgoal = SubObjective(sub_id="sub_1", title=phrase, target_entity=expected_app)
+    directive, _ = planner.plan_subgoal(
         objective=obj,
-        sub_objective=None,
-        context=MagicMock(),
+        subgoal=subgoal,
+        world_model=MagicMock(),
+        observation=CurrentStateObservation(),
     )
+    assert directive is not None
+    composer = PrimitiveComposer(validator=PrimitiveValidator())
+    seq = composer.compose_from_directive(directive)
     assert len(seq.actions) > 0
     assert seq.actions[0].action_type == AbstractActionType.LAUNCH_APPLICATION
 
@@ -476,13 +492,17 @@ async def test_12_semantic_save_variations(phrase, expected_fname, expected_dir,
     assert obj.parameters.get("format") == expected_fmt
     assert obj.parameters.get("requires_save") is True
 
-    composer = PrimitiveComposer(validator=PrimitiveValidator())
-    seq = composer._compose_deterministic_fallback(
-        goal_text=phrase,
+    planner = AgentPlanner()
+    subgoal = SubObjective(sub_id="sub_1", title=phrase, target_entity=expected_fname)
+    directive, _ = planner.plan_subgoal(
         objective=obj,
-        sub_objective=None,
-        context=MagicMock(),
+        subgoal=subgoal,
+        world_model=MagicMock(),
+        observation=CurrentStateObservation(),
     )
+    assert directive is not None
+    composer = PrimitiveComposer(validator=PrimitiveValidator())
+    seq = composer.compose_from_directive(directive)
     assert len(seq.actions) > 0
     assert seq.actions[0].action_type == AbstractActionType.SAVE_FILE
     assert seq.actions[0].parameters.get("filename") == expected_fname

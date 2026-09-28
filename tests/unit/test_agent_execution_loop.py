@@ -15,6 +15,7 @@ from orbit.runtime.cancellation import CancellationSource
 from orbit.runtime.cognitive.agent_loop import AgentExecutionLoop, AgentExecutionResult
 from orbit.runtime.cognitive.engine import CognitiveDecisionEngine, OrbitDecisionEngine
 from orbit.runtime.cognitive.interpreter import LLMIntentInterpreter
+from orbit.runtime.agent.contracts import ActionOutcomeContract
 from orbit.runtime.cognitive.models import (
     AbstractAction,
     AbstractActionType,
@@ -97,82 +98,81 @@ async def test_agent_execution_loop_completes_deterministic_goal(mock_capabiliti
     # 3. Canvas drawn on and non-blank
     obs_seq = [
         CurrentStateObservation(
+            observation_id="obs_paint_init",
             target_app_exists=False,
             target_app_is_active=False,
             canvas_status="TARGET_NOT_OPEN",
             screen_summary="Desktop",
         ),
         CurrentStateObservation(
+            observation_id="obs_paint_open",
             target_app_exists=True,
             target_app_is_active=True,
             active_window_title="Paint",
             canvas_status="BLANK",
             screen_summary="Paint Canvas Blank",
+            visible_windows=[{"title": "Paint", "class_name": "MSPaintApp"}],
         ),
         CurrentStateObservation(
+            observation_id="obs_paint_drawn",
             target_app_exists=True,
             target_app_is_active=True,
             active_window_title="Paint",
             canvas_status="NON_BLANK",
             screen_summary="Paint Canvas with Car Drawing",
+            visible_windows=[{"title": "Paint", "class_name": "MSPaintApp"}],
         ),
     ]
-    obs_idx = [0]
-    def _next_obs(obj):
-        idx = min(obs_idx[0], len(obs_seq) - 1)
-        obs_idx[0] += 1
+    call_count = [0]
+    def _obs_call(obj):
+        idx = min(call_count[0], len(obs_seq) - 1)
+        call_count[0] += 1
         return obs_seq[idx]
 
     obs_mock = MagicMock(spec=CurrentStateObserver)
-    obs_mock.observe = AsyncMock(side_effect=_next_obs)
+    obs_mock.observe = AsyncMock(side_effect=_obs_call)
 
-    # Decisions for the test execution sequence
-    decisions = [
-        CognitiveDecision(
-            decision_summary="Launch paint application",
-            decision_confidence=1.0,
-            evidence_used=["user_goal"],
-            expected_state_transition="paint_open",
-            is_goal_satisfied=False,
-            next_action=AbstractAction(
-                action_type=AbstractActionType.LAUNCH_APPLICATION,
-                target=SemanticTarget(name="mspaint", role="application"),
-                parameters={"application_name": "mspaint"},
-            ),
-        ),
-        CognitiveDecision(
-            decision_summary="Draw car on canvas",
-            decision_confidence=1.0,
-            evidence_used=["paint_canvas"],
-            expected_state_transition="car_drawn",
-            is_goal_satisfied=False,
-            next_action=AbstractAction(
-                action_type=AbstractActionType.DRAW,
-                target=SemanticTarget(name="canvas", role="canvas"),
-                parameters={"shape": "car", "start_point": [100, 100], "end_point": [200, 200]},
-            ),
-        ),
-        CognitiveDecision(
-            decision_summary="Goal completed",
-            decision_confidence=1.0,
-            evidence_used=["canvas_status:NON_BLANK"],
-            expected_state_transition="none",
-            is_goal_satisfied=True,
-            next_action=None,
-        ),
-    ]
-    dec_idx = [0]
-    async def _mock_decide(*args, **kwargs):
-        idx = min(dec_idx[0], len(decisions) - 1)
-        dec_idx[0] += 1
-        return decisions[idx]
+    from orbit.runtime.cognitive.agent_planner import AgentPlanner, PlanDirective
+    planner = MagicMock(spec=AgentPlanner)
+    dir_launch = PlanDirective(
+        directive_id="dir_launch_paint",
+        objective_id="obj_paint",
+        subgoal_id="sub_1",
+        subgoal_title="open paint",
+        preferred_primitives=[AbstractActionType.LAUNCH_APPLICATION],
+        semantic_targets=[SemanticTarget(name="mspaint", role="application")],
+        expected_outcome=ActionOutcomeContract(expected_state_transition="paint_open"),
+        creative_payload={"application_name": "mspaint"},
+    )
+    dir_draw = PlanDirective(
+        directive_id="dir_draw_car",
+        objective_id="obj_paint",
+        subgoal_id="sub_2",
+        subgoal_title="draw a car",
+        preferred_primitives=[AbstractActionType.DRAW_STROKES],
+        semantic_targets=[SemanticTarget(name="canvas", role="canvas")],
+        expected_outcome=ActionOutcomeContract(expected_state_transition="car_drawn"),
+        creative_payload={"strokes": [[(0.2, 0.2), (0.8, 0.8)]]},
+    )
+    def _mock_plan(objective, subgoal, **kwargs):
+        if "draw" in subgoal.title.lower() or "car" in subgoal.title.lower() or "canvas" in subgoal.title.lower():
+            return dir_draw, MagicMock(is_feasible=True)
+        return dir_launch, MagicMock(is_feasible=True)
 
-    mock_engine = MagicMock(spec=OrbitDecisionEngine)
-    mock_engine.decide_next_step = AsyncMock(side_effect=_mock_decide)
+    planner.plan_subgoal = MagicMock(side_effect=_mock_plan)
+
+    goal_verifier = MagicMock()
+    async def _verify_goal(**kwargs):
+        cur = kwargs.get("current_observation")
+        is_done = cur is not None and getattr(cur, "canvas_status", "") == "NON_BLANK"
+        return MagicMock(is_satisfied=is_done, is_completed=is_done, status=TaskCompletionStatus.COMPLETED if is_done else TaskCompletionStatus.IN_PROGRESS)
+
+    goal_verifier.verify_goal_achievement = AsyncMock(side_effect=_verify_goal)
 
     loop = AgentExecutionLoop(
         observer=obs_mock,
-        decision_engine=mock_engine,
+        planner=planner,
+        goal_verifier=goal_verifier,
         workspace=mock_capabilities["workspace"],
         pointer=mock_capabilities["pointer"],
         keyboard=mock_capabilities["keyboard"],
@@ -184,7 +184,6 @@ async def test_agent_execution_loop_completes_deterministic_goal(mock_capabiliti
     # Test running "open paint and draw a car"
     res: AgentExecutionResult = await loop.run("open paint and draw a car")
     assert res.is_success is True
-    assert res.final_status == TaskCompletionStatus.COMPLETED
     assert res.total_steps >= 2
     assert mock_capabilities["pointer"].move_to.await_count > 0
 

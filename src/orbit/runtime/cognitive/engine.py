@@ -73,7 +73,14 @@ class StateGoalDelta:
 
 
 class CognitiveDecisionEngine:
-    """Computes state/goal delta and applies layered decision hierarchy (Fast Rules -> Recovery -> LLM Escalation)."""
+    """Computes state/goal delta and provides advisory suggestions.
+
+    P0 AUTHORITY INVARIANT:
+    CognitiveDecisionEngine is STRICTLY ADVISORY. It does NOT possess execution planning authority.
+    The ONLY authoritative planning and execution contract in ORBIT is PlanDirective emitted by
+    AgentPlanner, mechanically translated by PrimitiveComposer, validated by PrimitiveValidator,
+    and executed by PrimitiveExecutionController.
+    """
 
     def __init__(
         self,
@@ -567,7 +574,11 @@ class OrbitDecisionEngine:
         failure_feedback: Optional[str] = None,
         user_goal: Optional[str] = None,
     ) -> CognitiveDecision:
-        """Evaluate current observation through the authoritative multimodal model and deterministic validation."""
+        """Evaluate current observation through the multimodal model for advisory telemetry.
+
+        P0 INVARIANT:
+        Advisory output only. Does not directly dispatch actions or bypass PlanDirective.
+        """
         history = step_history or []
         obs_id = getattr(observation, "observation_id", f"obs_{step_index}")
 

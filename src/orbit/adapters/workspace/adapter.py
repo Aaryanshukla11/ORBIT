@@ -332,8 +332,10 @@ class ProductionWorkspaceAdapter(BaseCapabilityAdapter, WorkspaceCapability):
                 self.appbar_driver.unregister_and_release,
             )
 
-            self.state_manager.transition_to(WorkspaceState.RELEASING)
-            self.state_manager.transition_to(WorkspaceState.READY_FLOATING)
+            if self.state_manager.can_transition_to(WorkspaceState.RELEASING):
+                self.state_manager.transition_to(WorkspaceState.RELEASING)
+            if self.state_manager.can_transition_to(WorkspaceState.READY_FLOATING):
+                self.state_manager.transition_to(WorkspaceState.READY_FLOATING)
 
             # Refresh floating geometry
             self.geometry_coordinator.query_current_geometry(is_docked=False)

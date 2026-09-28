@@ -674,11 +674,11 @@ class AgentExecutionLoop:
                         logger.debug("GoalVerifier evaluation notice: %s", gv_err)
 
                 # -------------------------------------------------------------
-                # PHASE 3: REASONING (Agent Decision Engine / Model Router)
+                # PHASE 3: REASONING & AUTHORITATIVE DIRECTIVE RESOLUTION
                 # -------------------------------------------------------------
                 sm.transition_to(AgentLoopState.REASONING, cycle_number=step_idx, observation_id=current_obs.observation_id)
 
-                # Inject Phase 2G.1 Trajectory Memory feedback / loop prevention
+                # Inject Trajectory Memory feedback / loop prevention
                 trajectory_guidance = self._trajectory_memory.get_recovery_guidance()
                 if trajectory_guidance:
                     if not context.get("feedback"):
@@ -686,36 +686,139 @@ class AgentExecutionLoop:
                     else:
                         context["feedback"] = f"{context['feedback']} | {trajectory_guidance}"
 
-                decide_fn = getattr(self._decision_engine, "decide_next_step", None) or getattr(self._decision_engine, "decide_next_action", None)
-                if not callable(decide_fn):
-                    raise RuntimeError("No callable decision method found on decision engine.")
-                decide_kwargs: Dict[str, Any] = {
-                    "objective": objective,
-                    "observation": current_obs,
-                    "step_history": step_history,
-                    "step_index": step_idx,
-                }
-                try:
-                    sig = inspect.signature(decide_fn)
-                    if "routing_policy" in sig.parameters:
-                        decide_kwargs["routing_policy"] = routing_policy
-                    if "task_context" in sig.parameters:
-                        decide_kwargs["task_context"] = context
-                    if "task_requirements" in sig.parameters:
-                        decide_kwargs["task_requirements"] = getattr(objective, "task_requirements", None)
-                    if "failure_feedback" in sig.parameters:
-                        last_step = step_history[-1] if step_history else None
-                        last_diag = getattr(last_step, "failure_diagnosis", None) or getattr(last_step, "reason_summary", None) if (last_step and not getattr(last_step, "outcome_verified", False)) else None
-                        decide_kwargs["failure_feedback"] = last_diag
-                    if "user_goal" in sig.parameters:
-                        decide_kwargs["user_goal"] = getattr(objective, "user_goal", prompt)
-                except Exception:
-                    pass
+                # 1. Resolve active subgoal milestone
+                _active_sg = None
+                if self._progress_graph is not None:
+                    _active_sg = self._progress_graph.get_active_subgoal()
 
-                decision: CognitiveDecision = await decide_fn(**decide_kwargs)
+                # 2. Authoritative PlanDirective resolution via AgentPlanner (P0 Authority)
+                _active_directive = None
+                if _active_sg is not None:
+                    _active_directive = subgoal_directives.get(_active_sg.sub_id)
+                    if _active_directive is None:
+                        _active_directive, sem_report = self._planner.plan_subgoal(
+                            objective=objective,
+                            subgoal=_active_sg,
+                            world_model=self._world_model,
+                            observation=current_obs,
+                        )
+                        if not sem_report.is_feasible or _active_directive is None:
+                            logger.warning(
+                                "[SEMANTIC FEASIBILITY GATE] Active subgoal '%s' rejected by planner: %s",
+                                _active_sg.title,
+                                getattr(sem_report, "rejection_reasons", []),
+                            )
+                            sm.transition_to(
+                                AgentLoopState.FAILED,
+                                cycle_number=step_idx,
+                                failure_reason="; ".join(getattr(sem_report, "rejection_reasons", ["Infeasible subgoal plan"])),
+                            )
+                            return AgentExecutionResult(
+                                task_id=effective_task_id,
+                                objective=objective,
+                                is_success=False,
+                                total_steps=len(step_history),
+                                step_history=step_history,
+                                final_status=TaskCompletionStatus.UNSUPPORTED,
+                                failure_reason="; ".join(getattr(sem_report, "rejection_reasons", ["Infeasible subgoal plan"])),
+                                failure_code="GOAL_NOT_FEASIBLY_EXECUTABLE",
+                                elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                                state_transitions=sm.history,
+                                cycle_traces=cycle_traces,
+                                recovery_records=self._recovery_manager.get_history(),
+                            )
+                        subgoal_directives[_active_sg.sub_id] = _active_directive
+
+                if _active_directive is None:
+                    # Synthesize top-level directive if no progress graph / subgoals present
+                    temp_sg = SubObjective(
+                        sub_id=f"sg_{uuid4().hex[:6]}",
+                        title=objective.user_goal or objective.raw_prompt or "Execute task",
+                        description=objective.raw_prompt or "Execute task",
+                    )
+                    _active_directive, sem_report = self._planner.plan_subgoal(
+                        objective=objective,
+                        subgoal=temp_sg,
+                        world_model=self._world_model,
+                        observation=current_obs,
+                    )
+                    if not sem_report.is_feasible or _active_directive is None:
+                        sm.transition_to(
+                            AgentLoopState.FAILED,
+                            cycle_number=step_idx,
+                            failure_reason="; ".join(getattr(sem_report, "rejection_reasons", ["Task planning infeasible"])),
+                        )
+                        return AgentExecutionResult(
+                            task_id=effective_task_id,
+                            objective=objective,
+                            is_success=False,
+                            total_steps=len(step_history),
+                            step_history=step_history,
+                            final_status=TaskCompletionStatus.UNSUPPORTED,
+                            failure_reason="; ".join(getattr(sem_report, "rejection_reasons", ["Task planning infeasible"])),
+                            failure_code="GOAL_NOT_FEASIBLY_EXECUTABLE",
+                            elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                            state_transitions=sm.history,
+                            cycle_traces=cycle_traces,
+                            recovery_records=self._recovery_manager.get_history(),
+                        )
+
+                # 3. Mechanical translation of authoritative PlanDirective via PrimitiveComposer
+                composed_seq = self._primitive_composer.compose_from_directive(_active_directive)
+                if not composed_seq.actions:
+                    logger.warning(
+                        "[PRIMITIVE COMPOSER] Directive '%s' failed composition closed (Zero actions)",
+                        _active_directive.directive_id,
+                    )
+                    sm.transition_to(
+                        AgentLoopState.FAILED,
+                        cycle_number=step_idx,
+                        failure_reason="Authoritative PlanDirective produced zero executable actions",
+                    )
+                    return AgentExecutionResult(
+                        task_id=effective_task_id,
+                        objective=objective,
+                        is_success=False,
+                        total_steps=len(step_history),
+                        step_history=step_history,
+                        final_status=TaskCompletionStatus.FAILED,
+                        failure_reason="Authoritative PlanDirective produced zero executable actions",
+                        failure_code="COMPOSITION_FAILED",
+                        elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
+                        state_transitions=sm.history,
+                        cycle_traces=cycle_traces,
+                        recovery_records=self._recovery_manager.get_history(),
+                    )
+
+                action = composed_seq.actions[0]
+
+                # 4. Optional advisory decision telemetry query (strictly non-authoritative)
+                decision = CognitiveDecision(
+                    step_index=step_idx,
+                    decision_summary=f"Authoritative PlanDirective '{_active_directive.directive_id}' ({_active_directive.intent_strategy}) for '{_active_directive.subgoal_title}'",
+                    decision_confidence=_active_directive.feasibility_score,
+                    next_action=action,
+                    expected_state_transition=_active_directive.expected_outcome.expected_state_transition,
+                )
+
+                if self._decision_engine is not None:
+                    try:
+                        decide_fn = getattr(self._decision_engine, "decide_next_step", None) or getattr(self._decision_engine, "decide_next_action", None)
+                        if callable(decide_fn):
+                            advisory_dec = await decide_fn(
+                                objective=objective,
+                                observation=current_obs,
+                                step_history=step_history,
+                                step_index=step_idx,
+                            )
+                            if advisory_dec and getattr(advisory_dec, "decision_summary", None):
+                                cycle_trace.decision_summary = advisory_dec.decision_summary
+                                cycle_trace.decision_confidence = float(advisory_dec.decision_confidence) if isinstance(advisory_dec.decision_confidence, (int, float)) else 1.0
+                    except Exception as adv_ex:
+                        logger.debug("Advisory decision telemetry notice: %s", adv_ex)
 
                 # Extract Model Routing & Decision Telemetry into trace
-                get_tr_fn = getattr(self._decision_engine, "get_recent_traces", None)
+                get_tr_fn = getattr(self._decision_engine, "get_recent_traces", None) if self._decision_engine else None
                 if callable(get_tr_fn):
                     try:
                         recent_traces = get_tr_fn(1)
@@ -736,11 +839,11 @@ class AgentExecutionLoop:
                     except Exception as tr_err:
                         logger.debug("Trace extraction notice: %s", tr_err)
 
-                cycle_trace.decision_summary = decision.decision_summary or ""
-                cycle_trace.decision_confidence = float(decision.decision_confidence) if isinstance(decision.decision_confidence, (int, float)) else 1.0
-                cycle_trace.goal_progress = "GOAL_SATISFIED" if decision.is_goal_satisfied else "IN_PROGRESS"
-                cycle_trace.next_action_type = decision.next_action.action_type.value if decision.next_action else None
-                cycle_trace.next_action_params = decision.next_action.parameters if decision.next_action else {}
+                cycle_trace.decision_summary = cycle_trace.decision_summary or decision.decision_summary or ""
+                cycle_trace.decision_confidence = float(cycle_trace.decision_confidence or decision.decision_confidence or 1.0)
+                cycle_trace.goal_progress = "IN_PROGRESS"
+                cycle_trace.next_action_type = action.action_type.value
+                cycle_trace.next_action_params = action.parameters
 
                 # Publish step event to EventBus
                 if self._event_bus:
@@ -755,232 +858,18 @@ class AgentExecutionLoop:
                                 "task_id": effective_task_id,
                                 "step_index": step_idx,
                                 "decision_summary": decision.decision_summary,
-                                "action_type": decision.next_action.action_type.value if decision.next_action else None,
+                                "action_type": action.action_type.value,
                                 "escalated_to_llm": decision.escalated_to_llm,
                             },
                         )
                     )
 
-                # CRITICAL PRODUCTION INVARIANT 1: "MODEL DECISION IS NOT REALITY"
-                # If model claims goal is satisfied or emits COMPLETE_GOAL, independently verify with GoalVerifier!
-                is_model_claiming_completion = decision.is_goal_satisfied or (
-                    decision.next_action and decision.next_action.action_type == AbstractActionType.COMPLETE_GOAL
-                )
-
-                if is_model_claiming_completion:
-                    logger.info("Model proposed goal completion at step %d; verifying reality against live desktop", step_idx)
-                    goal_truly_verified = False
-                    g_eval: Optional[Any] = None
-                    if self._goal_verifier is not None:
-                        try:
-                            g_eval = await self._goal_verifier.verify_goal_achievement(
-                                task_id=effective_task_id,
-                                objective=objective,
-                                current_observation=current_obs,
-                                step_history=step_history,
-                            )
-                            is_sat = getattr(g_eval, "is_satisfied", getattr(g_eval, "is_completed", False)) or (getattr(g_eval, "status", None) == TaskCompletionStatus.COMPLETED)
-                            goal_truly_verified = bool(is_sat)
-                        except Exception as g_err:
-                            logger.debug("Goal verification evaluation error: %s", g_err)
-                            goal_truly_verified = False
-                    else:
-                        # PHASE F1 — Fail CLOSED: no independent verifier → completion CANNOT be confirmed
-                        goal_truly_verified = False
-
-                    if goal_truly_verified:
-                        sm.transition_to(
-                            AgentLoopState.EVALUATING_PROGRESS,
-                            cycle_number=step_idx,
-                            observation_id=current_obs.observation_id,
-                            decision_id=decision.decision_id,
-                            goal_satisfied=True,
-                        )
-                        sm.transition_to(
-                            AgentLoopState.COMPLETED,
-                            cycle_number=step_idx,
-                            observation_id=current_obs.observation_id,
-                            decision_id=decision.decision_id,
-                            goal_satisfied=True,
-                        )
-                        cycle_trace.goal_progress = "COMPLETED"
-                        cycle_trace.goal_satisfied = True
-                        cycle_trace.meaningful_state_change = True
-
-                        step_res = CognitiveStepResult(
-                            step_index=step_idx,
-                            decision=decision,
-                            action_dispatched=decision.next_action,
-                            execution_result=ActionExecutionResult(
-                                dispatch_success=True,
-                                expected_effect_observed=True,
-                                goal_satisfied=True,
-                                outcome_status=OutcomeStatus.EFFECT_VERIFIED,
-                            ),
-                            post_observation=current_obs,
-                            state_progress_detected=True,
-                            duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
-                            trace=cycle_trace,
-                        )
-                        step_history.append(step_res)
-                        cycle_traces.append(cycle_trace)
-                        logger.info("\n%s", format_cycle_trace_block(cycle_trace))
-
-                        return AgentExecutionResult(
-                            task_id=effective_task_id,
-                            objective=objective,
-                            is_success=True,
-                            total_steps=len(step_history),
-                            step_history=step_history,
-                            final_status=TaskCompletionStatus.COMPLETED,
-                            elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
-                            state_transitions=sm.history,
-                            cycle_traces=cycle_traces,
-                            recovery_records=self._recovery_manager.get_history(),
-                        )
-                    else:
-                        fail_r = getattr(g_eval, "failure_reason", "") if "g_eval" in locals() and g_eval else "no verifier eval"
-                        logger.warning("Goal satisfaction claimed by model, but independent reality check failed: %s; continuing closed-loop reasoning", fail_r)
-                        sm.transition_to(
-                            AgentLoopState.EVALUATING_PROGRESS,
-                            cycle_number=step_idx,
-                            observation_id=current_obs.observation_id,
-                            decision_id=decision.decision_id,
-                            goal_satisfied=False,
-                        )
-                        step_res = CognitiveStepResult(
-                            step_index=step_idx,
-                            decision=decision,
-                            action_dispatched=decision.next_action,
-                            execution_result=ActionExecutionResult(
-                                dispatch_success=False,
-                                expected_effect_observed=False,
-                                goal_satisfied=False,
-                                outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
-                                error_message="Goal verification unverified or inconclusive; objective conditions not proven on live desktop",
-                            ),
-                            post_observation=current_obs,
-                            state_progress_detected=False,
-                            duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
-                            trace=cycle_trace,
-                        )
-                        step_history.append(step_res)
-                        cycle_traces.append(cycle_trace)
-                        context["feedback"] = "Premature completion claimed: Objective conditions are NOT met on screen. Inspect desktop and execute remaining sub-goals."
-                        step_idx += 1
-                        continue
-
-                # Handle ABORT from model
-                if decision.next_action and decision.next_action.action_type == AbstractActionType.ABORT_TASK:
-                    sm.transition_to(
-                        AgentLoopState.FAILED,
-                        cycle_number=step_idx,
-                        observation_id=current_obs.observation_id,
-                        decision_id=decision.decision_id,
-                        failure_reason=decision.reason_summary or decision.decision_summary,
-                    )
-                    step_res = CognitiveStepResult(
-                        step_index=step_idx,
-                        decision=decision,
-                        action_dispatched=decision.next_action,
-                        execution_result=ActionExecutionResult(
-                            dispatch_success=False,
-                            expected_effect_observed=False,
-                            goal_satisfied=False,
-                            outcome_status=OutcomeStatus.DISPATCH_FAILED,
-                            error_message=decision.reason_summary,
-                        ),
-                        post_observation=current_obs,
-                        state_progress_detected=False,
-                        duration_ms=(time.perf_counter() - t_cycle_start) * 1000.0,
-                        trace=cycle_trace,
-                    )
-                    step_history.append(step_res)
-                    cycle_traces.append(cycle_trace)
-                    return AgentExecutionResult(
-                        task_id=effective_task_id,
-                        objective=objective,
-                        is_success=False,
-                        total_steps=len(step_history),
-                        step_history=step_history,
-                        final_status=TaskCompletionStatus.FAILED,
-                        failure_reason=decision.reason_summary or decision.decision_summary,
-                        failure_code="GOAL_UNACHIEVABLE",
-                        elapsed_duration_ms=(time.perf_counter() - t_start) * 1000.0,
-                        state_transitions=sm.history,
-                        cycle_traces=cycle_traces,
-                        recovery_records=self._recovery_manager.get_history(),
-                    )
-
-                action = decision.next_action
-                if not action:
-                    break
-
-                # PHASE B3: PrimitiveComposer is MANDATORY between decision engine and controller.
-                # The composer canonicalizes the action (enforces SemanticTarget, outcome_contract,
-                # no raw coordinates) while preserving the decision engine's action type authority.
-                _non_composable_types = (
-                    AbstractActionType.COMPLETE_GOAL,
-                    AbstractActionType.ABORT_TASK,
-                    AbstractActionType.WAIT,
-                    AbstractActionType.WAIT_SETTLE,
-                )
-                if action.action_type not in _non_composable_types:
-                    try:
-                        # Resolve active directive for current subgoal
-                        _active_directive = None
-                        if self._progress_graph is not None:
-                            _active_sg = self._progress_graph.get_active_subgoal()
-                            if _active_sg is not None:
-                                _active_directive = subgoal_directives.get(_active_sg.sub_id)
-
-                        if _active_directive is not None:
-                            # Compose from authoritative PlanDirective (preferred_primitives govern)
-                            composed_seq = self._primitive_composer.compose_from_directive(
-                                _active_directive
-                            )
-                            if composed_seq.actions:
-                                # Use the composed action whose type matches the decision engine's intent
-                                matching = [
-                                    a for a in composed_seq.actions
-                                    if a.action_type == action.action_type
-                                ]
-                                if matching:
-                                    # Merge: keep decision engine's parameters, use composer's contract/target
-                                    _composed = matching[0]
-                                    if not action.outcome_contract and _composed.outcome_contract:
-                                        action.outcome_contract = _composed.outcome_contract
-                                    if not action.target and _composed.target:
-                                        action.target = _composed.target
-                                    if not action.expected_effect and _composed.expected_effect:
-                                        action.expected_effect = _composed.expected_effect
-                                else:
-                                    # Divergence detected: competing decision attempted an action not authorized by PlanDirective
-                                    logger.warning(
-                                        "[PLAN DIRECTIVE DIVERGENCE] Competing decision '%s' diverged from authoritative PlanDirective '%s' (authorized: %s). Rejecting competing action and enforcing authoritative directive action.",
-                                        action.action_type.value,
-                                        _active_directive.directive_id,
-                                        [a.action_type.value for a in composed_seq.actions],
-                                    )
-                                    action = composed_seq.actions[0]
-                        else:
-                            # No directive available: run through PrimitiveValidator directly to enforce contract
-                            val_res = self._primitive_validator.validate_action(action)
-                            if val_res.is_valid and val_res.validated_action:
-                                action = val_res.validated_action
-                    except Exception as _comp_err:
-                        logger.debug("[COMPOSER] Composition notice (non-fatal): %s", _comp_err)
-
-                # If outcome_contract is missing on basic action, attach a default fallback contract
-                if action.outcome_contract is None and action.action_type not in (
-                    AbstractActionType.WAIT,
-                    AbstractActionType.COMPLETE_GOAL,
-                    AbstractActionType.ABORT_TASK,
-                ):
-                    action.outcome_contract = ActionOutcomeContract(
-                        expected_state_transition=f"{action.action_type.value}_completed",
-                        verification_strategy=VerificationStrategy.AUTO_ROUTED,
-                    )
+                # Validate primitive through PrimitiveValidator
+                val_res = self._primitive_validator.validate_action(action)
+                if val_res.is_valid and val_res.validated_action:
+                    action = val_res.validated_action
+                elif not val_res.is_valid:
+                    logger.warning("[PRIMITIVE VALIDATOR] Action validation failed: %s (%s)", val_res.failure_reason, val_res.failure_code)
 
                 # -------------------------------------------------------------
                 # REPEATED ACTION & IDEMPOTENCY SAFETY GUARD (Requirements C & D)
@@ -1378,13 +1267,16 @@ class AgentExecutionLoop:
                     ocr_tokens=post_obs.ocr_tokens,
                 )
 
-                outcome = await self._transition_verifier.verify_action_outcome(
-                    action=action,
-                    dispatch_success=dispatch_success,
-                    pre_state=pre_state,
-                    post_state=post_state,
-                    post_observation=post_obs.desktop_observation,
-                )
+                if controller_res and controller_res.execution_outcome:
+                    outcome = controller_res.execution_outcome
+                else:
+                    outcome = await self._transition_verifier.verify_action_outcome(
+                        action=action,
+                        dispatch_success=dispatch_success,
+                        pre_state=pre_state,
+                        post_state=post_state,
+                        post_observation=post_obs.desktop_observation,
+                    )
 
                 # Phase 2: Multi-Evidence Semantic Action Verification
                 me_res = await self._multi_evidence_verifier.verify_action_effect(
@@ -1490,51 +1382,56 @@ class AgentExecutionLoop:
                     # Invariant: LoopGuard / FailureAnalyst / RecoveryManager NEVER execute recovery actions directly.
                     if self._recovery_manager.can_attempt_recovery():
                         _active_sg_for_replan = self._progress_graph.get_active_subgoal() if self._progress_graph else None
-                        if _active_sg_for_replan is not None:
-                            logger.info(
-                                "[AUTHORITATIVE REPLAN] Subgoal '%s' failure [%s] triggers AgentPlanner.replan()",
-                                _active_sg_for_replan.sub_id,
-                                failure_rep.category.value,
+                        sg_sub_id = _active_sg_for_replan.sub_id if _active_sg_for_replan else "sg_main"
+                        sg_title = _active_sg_for_replan.title if _active_sg_for_replan else (objective.user_goal or objective.raw_prompt or "Execute task")
+                        sg_desc = _active_sg_for_replan.description if _active_sg_for_replan else (objective.raw_prompt or "Execute task")
+                        sg_deps = _active_sg_for_replan.dependencies if _active_sg_for_replan else []
+
+                        logger.info(
+                            "[AUTHORITATIVE REPLAN] Subgoal '%s' failure [%s] triggers AgentPlanner.replan()",
+                            sg_sub_id,
+                            failure_rep.category.value,
+                        )
+                        _updated_known = dict(self._world_model.known_information)
+                        _updated_known["last_failure_diagnosis"] = failure_rep.diagnosis
+                        _updated_known["last_failure_category"] = failure_rep.category.value
+                        self._world_model = self._world_model.model_copy(update={
+                            "known_information": _updated_known,
+                        })
+                        try:
+                            sub_obj = SubObjective(
+                                sub_id=sg_sub_id,
+                                title=sg_title,
+                                description=sg_desc,
+                                dependencies=sg_deps,
                             )
-                            _updated_known = dict(self._world_model.known_information)
-                            _updated_known["last_failure_diagnosis"] = failure_rep.diagnosis
-                            _updated_known["last_failure_category"] = failure_rep.category.value
-                            self._world_model = self._world_model.model_copy(update={
-                                "known_information": _updated_known,
-                            })
-                            try:
-                                sub_obj = SubObjective(
-                                    sub_id=_active_sg_for_replan.sub_id,
-                                    title=_active_sg_for_replan.title,
-                                    description=_active_sg_for_replan.description,
-                                    dependencies=_active_sg_for_replan.dependencies,
+                            failed_dir = subgoal_directives.get(sg_sub_id) or _active_directive
+                            new_directive, new_sem_report = self._planner.replan(
+                                objective=objective,
+                                subgoal=sub_obj,
+                                world_model=self._world_model,
+                                failure_report=failure_rep,
+                                failed_directive=failed_dir,
+                                observation=post_obs,
+                            )
+                            if new_sem_report.is_feasible and new_directive is not None:
+                                # New PlanDirective supersedes failed directive and enters Composer next cycle
+                                subgoal_directives[sg_sub_id] = new_directive
+                                _active_directive = new_directive
+                                logger.info(
+                                    "[AUTHORITATIVE REPLAN] Emitted NEW PlanDirective '%s' (Strategy: %s, Primitives: %s)",
+                                    new_directive.directive_id,
+                                    new_directive.intent_strategy,
+                                    [p.value for p in new_directive.preferred_primitives],
                                 )
-                                failed_dir = subgoal_directives.get(_active_sg_for_replan.sub_id)
-                                new_directive, new_sem_report = self._planner.replan(
-                                    objective=objective,
-                                    subgoal=sub_obj,
-                                    world_model=self._world_model,
-                                    failure_report=failure_rep,
-                                    failed_directive=failed_dir,
-                                    observation=post_obs,
+                            else:
+                                logger.warning(
+                                    "[AUTHORITATIVE REPLAN] Replanning for subgoal '%s' infeasible: %s",
+                                    sg_sub_id,
+                                    getattr(new_sem_report, "rejection_reasons", ""),
                                 )
-                                if new_sem_report.is_feasible and new_directive is not None:
-                                    # New PlanDirective supersedes failed directive and enters Composer next cycle
-                                    subgoal_directives[_active_sg_for_replan.sub_id] = new_directive
-                                    logger.info(
-                                        "[AUTHORITATIVE REPLAN] Emitted NEW PlanDirective '%s' (Strategy: %s, Primitives: %s)",
-                                        new_directive.directive_id,
-                                        new_directive.intent_strategy,
-                                        [p.value for p in new_directive.preferred_primitives],
-                                    )
-                                else:
-                                    logger.warning(
-                                        "[AUTHORITATIVE REPLAN] Replanning for subgoal '%s' infeasible: %s",
-                                        _active_sg_for_replan.sub_id,
-                                        getattr(new_sem_report, "rejection_reasons", ""),
-                                    )
-                            except Exception as _replan_err:
-                                logger.warning("[AUTHORITATIVE REPLAN] Planner replan raised: %s", _replan_err)
+                        except Exception as _replan_err:
+                            logger.warning("[AUTHORITATIVE REPLAN] Planner replan raised: %s", _replan_err)
 
                         sm.transition_to(
                             AgentLoopState.RECOVERING,

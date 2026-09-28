@@ -21,7 +21,8 @@ from orbit.runtime.models.models import (
 )
 
 
-def test_cloud_provider_unconfigured():
+def test_cloud_provider_unconfigured(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     provider = CloudModelProvider(cloud_kind=CloudProviderKind.OPENAI, api_key=None)
     assert not provider.is_configured
     assert provider.get_auth_status() == CloudAuthStatus.NOT_CONFIGURED

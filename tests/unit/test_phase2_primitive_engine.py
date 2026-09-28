@@ -92,19 +92,19 @@ def test_primitive_validator_rejects_missing_outcome_contract():
 
 @pytest.mark.asyncio
 async def test_primitive_composer_fallback_generates_canonical_primitives():
+    from orbit.runtime.cognitive.agent_planner import PlanDirective
     composer = PrimitiveComposer()
-    obj = StructuredObjective(
-        raw_prompt="open notepad and type hello",
-        user_goal="open notepad and type hello",
-        end_condition="notepad_has_hello",
+    directive = PlanDirective(
+        directive_id="dir_notepad",
+        objective_id="obj_1",
+        subgoal_id="sub_notepad",
+        subgoal_title="open notepad",
+        preferred_primitives=[AbstractActionType.LAUNCH_APPLICATION],
+        semantic_targets=[SemanticTarget(name="notepad", role="application")],
+        expected_outcome=ActionOutcomeContract(expected_state_transition="notepad_launched"),
     )
-    context = StructuredAgentContext(active_goal="open notepad and type hello")
 
-    seq: ComposedPrimitiveSequence = await composer.compose(
-        objective=obj,
-        sub_objective=SubObjective(title="open notepad"),
-        context=context,
-    )
+    seq: ComposedPrimitiveSequence = composer.compose_from_directive(directive)
     assert len(seq.actions) >= 1
     act = seq.actions[0]
     assert act.action_type == AbstractActionType.LAUNCH_APPLICATION

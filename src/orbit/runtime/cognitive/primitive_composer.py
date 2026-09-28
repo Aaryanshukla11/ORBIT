@@ -107,7 +107,12 @@ class PrimitiveComposer:
         sub_objective: Optional[SubObjective],
         context: StructuredAgentContext,
     ) -> ComposedPrimitiveSequence:
-        """Compose a canonical primitive sequence for the given sub-objective."""
+        """Compose a canonical primitive sequence for the given sub-objective.
+
+        P0 Invariant: PrimitiveComposer does NOT act as an independent planner.
+        If an LLM is available, it proposes a primitive sequence subject to strict validation;
+        otherwise, it fails closed without inventing deterministic semantic plans.
+        """
         goal_text = sub_objective.title if sub_objective else (objective.user_goal or objective.raw_prompt)
 
         # 1. Attempt LLM-driven composition using bounded context
@@ -117,10 +122,19 @@ class PrimitiveComposer:
                 if seq and seq.actions:
                     return seq
             except Exception as e:
-                logger.warning("LLM primitive composition failed; attempting deterministic fallback: %s", e)
+                logger.warning("LLM primitive composition failed: %s", e)
 
-        # 2. Domain-agnostic deterministic fallback composition based on linguistic shape of goal
-        return self._compose_deterministic_fallback(goal_text, objective, sub_objective, context)
+        # 2. FAIL-CLOSED: Zero semantic plan invention without authoritative PlanDirective
+        logger.warning(
+            "[PrimitiveComposer] Composition without PlanDirective failed closed for goal: '%s'",
+            goal_text,
+        )
+        return ComposedPrimitiveSequence(
+            sub_objective_id=sub_objective.sub_id if sub_objective else None,
+            actions=[],
+            rationale="Composition failed closed: PlanDirective required for authoritative execution",
+            estimated_steps=0,
+        )
 
     async def recompose_after_failure(
         self,
@@ -129,9 +143,15 @@ class PrimitiveComposer:
         context: StructuredAgentContext,
         failure_report: Any,
     ) -> ComposedPrimitiveSequence:
-        """Recompose primitive sequence incorporating failure diagnosis (Guardrail 9)."""
-        logger.info("[PRIMITIVE COMPOSER] Recomposing sequence incorporating failure diagnosis: %s", getattr(failure_report, "diagnosis", str(failure_report)))
-        # Append failure context into prompt for LLM or apply alternative strategy
+        """Recompose primitive sequence incorporating failure diagnosis (Guardrail 9).
+
+        P0 Invariant: Replanning is exclusively owned by AgentPlanner.replan().
+        PrimitiveComposer does not independently invent alternative task plans.
+        """
+        logger.info(
+            "[PRIMITIVE COMPOSER] Recomposing request received with failure diagnosis: %s",
+            getattr(failure_report, "diagnosis", str(failure_report)),
+        )
         return await self.compose(objective, sub_objective, context)
 
     def compose_from_directive(
@@ -139,7 +159,16 @@ class PrimitiveComposer:
         directive: PlanDirective,
         context: Optional[StructuredAgentContext] = None,
     ) -> ComposedPrimitiveSequence:
-        """Compose canonical primitives directly from an approved PlanDirective."""
+        """Compose canonical primitives mechanically from an authoritative PlanDirective."""
+        if not directive or not directive.preferred_primitives:
+            logger.warning("[PrimitiveComposer] Cannot compose from empty or missing PlanDirective (Fail-Closed)")
+            return ComposedPrimitiveSequence(
+                sub_objective_id=directive.subgoal_id if directive else None,
+                actions=[],
+                rationale="Empty or invalid PlanDirective",
+                estimated_steps=0,
+            )
+
         actions: List[AbstractAction] = []
 
         for prim_type in directive.preferred_primitives:
@@ -161,7 +190,8 @@ class PrimitiveComposer:
                     params["text"] = directive.subgoal_title
                     params["press_enter"] = True
             elif prim_type == AbstractActionType.LAUNCH_APPLICATION:
-                app = target.name or "application"
+                payload = directive.creative_payload or {}
+                app = payload.get("application_name") or payload.get("app_name") or target.name or "application"
                 params["application_name"] = app
             elif prim_type == AbstractActionType.SAVE_FILE:
                 payload = directive.creative_payload or {}
@@ -173,6 +203,11 @@ class PrimitiveComposer:
             elif prim_type == AbstractActionType.SEND_HOTKEY:
                 payload = directive.creative_payload or {}
                 params["hotkey"] = payload.get("hotkey") or ("Ctrl+S" if "save" in directive.subgoal_title.lower() or "ctrl" in directive.subgoal_title.lower() else "enter")
+            elif prim_type == AbstractActionType.FOCUS_WINDOW:
+                payload = directive.creative_payload or {}
+                if "hwnd" in payload:
+                    params["hwnd"] = payload["hwnd"]
+                params["application_name"] = target.name if target else ""
 
             action = AbstractAction(
                 action_type=prim_type,
@@ -183,7 +218,9 @@ class PrimitiveComposer:
                 rationale=f"Composed from PlanDirective '{directive.directive_id}' for subgoal '{directive.subgoal_id}'",
             )
             val_res = self._validator.validate_action(action)
-            if val_res.is_valid:
+            if val_res.is_valid and val_res.validated_action:
+                actions.append(val_res.validated_action)
+            elif val_res.is_valid:
                 actions.append(action)
             else:
                 logger.warning("Directive action validation failed: %s (%s)", val_res.failure_reason, val_res.failure_code)
@@ -191,7 +228,7 @@ class PrimitiveComposer:
         return ComposedPrimitiveSequence(
             sub_objective_id=directive.subgoal_id,
             actions=actions,
-            rationale=f"Composed from PlanDirective {directive.directive_id}",
+            rationale=f"Composed mechanically from PlanDirective {directive.directive_id}",
             estimated_steps=len(actions),
         )
 
@@ -240,105 +277,3 @@ class PrimitiveComposer:
                 estimated_steps=len(validated_actions),
             )
         return None
-
-    def _compose_deterministic_fallback(
-        self,
-        goal_text: str,
-        objective: StructuredObjective,
-        sub_objective: Optional[SubObjective],
-        context: StructuredAgentContext,
-    ) -> ComposedPrimitiveSequence:
-        """Generic, syntactic fallback when LLM is unavailable."""
-        actions: List[AbstractAction] = []
-        g_lower = goal_text.lower()
-
-        # Generic launch pattern: "open X", "launch X", "start X", "bring up X", "run X"
-        m_launch = re.search(r"\b(?:open|launch|start|run|bring\s+up)\s+(?:the\s+)?([a-zA-Z0-9_\-]+(?:\s+[a-zA-Z0-9_\-]+)?)", g_lower)
-        target_app = objective.parameters.get("app_name") if objective else None
-        if (m_launch or target_app) and not any(w in g_lower for w in ("search box", "button", "link", "input", "menu", "tab", "file", "canvas", "draw")):
-            app = target_app or (m_launch.group(1).strip() if m_launch else "application")
-            if app not in ("search box", "button", "link", "input field", "tab", "menu"):
-                actions.append(
-                    AbstractAction(
-                        action_type=AbstractActionType.LAUNCH_APPLICATION,
-                        parameters={"application_name": app},
-                        target=SemanticTarget(name=app, role="application"),
-                        outcome_contract=ActionOutcomeContract(
-                            expected_state_transition=f"{app}_window_open_and_active",
-                            verification_strategy=VerificationStrategy.WINDOW_FOCUS,
-                        ),
-                        expected_effect=f"Application '{app}' opened and focused",
-                        rationale=f"Launch application '{app}' required by goal",
-                    )
-                )
-
-        # Generic save pattern: "save as X", "save it as X", "export as X", "persist as X"
-        m_save = re.search(r"\b(?:save|save\s+as|save\s+it\s+as|export\s+as|persist\s+as)\s+['\"]?([^'\"\s,]+\.[a-zA-Z0-9]+)['\"]?", g_lower)
-        fname = objective.parameters.get("filename") if objective else None
-        if not fname and m_save:
-            fname = m_save.group(1).strip()
-        if fname or m_save:
-            fname = fname or (m_save.group(1).strip() if m_save else "")
-            target_dir = (objective.parameters.get("target_dir") if objective else None) or ("desktop" if "desktop" in g_lower else "workspace")
-            fmt = (objective.parameters.get("format") if objective else None) or (fname.rsplit(".", 1)[-1] if "." in fname else "")
-            target_label = fname or "artifact"
-            actions.append(
-                AbstractAction(
-                    action_type=AbstractActionType.SAVE_FILE,
-                    parameters={
-                        "filename": fname,
-                        "target_path": fname,
-                        "target_dir": target_dir,
-                        "format": fmt,
-                    },
-                    target=SemanticTarget(name=target_label, role="file", context=target_dir),
-                    outcome_contract=ActionOutcomeContract(
-                        expected_state_transition=f"File '{target_label}' saved to {target_dir}",
-                        verification_strategy=VerificationStrategy.ARTIFACT_CREATED,
-                    ),
-                    expected_effect=f"File '{target_label}' saved to {target_dir}",
-                    rationale=f"Save requested artifact '{target_label}'",
-                )
-            )
-
-        # Generic type pattern: "type 'X'", "enter 'X'", "search for X"
-        m_type = re.search(r"\b(?:type|enter|write|input)\s+['\"]?([^'\"]+)['\"]?", g_lower)
-        if m_type:
-            txt = m_type.group(1).strip()
-            actions.append(
-                AbstractAction(
-                    action_type=AbstractActionType.TYPE_TEXT,
-                    parameters={"text": txt, "press_enter": True},
-                    outcome_contract=ActionOutcomeContract(
-                        expected_state_transition="text_entered",
-                        verification_strategy=VerificationStrategy.UIA_TEXT,
-                        expected_text=txt,
-                    ),
-                    expected_effect=f"Text '{txt}' entered into active field",
-                    rationale=f"Type requested text payload",
-                )
-            )
-
-        # Generic click pattern: "click X", "select X"
-        m_click = re.search(r"\b(?:click|press|select)\s+['\"]?([a-zA-Z0-9_\-\s]+)['\"]?", g_lower)
-        if m_click and not m_launch and not m_type:
-            target_name = m_click.group(1).strip()
-            actions.append(
-                AbstractAction(
-                    action_type=AbstractActionType.CLICK,
-                    target=SemanticTarget(name=target_name, role="button"),
-                    outcome_contract=ActionOutcomeContract(
-                        expected_state_transition=f"{target_name}_activated",
-                        verification_strategy=VerificationStrategy.AUTO_ROUTED,
-                    ),
-                    expected_effect=f"Click target '{target_name}'",
-                    rationale=f"Interact with UI target '{target_name}'",
-                )
-            )
-
-        return ComposedPrimitiveSequence(
-            sub_objective_id=sub_objective.sub_id if sub_objective else None,
-            actions=actions,
-            rationale="Deterministic fallback composition",
-            estimated_steps=len(actions),
-        )
