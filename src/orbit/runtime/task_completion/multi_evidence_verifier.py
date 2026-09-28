@@ -227,30 +227,6 @@ class MultiEvidenceActionVerifier:
                 window_state_satisfied=True,
             )
 
-        # Real-time Win32 check fallback in case window opened during settle interval
-        import sys
-        if sys.platform == "win32":
-            try:
-                from orbit.runtime.perception.windows import Win32WindowObserver
-                observer = Win32WindowObserver()
-                _, live_visible = observer.observe_windows()
-                for lw in live_visible:
-                    lw_title = lw.title or ""
-                    lw_proc = lw.process_name or ""
-                    lw_cls = lw.window_class or ""
-                    if target_name and _matches(lw_title, lw_proc, lw_cls):
-                        return MultiEvidenceVerificationResult(
-                            is_verified=True,
-                            outcome_status=OutcomeStatus.EFFECT_VERIFIED,
-                            evidence_sources=["WINDOW_VISIBLE", "WIN32_LIVE_ENUM"],
-                            verification_reason=f"Target window for '{target_name}' confirmed in live window scan ('{lw_title}')",
-                            confidence=0.92,
-                            window_state_satisfied=True,
-                            pixel_delta_detected=True,
-                        )
-            except Exception:
-                pass
-
         return MultiEvidenceVerificationResult(
             is_verified=False,
             outcome_status=OutcomeStatus.EFFECT_UNVERIFIED,
