@@ -146,6 +146,7 @@ async def test_03_click_search_box_routes_to_ui_click():
     assert len(seq.actions) > 0
     action = seq.actions[0]
     assert action.action_type == AbstractActionType.CLICK
+    assert action.target is not None
     assert action.target.role in ("button", "control")
     assert "search box" in action.target.name.lower() or "search" in action.target.name.lower()
 
@@ -204,6 +205,7 @@ async def test_05_save_as_produces_save_file_action():
     assert len(candidates) > 0
     plan = candidates[0]
     assert AbstractActionType.SAVE_FILE in plan.proposed_primitives
+    assert plan.creative_payload is not None
     assert plan.creative_payload.get("filename") == "test.png"
     assert plan.creative_payload.get("format") == "png"
     assert plan.creative_payload.get("target_dir") == "desktop"
@@ -237,6 +239,7 @@ async def test_06_save_action_requires_physical_evidence():
     # Dispatch without creating the physical file -> must fail post-action verification
     success, err = await controller._dispatch_save_file(action, pre_obs)
     assert success is False
+    assert err is not None
     assert "SAVE_VERIFICATION_FAILED" in err
 
 
